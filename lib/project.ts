@@ -1,4 +1,4 @@
-import { Doc, KIND_ORDER, Kind, VARIANTS, isCardAlign, isCardImagePos, isPlace, isTextToken, isPlatform, isTrackThickness } from "./tokens";
+import { Doc, Group, KIND_ORDER, Kind, VARIANTS, isCardAlign, isCardImagePos, isCustomColor, isPlace, isStateEffect, isTextToken, isPlatform, isTrackThickness } from "./tokens";
 
 /* A project file is the Doc as JSON, nothing more. Reading one back only checks
  * the shape the editor relies on; the same migrations that run on a saved
@@ -13,7 +13,20 @@ const validTabs = (tabs: unknown) =>
 
 const validCorners = (c: unknown) => c === undefined || (isRecord(c) && ["tl", "tr", "bl", "br"].every((k) => Number.isFinite(c[k])));
 
-const validItem = (item: unknown) =>
+/** one state transition hung on a part */
+const validState = (s: unknown) =>
+  isRecord(s) &&
+  typeof s.id === "string" &&
+  s.trigger === "tap" &&
+  isStateEffect(s.effect) &&
+  (s.value === undefined || typeof s.value === "string") &&
+  (s.seconds === undefined || (Number.isFinite(s.seconds) && (s.seconds as number) > 0));
+
+/** the parts a container holds, each with the offset that places it inside the box */
+const validChildren = (children: unknown): boolean =>
+  children === undefined || (Array.isArray(children) && children.every((c) => validItem(c) && isRecord(c) && Number.isFinite(c.x) && Number.isFinite(c.y)));
+
+const validItem = (item: unknown): boolean =>
   isRecord(item) &&
   validCorners(item.corners) &&
   (item.railExpanded === undefined || typeof item.railExpanded === "boolean") &&
@@ -23,6 +36,10 @@ const validItem = (item: unknown) =>
   (item.imageSize === undefined || (Number.isFinite(item.imageSize) && (item.imageSize as number) > 0)) &&
   (item.contentAlign === undefined || isCardAlign(item.contentAlign)) &&
   (item.textColor === undefined || isTextToken(item.textColor)) &&
+  (item.color === undefined || isCustomColor(item.color)) &&
+  (item.z === undefined || Number.isFinite(item.z)) &&
+  (item.states === undefined || (Array.isArray(item.states) && item.states.every(validState))) &&
+  validChildren(item.children) &&
   typeof item.id === "string" &&
   typeof item.kind === "string" &&
   KINDS.has(item.kind as Kind) &&
@@ -59,6 +76,24 @@ const validFrame = (frame: unknown) =>
 /** whether a parsed file has the shape of a document the editor can open */
 export const isProject = (value: unknown): value is Doc =>
   isRecord(value) && Array.isArray(value.groups) && Array.isArray(value.frames) && value.groups.every(validGroup) && value.frames.every(validFrame) && (value.platform === undefined || isPlatform(value.platform));
+
+/** The runs of a stored document this build can still read. A file and a link pass
+ *  `isProject` before they are opened, but the autosave is simply whatever the last visit
+ *  left in localStorage: an older build, or another one on the same origin, can leave a
+ *  part behind that this build has no spec for, and every reader of KIND_SPEC — sizeOf
+ *  first — fails on it. Unknown parts are left out instead, so one stray part cannot take
+ *  the canvas down with it; a run that held nothing else goes with them. */
+export function readableGroups(groups: unknown): Group[] {
+  if (!Array.isArray(groups)) return [];
+  const out: Group[] = [];
+  for (const group of groups) {
+    if (!isRecord(group) || !Array.isArray(group.items)) continue;
+    const items = group.items.filter(validItem);
+    if (items.length === 0) continue;
+    out.push((items.length === group.items.length ? group : { ...group, items }) as unknown as Group);
+  }
+  return out;
+}
 
 /** the file name a project is saved under: m3e-canvas, followed by the app's name when it has one */
 export const projectFileName = (doc: Doc) => {

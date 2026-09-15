@@ -24,6 +24,7 @@ import {
   TAPPABLE,
   Transition,
   baseRadii,
+  byLayer,
   connectSpecOf,
   fontFamilyOf,
   freeRadii,
@@ -32,6 +33,7 @@ import {
   groupsInFrame,
   isPhoneFrame,
   normalizeTheme,
+  resolveStates,
   toggleIcon,
   uniformRadii,
   RAIL_TOP,
@@ -125,6 +127,13 @@ const screenVariants: Variants = {
 const TOGGLES = ["switch", "checkbox", "chip"] as const;
 const flips = (it: Item) => (TOGGLES as readonly string[]).includes(it.kind) || !!it.toggle;
 
+/** the live effect of every part's own state rules, shared down the screen */
+type StateRuntime = { fired: Record<string, number>; now: number; onFire: (id: string) => void };
+
+/** The press scrim, a bar's slot hit areas and a cooldown readout ride over the part, and
+ *  a part carries its own layer, so those overlays sit far above any authored level. */
+const OVERLAY_Z = 1_000_000;
+
 /** the look of a part after the visitor tapped it */
 function flippedLook(it: Item): Item {
   if ((TOGGLES as readonly string[]).includes(it.kind)) return { ...it, checked: !it.checked };
@@ -154,12 +163,21 @@ function Tappable({
   onMenu,
   onRailToggle,
   railAnimating,
+  onAction,
+  onFlip,
+  states,
 }: {
   item: Item;
   p: Palette;
   radii: ReturnType<typeof baseRadii>;
   widths: Record<string, number>;
   onTap?: () => void;
+  /** passed down so a part inside a container can open a screen of its own */
+  onAction?: (a: Action) => void;
+  /** and flip itself like any other toggle */
+  onFlip?: (id: string) => void;
+  /** the live effect of the part's own state rules */
+  states?: StateRuntime;
   /** per-slot targets on bars */
   onSlot?: (slot: string, animate?: boolean) => void;
   /** live value for sliders */
@@ -175,6 +193,11 @@ function Tappable({
   const lang = useLang();
   const [pressed, setPressed] = useState(false);
   const [hot, setHot] = useState<string | null>(null);
+  /* the part's own rules, once the visitor has set them off */
+  const own = states ? resolveStates(item, states.fired, states.now) : null;
+  if (own?.hidden) return null;
+  const view = own && own.item !== item ? { ...item, label: own.item.label, variant: own.item.variant } : item;
+  const frozen = !!own?.disabled;
   const menu = !!menuOpen;
   /* a tab row with more tabs than fit scrolls: by wheel, touch, or dragging the row; a chosen tab is brought into view */
   const scrollTabs = isScrollableTabs(item);
@@ -218,7 +241,7 @@ function Tappable({
     window.addEventListener("pointerup", end);
     window.addEventListener("pointercancel", end);
   };
-  const live = !!onTap || !!onPick || (TAPPABLE.includes(item.kind) && item.kind !== "text");
+  const live = !frozen && (!!onTap || !!onPick || (view.states?.length ?? 0) > 0 || (TAPPABLE.includes(view.kind) && view.kind !== "text"));
   const ref = useRef<HTMLDivElement>(null);
 
   /* the open menu closes on a tap anywhere else or on Escape */
@@ -278,6 +301,30 @@ function Tappable({
     for (let i = 0; i < n; i++) slots.push({ key: `tab:${i}`, style: { right: 0, width: "70%", top: i * 64, height: 56, borderRadius: 28 } });
   }
 
+  /* A container's children are tappable in their own right: the one with a target opens
+   * that screen, and a toggle inside a container flips just like one on the screen. */
+  const childNodes = [...(item.children ?? [])].sort(byLayer).map((c) => (
+    <div key={c.id} style={{ position: "absolute", left: c.x, top: c.y }}>
+      <Tappable
+        item={c}
+        p={p}
+        radii={baseRadii(c)}
+        widths={widths}
+        states={states}
+        onTap={
+          c.action || flips(c)
+            ? () => {
+                if (flips(c)) onFlip?.(c.id);
+                if (c.action) onAction?.(c.action);
+              }
+            : undefined
+        }
+        onAction={onAction}
+        onFlip={onFlip}
+      />
+    </div>
+  ));
+
   return (
     <div
       ref={ref}
@@ -298,10 +345,31 @@ function Tappable({
       onPointerUp={() => setPressed(false)}
       onPointerCancel={() => setPressed(false)}
       onPointerLeave={() => !onValue && setPressed(false)}
-      onClick={onPick ? () => onMenu?.(!menu) : onTap}
-      style={{ cursor: live || onValue ? "pointer" : "default", display: "flex", position: "relative", touchAction: scrollTabs ? "pan-x" : "none" }}
+      onClick={onPick ? () => onMenu?.(!menu) : () => {
+        /* the part's own rules go off first, then whatever the tap was meant to do */
+        if (view.states?.length) states?.onFire(view.id);
+        onTap?.();
+      }}
+      style={{
+        cursor: live || onValue ? "pointer" : "default",
+        display: "flex",
+        position: "relative",
+        touchAction: scrollTabs ? "pan-x" : "none",
+        /* a part its own rule has greyed out still shows, but answers nothing */
+        filter: frozen ? "grayscale(1)" : undefined,
+        opacity: frozen ? 0.55 : 1,
+        pointerEvents: frozen ? "none" : undefined,
+      }}
     >
-      <M3Node item={item} palette={p} widths={widths} radii={radii} interactive={false} pressed={pressed && !onValue} tabScroll={scrollTabs ? tabScroll : undefined} />
+      <M3Node item={view} palette={p} widths={widths} radii={radii} interactive={false} pressed={pressed && !onValue} tabScroll={scrollTabs ? tabScroll : undefined} overlay={childNodes} />
+      {own && own.cooldown > 0 && (
+        <div
+          aria-hidden
+          style={{ position: "absolute", inset: 0, zIndex: OVERLAY_Z + 1, display: "grid", placeItems: "center", fontSize: 22, fontWeight: 700, color: p.onSurface, pointerEvents: "none" }}
+        >
+          {own.cooldown}
+        </div>
+      )}
       {live && (
         <motion.div
           aria-hidden
@@ -311,6 +379,7 @@ function Tappable({
           style={{
             position: "absolute",
             inset: 0,
+            zIndex: OVERLAY_Z,
             pointerEvents: "none",
             background: `color-mix(in srgb, ${p.onSurface} 12%, transparent)`,
             borderTopLeftRadius: radii.tl,
@@ -345,6 +414,7 @@ function Tappable({
           }}
           style={{
             position: "absolute",
+            zIndex: OVERLAY_Z,
             border: "none",
             padding: 0,
             color: p.primary,
@@ -437,6 +507,7 @@ function Screen({
   onFlip,
   values,
   onValue,
+  runtime,
 }: {
   active?: boolean;
   frame: Frame;
@@ -449,6 +520,8 @@ function Screen({
   onFlip: (id: string) => void;
   values: Record<string, number>;
   onValue: (id: string, v: number) => void;
+  /** the live effect of the parts' own state rules */
+  runtime: StateRuntime;
 }) {
   /* the dropdown whose menu is open, if any; its group is lifted above the rest */
   const [menuId, setMenuId] = useState<string | null>(null);
@@ -651,6 +724,9 @@ function Screen({
                 widths={widths}
                 railAnimating={railMotion?.items.has(it.id)}
                 onTap={tap}
+                onAction={onAction}
+                onFlip={onFlip}
+                states={runtime}
                 onSlot={
                   slotActions || navKind
                     ? (slot, animate) => {
@@ -713,6 +789,10 @@ export function Preview({
   const [scale, setScale] = useState(1);
   const [flipped, setFlipped] = useState<Set<string>>(() => new Set());
   const [values, setValues] = useState<Record<string, number>>({});
+  /* when each part's own state rules were set off, and a clock that runs while any
+     cooldown is counting down */
+  const [fired, setFired] = useState<Record<string, number>>({});
+  const [now, setNow] = useState(() => Date.now());
   const [peek, setPeek] = useState<Peek | null>(null);
   const stackRef = useRef(stack);
   stackRef.current = stack;
@@ -727,6 +807,15 @@ export function Preview({
       else n.add(id);
       return n;
     });
+
+  /** sets a part's own rules off; a second tap starts a cooldown over */
+  const fire = (id: string) => setFired((f) => ({ ...f, [id]: Date.now() }));
+  /* a cooldown is a clock, so the countdown ticks while any rule is running */
+  useEffect(() => {
+    if (Object.keys(fired).length === 0) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, [fired]);
 
   const top = stack[stack.length - 1];
   const current = frames.find((f) => f.id === top?.id) ?? frames[0];
@@ -986,6 +1075,7 @@ export function Preview({
     onFlip: flip,
     values,
     onValue: (id: string, v: number) => setValues((m) => ({ ...m, [id]: v })),
+    runtime: { fired, now, onFire: fire },
   };
 
   const barBtn: React.CSSProperties = {

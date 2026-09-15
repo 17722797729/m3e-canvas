@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { isProject, projectFileName, readProject } from "./project";
+import { isProject, projectFileName, readableGroups, readProject } from "./project";
 import { updateRail } from "./rail";
 import { KIND_ORDER, VARIANTS, railExpansionSide, type Doc, type Item } from "./tokens";
 
@@ -211,5 +211,80 @@ describe("readProject", () => {
     } finally {
       read.mockRestore();
     }
+  });
+});
+
+/* a part can carry a colour, a level, its own state rules and the parts it holds */
+describe("isProject: a part's own looks, level, rules and children", () => {
+  it.each([
+    { color: "primary" }, { color: "#1A2B3C" }, { z: 0 }, { z: 42 },
+    { states: [{ id: "s", trigger: "tap", effect: "disable" }] },
+    { states: [{ id: "s", trigger: "tap", effect: "cooldown", seconds: 5 }] },
+    { states: [{ id: "s", trigger: "tap", effect: "label", value: "Wait" }] },
+    { states: [] },
+    { children: [{ ...item(), id: "kid", x: 4, y: 8 }] },
+    { children: [{ ...item(), id: "kid", x: 4, y: 8, children: [{ ...item(), id: "deep", x: 1, y: 1 }] }] },
+  ])("accepts %# %o", (patch) => {
+    expect(isProject(withItem(patch))).toBe(true);
+  });
+
+  it.each([
+    { color: "chartreuse" }, { color: "#12345" }, { color: 7 },
+    { z: NaN }, { z: "10" },
+    { states: null }, { states: {} }, { states: [null] }, { states: [{ id: "s", trigger: "tap" }] },
+    { states: [{ id: "s", trigger: "longPress", effect: "disable" }] },
+    { states: [{ id: "s", trigger: "tap", effect: "explode" }] },
+    { states: [{ id: "s", trigger: "tap", effect: "cooldown", seconds: 0 }] },
+    { states: [{ id: "s", trigger: "tap", effect: "label", value: 1 }] },
+    { children: {} }, { children: [null] }, { children: [{ ...item(), id: "kid", x: 1 }] },
+    { children: [{ ...item(), id: "kid", x: NaN, y: 0 }] },
+    { children: [{ ...item(), id: "kid", x: 0, y: 0, kind: "chart" }] },
+  ])("rejects %# %o", (patch) => {
+    expect(isProject(withItem(patch))).toBe(false);
+  });
+
+  it("keeps a container and its children when a file is read back", async () => {
+    const value = withItem({ kind: "box", children: [{ ...item(), id: "kid", label: "Go", x: 12, y: 20 }] });
+    await expect(readProject(new File([JSON.stringify(value)], "nested.json"))).resolves.toEqual(value);
+  });
+});
+/* the autosave is the one document that does not pass isProject; a part this build cannot
+ * draw is left out rather than allowed to reach the layout as an unknown kind */
+describe("readableGroups", () => {
+  it("keeps a readable document exactly as it is", () => {
+    const value = doc();
+    const out = readableGroups(value.groups);
+    expect(out).toEqual(value.groups);
+    expect(out[0]).toBe(value.groups[0]);
+    expect(out[0].items[0]).toBe(value.groups[0].items[0]);
+  });
+
+  it("leaves out an unknown part and keeps the order of the parts that survive", () => {
+    const good = doc().groups[0];
+    const out = readableGroups([{ ...good, items: [item(), { ...item(), id: "chart", kind: "chart" }, { ...item(), id: "last" }] }]);
+    expect(out).toHaveLength(1);
+    expect(out[0].items.map((it) => it.id)).toEqual(["item", "last"]);
+  });
+
+  it("drops a run that held nothing but unreadable parts", () => {
+    const good = doc().groups[0];
+    expect(readableGroups([{ ...good, items: [{ id: "chart", kind: "chart" }] }])).toEqual([]);
+  });
+
+  it("drops malformed groups and parts without touching the rest of the document", () => {
+    const good = doc().groups[0];
+    const out = readableGroups([
+      null,
+      { id: "no-items" },
+      { ...good, items: null },
+      good,
+      { ...good, items: [null, { ...item(), label: 1 }, item()] },
+    ]);
+    expect(out.map((g) => g.id)).toEqual(["group", "group"]);
+    expect(out[0].items).toHaveLength(1);
+  });
+
+  it.each([null, undefined, {}, { items: [item()] }, "groups", 7])("reads %# as no groups", (groups) => {
+    expect(readableGroups(groups)).toEqual([]);
   });
 });

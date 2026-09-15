@@ -48,6 +48,16 @@ import {
   Kind,
   KIND_ORDER,
   KIND_SPEC,
+  PlacedItem,
+  CustomPart,
+  compositeInstance,
+  scaleChildren,
+  byLayer,
+  copySubtree,
+  itemsOf,
+  layerOf,
+  parentOf,
+  subtreeOf,
   collapseFree,
   layoutOf,
   lerp,
@@ -85,6 +95,7 @@ import { FrameInspector, FrameSizePicker, Inspector } from "@/components/Inspect
 import { Preview } from "@/components/Preview";
 import { Logo } from "@/components/Logo";
 import { PartsPalette } from "@/components/PartsPalette";
+import { CompositeDialog } from "@/components/CompositeDialog";
 import { PromptPanel } from "@/components/PromptPanel";
 import { GitHubLink, Mode, Toolbar } from "@/components/Toolbar";
 import { LangMenu } from "@/components/Menus";
@@ -93,7 +104,7 @@ import { TidyState } from "@/components/ui";
 import { AiSettings, DEFAULT_AI, hasKey, isSecureUrl, loadAiSettings, proposeBehavior, proposeDescription, pushHistory, saveAiSettings } from "@/lib/ai";
 import { barSlotOf, bodyRect, carryFrame, pullInto, tidyFrame } from "@/lib/tidy";
 import { constrainModalRails, modalRailOf, updateRail } from "@/lib/rail";
-import { isProject, readProject, saveProject } from "@/lib/project";
+import { isProject, readableGroups, readProject, saveProject } from "@/lib/project";
 import { hasShareHash, readShareHash } from "@/lib/share";
 import { LoadingIndicator } from "@/components/Loading";
 import { draftDesign } from "@/lib/ai";
@@ -184,7 +195,9 @@ type Gesture =
       groups: { id: string; x: number; y: number }[];
       moved: boolean;
     }
-  | { kind: "group"; id: string; sx: number; sy: number; gx: number; gy: number; moved: boolean; overBin: boolean; guide?: Guide | null };
+  | { kind: "group"; id: string; sx: number; sy: number; gx: number; gy: number; moved: boolean; overBin: boolean; guide?: Guide | null }
+  /** a part being moved inside the container that holds it, in the container's own coordinates */
+  | { kind: "child"; groupId: string; parentId: string; id: string; sx: number; sy: number; ox: number; oy: number; moved: boolean };
 
 /** everything in a document apart from its screens and parts */
 type DocMeta = Omit<Doc, "groups" | "frames">;
@@ -194,22 +207,59 @@ type Snapshot = { groups: Group[]; frames: Frame[]; meta?: DocMeta };
 /** a screen changing size eases the way a settling part does */
 const SIZE_TRANSITION = `width ${SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1), height ${SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1), border-radius ${SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1)`;
 
+/** the breathing room a new container leaves around the parts it takes in */
+const CONTAINER_PAD = 16;
+
 function translateSnapshot(snap: Snapshot, lang: Lang): Snapshot {
+  /* a part inside a container carries its own default words too */
+  const tr = (item: Item): Item => ({
+    ...item,
+    label: translateDefaultText(item.label, item.kind, "label", lang),
+    ...(item.supporting !== undefined && { supporting: translateDefaultText(item.supporting, item.kind, "supporting", lang) }),
+    ...(item.tabs && { tabs: item.tabs.map((tab) => ({ ...tab, label: translateDefaultText(tab.label, item.kind, "tab", lang) })) }),
+    ...(item.children && { children: item.children.map(tr) as PlacedItem[] }),
+  });
   return {
-    groups: snap.groups.map((group) => ({
-      ...group,
-      items: group.items.map((item) => ({
-        ...item,
-        label: translateDefaultText(item.label, item.kind, "label", lang),
-        ...(item.supporting !== undefined && { supporting: translateDefaultText(item.supporting, item.kind, "supporting", lang) }),
-        ...(item.tabs && { tabs: item.tabs.map((tab) => ({ ...tab, label: translateDefaultText(tab.label, item.kind, "tab", lang) })) }),
-      })),
-    })),
+    groups: snap.groups.map((group) => ({ ...group, items: group.items.map(tr) })),
     frames: snap.frames.map((frame) => ({ ...frame, name: translateDefaultFrameName(frame.name, lang) })),
   };
 }
 
 const SEED_FRAMES: Frame[] = [{ id: "seedF1", name: "Home", x: 0, y: 0 }];
+
+/** one part anywhere in a group's tree, containers searched depth first */
+function findItemIn(items: Item[], id: string): Item | null {
+  for (const it of items) {
+    if (it.id === id) return it;
+    const found = it.children ? findItemIn(it.children, id) : null;
+    if (found) return found;
+  }
+  return null;
+}
+
+/** the tree with one part rewritten wherever it sits; a container's children also carry
+ *  the offsets that place them inside it */
+function patchItemIn(items: Item[], id: string, patch: Partial<Item> & { x?: number; y?: number }): Item[] {
+  return items.map((it) =>
+    it.id === id
+      ? { ...it, ...patch }
+      : it.children
+        ? { ...it, children: patchItemIn(it.children, id, patch) as PlacedItem[] }
+        : it,
+  );
+}
+
+/** the tree without the parts `gone` names, and without a container that loses them all */function pruneItems(items: Item[], gone: Set<string>): Item[] {
+  const out: Item[] = [];
+  for (const it of items) {
+    if (gone.has(it.id)) continue;
+    if (it.children) {
+      const children = pruneItems(it.children, gone);
+      out.push(children.length ? { ...it, children: children as PlacedItem[] } : { ...it, children: undefined });
+    } else out.push(it);
+  }
+  return out;
+}
 
 /** Documents saved before the bars grew their system insets have the navigation
  *  bar flush with the old 80dp bottom; keep it on the bottom edge. */
@@ -421,6 +471,12 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const [rightW, setRightW] = useState(320);
   const [rightTab, setRightTab] = useState<"edit" | "prompt">("edit");
   const [favorites, setFavorites] = useState<Kind[]>([]);
+  /** the author's own composite parts, offered by the palette beside the kinds */
+  const [customParts, setCustomParts] = useState<CustomPart[]>([]);
+  /** the dialog that composes a new composite part */
+  const [composeOpen, setComposeOpen] = useState(false);
+  /** the saved composite the dialog is changing, if any */
+  const [composeEditing, setComposeEditing] = useState<CustomPart | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
   const [selectedLinkId, setSelectedLinkId] = useState<string | null>(null);
@@ -612,9 +668,16 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
         viewBeforePreview.current = null;
       }
     }
+    const raw = Array.isArray(doc.groups) ? doc.groups : null;
+    const readable = raw ? readableGroups(raw) : null;
+    /* A document whose parts this build cannot draw is not one of ours — an older save, or
+     * another build on the same origin. Restoring half of it would leave one document's
+     * screens holding another's parts, so it is left alone and the canvas keeps what it has;
+     * a document with no parts at all is the author's own "clear all" and is restored. */
+    const ours = !readable || readable.length > 0 || (raw?.length ?? 0) === 0;
     const frames = Array.isArray(doc.frames) ? doc.frames : framesRef.current;
-    if (Array.isArray(doc.groups)) setGroups(migrateGroups(doc.groups, frames));
-    if (Array.isArray(doc.frames)) setFrames(doc.frames);
+    if (ours && readable) setGroups(migrateGroups(readable, frames));
+    if (ours && Array.isArray(doc.frames)) setFrames(doc.frames);
     if (typeof doc.paletteKey === "string" && doc.paletteKey) setPaletteKey(doc.paletteKey);
     else if (reset) setPaletteKey("purple");
     /* normalize once so a scheme saved before the secondary role gets it and keeps it on re-save */
@@ -632,6 +695,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     else if (reset) setPromptEdit(undefined);
     if (isPlatform(doc.platform)) setPlatform(doc.platform);
     else if (reset) setPlatform(null);
+    if (Array.isArray(doc.customParts)) setCustomParts(doc.customParts);
+    else if (reset) setCustomParts([]);
   };
 
   useEffect(() => {
@@ -762,10 +827,10 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     try {
       localStorage.setItem(
         DOC_KEY,
-        JSON.stringify({ groups, frames, paletteKey, frame, title, brief, promptEdit, platform: platform ?? undefined, customPalette: customPalette ?? undefined, dynamicColor, theme }),
+        JSON.stringify({ groups, frames, paletteKey, frame, title, brief, promptEdit, platform: platform ?? undefined, customPalette: customPalette ?? undefined, dynamicColor, theme, customParts: customParts.length ? customParts : undefined }),
       );
     } catch {}
-  }, [editAccess, groups, frames, paletteKey, frame, title, brief, promptEdit, platform, customPalette, dynamicColor, theme]);
+  }, [editAccess, groups, frames, paletteKey, frame, title, brief, promptEdit, platform, customPalette, dynamicColor, theme, customParts]);
 
   useEffect(() => {
     if (!loadedRef.current) return;
@@ -798,7 +863,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   /* ---------- measurement (text-sized kinds) ---------- */
   const allItems = useMemo(() => {
     const map = new Map<string, Item>();
-    for (const g of groups) for (const it of g.items) map.set(it.id, it);
+    for (const it of itemsOf(groups)) map.set(it.id, it);
     if (drag) map.set(drag.item.id, drag.item);
     return [...map.values()];
   }, [groups, drag]);
@@ -1193,12 +1258,12 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     setDrag({ ...d });
   };
 
-  const onPartPointerDown = (e: React.PointerEvent, kind: Kind) => {
+  /** starts carrying a fresh part from the palette (a kind, or a whole composite) */
+  const startPartDrag = (e: React.PointerEvent, item: Item) => {
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
     flushPending();
-    const item = makeItem(kind);
     const pt = toWorld(e.clientX, e.clientY);
     const sz = sizeOf(item, widthsRef.current);
     const offX = Math.min(sz.w / 2, 90);
@@ -1225,6 +1290,11 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     dragRef.current = d;
     setDrag({ ...d });
   };
+
+  const onPartPointerDown = (e: React.PointerEvent, kind: Kind) => startPartDrag(e, makeItem(kind));
+
+  /** a composite drops as one container holding the parts it was composed of */
+  const onCompositePointerDown = (e: React.PointerEvent, part: CustomPart) => startPartDrag(e, compositeInstance(part, uid));
 
   const isDragging = drag !== null;
 
@@ -1468,10 +1538,15 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const itemRects = useCallback(() => {
     const out: { id: string; l: number; t: number; r: number; b: number }[] =
       [];
+    /* a container's children sit inside it: their rects follow it, and are reported so
+       marquee selection, duplication and overlap tests see them too */
+    const push = (it: Item, x: number, y: number) => {
+      const sz = sizeOf(it, widthsRef.current);
+      out.push({ id: it.id, l: x, t: y, r: x + sz.w, b: y + sz.h });
+      for (const c of it.children ?? []) push(c, x + c.x, y + c.y);
+    };
     for (const g of groupsRef.current) {
-      for (const pl of layoutOf(g, widthsRef.current)) {
-        out.push({ id: pl.item.id, l: pl.x, t: pl.y, r: pl.x + pl.w, b: pl.y + pl.h });
-      }
+      for (const pl of layoutOf(g, widthsRef.current)) push(pl.item, pl.x, pl.y);
     }
     return out;
   }, []);
@@ -1601,6 +1676,29 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
         setGroups((gs) => gs.map((x) => (x.id === g.id ? placed : x)));
         return;
       }
+      if (g.kind === "child") {
+        const z = viewRef.current.z;
+        const dx = (e.clientX - g.sx) / z;
+        const dy = (e.clientY - g.sy) / z;
+        if (!g.moved) {
+          if (Math.hypot(dx, dy) * z < 3) return;
+          g.moved = true;
+          snapshot();
+        }
+        /* the part stays inside the container that holds it: long enough to stay on
+           screen, and never past the box's own edges */
+        const gr = groupsRef.current.find((x) => x.id === g.groupId);
+        if (!gr) return;
+        const parent = findItemIn(gr.items, g.parentId);
+        const kid = findItemIn(gr.items, g.id) as PlacedItem | null;
+        if (!parent || !kid) return;
+        const box = sizeOf(parent, widthsRef.current);
+        const sz = sizeOf(kid, widthsRef.current);
+        const nx = Math.round(Math.min(Math.max(0, box.w - sz.w), Math.max(0, g.ox + dx)));
+        const ny = Math.round(Math.min(Math.max(0, box.h - sz.h), Math.max(0, g.oy + dy)));
+        setGroups((gs) => gs.map((x) => (x.id === g.groupId ? { ...x, items: patchItemIn(x.items, g.id, { x: nx, y: ny }) } : x)));
+        return;
+      }
       if (g.kind === "frame") {
         const z = viewRef.current.z;
         const dx = (e.clientX - g.sx) / z;
@@ -1689,10 +1787,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   /* ---------- editing ---------- */
   const primaryId = selectedIds[selectedIds.length - 1] ?? null;
   const selected = useMemo(() => {
-    for (const g of groups) {
-      const it = g.items.find((i) => i.id === primaryId);
-      if (it) return it;
-    }
+    /* a part inside a container is selectable like any other */
+    for (const it of itemsOf(groups)) if (it.id === primaryId) return it;
     return drag?.item.id === primaryId ? (drag?.item ?? null) : null;
   }, [groups, primaryId, drag]);
 
@@ -1736,11 +1832,22 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       return;
     }
     snapshotFor(id + ":" + Object.keys(patch).join(","));
+    /* a container that changes size carries its contents with it, in proportion; a part
+     * anywhere in the tree — a container's child included — takes the patch */
+    const owner = groupsRef.current.find((g) => !!findItemIn(g.items, id));
+    const before = owner ? findItemIn(owner.items, id) : null;
+    let shaped = patch;
+    if (before?.children?.length && ("size" in patch || "size2" in patch)) {
+      const was = sizeOf(before, widthsRef.current);
+      const now = sizeOf({ ...before, ...patch }, widthsRef.current);
+      shaped = { ...patch, children: scaleChildren(before.children, now.w / Math.max(1, was.w), now.h / Math.max(1, was.h)) };
+    }
     setGroups((prev) =>
       "railExpanded" in patch || "railModal" in patch ? updateRail(prev, framesRef.current, widthsRef.current, id, patch) : prev.map((g) => {
         const idx = g.items.findIndex((it) => it.id === id);
-        if (idx < 0) return g;
-        const next = { ...g.items[idx], ...patch };
+        /* a part inside a container is written where it sits; only a run member shifts its run */
+        if (idx < 0) return findItemIn(g.items, id) ? { ...g, items: patchItemIn(g.items, id, shaped) } : g;
+        const next = { ...g.items[idx], ...shaped };
         const { dx, dy } = resizes ? resizeShift(g, g.items[idx], next) : { dx: 0, dy: 0 };
         if (dx || dy) instantRef.current.add(g.id);
         return {
@@ -1759,6 +1866,10 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const deleteSelected = useCallback(() => {
     if (selectedIds.length === 0) return;
     const ids = new Set(selectedIds);
+    /* deleting a container takes everything inside it along */
+    for (const g of groupsRef.current) for (const it of g.items) {
+      if (ids.has(it.id)) for (const sub of subtreeOf(it)) ids.add(sub.id);
+    }
     /* nothing deletable when every selected part sits in a locked group: no snapshot, keep the selection */
     if (groupsRef.current.every((g) => g.locked || !g.items.some((it) => ids.has(it.id)))) {
       showToast(lockedGroupMsg());
@@ -1770,7 +1881,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
         .map((g) => {
           /* Delete / Backspace leaves a locked group and its parts alone */
           if (g.locked) return g;
-          if (g.free) return collapseFree({ ...g, items: g.items.filter((it) => !ids.has(it.id)) }, widthsRef.current);
+          if (g.free) return collapseFree({ ...g, items: pruneItems(g.items, ids) }, widthsRef.current);
           let x = g.x;
           let y = g.y;
           let items = g.items;
@@ -1781,7 +1892,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
             items = items.slice(1);
           }
           if (x !== g.x || y !== g.y) instantRef.current.add(g.id);
-          return { ...g, x, y, items: items.filter((it) => !ids.has(it.id)) };
+          return { ...g, x, y, items: pruneItems(items, ids) };
         })
         .filter((g) => g.items.length > 0),
     );
@@ -1793,7 +1904,9 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     /* a selected hand-made group is copied whole, keeping its layout */
     const fg = groupsRef.current.find((g) => g.free && g.items.some((it) => it.id === selected.id));
     if (fg && fg.items.every((it) => selectedIds.includes(it.id))) {
-      const idMap = new Map(fg.items.map((it) => [it.id, uid()]));
+      /* a container inside the group brings its own children along, each with a fresh id */
+      const idMap = new Map<string, string>();
+      const items = fg.items.map((it) => copySubtree(it, uid, idMap));
       const pos: Record<string, { x: number; y: number }> = {};
       for (const it of fg.items) pos[idMap.get(it.id)!] = fg.pos?.[it.id] ?? { x: 0, y: 0 };
       const copyG: Group = {
@@ -1803,20 +1916,31 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
         x: fg.x + 24,
         y: fg.y + 24,
         pos,
-        items: fg.items.map((it) => ({ ...it, id: idMap.get(it.id)!, tabs: it.tabs?.map((t) => ({ ...t })) })),
+        items,
       };
       snapshot();
       setGroups((prev) => [...prev, copyG]);
       setSelectedIds(copyG.items.map((it) => it.id));
       return;
     }
+    const isTop = groupsRef.current.some((g) => g.items.some((it) => it.id === selected.id));
+    if (!isTop) {
+      /* a part inside a container is copied right where it sits, a step over */
+      const parent = parentOf(groupsRef.current, selected.id);
+      const cur = parent?.children?.find((c) => c.id === selected.id);
+      if (!parent || !cur) return;
+      const born: PlacedItem = { ...(copySubtree(selected, uid, new Map()) as PlacedItem), x: cur.x + 16, y: cur.y + 16 };
+      snapshot();
+      setGroups((prev) =>
+        prev.map((g) => (!!findItemIn(g.items, parent.id) ? { ...g, items: patchItemIn(g.items, parent.id, { children: [...(parent.children ?? []), born] as PlacedItem[] }) } : g)),
+      );
+      setSelectedIds([born.id]);
+      return;
+    }
     const rect = itemRects().find((r) => r.id === selected.id);
     if (!rect) return;
-    const copy: Item = {
-      ...selected,
-      id: uid(),
-      tabs: selected.tabs?.map((t) => ({ ...t })),
-    };
+    /* a copied part brings its own container contents along, each with a fresh id */
+    const copy: Item = copySubtree(selected, uid, new Map());
     /* a copied modal rail starts collapsed and standard: a screen shows one modal rail, and
        the copy sits inward of the edge the original remembered */
     if (copy.kind === "navRail" && copy.railModal) {
@@ -1847,7 +1971,17 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     if (!selected) return;
     const ids = new Set(selectedIds);
     const g = groupsRef.current.find((x) => x.items.some((it) => it.id === selected.id));
-    if (!g) return;
+    /* a part inside a container is kept on its own: pasting brings it back as its own layer */
+    const home = g ?? groupsRef.current.find((x) => !!findItemIn(x.items, selected.id));
+    if (!home) return;
+    if (!g) {
+      const rect = itemRects().find((r) => r.id === selected.id);
+      if (!rect) return;
+      const lone: Group = { id: home.id, x: rect.l, y: rect.t, axis: connectSpecOf(selected)?.axis ?? "x", items: [copySubtree(selected, uid, new Map())] };
+      const f = frameOfGroup(home, framesRef.current, widthsRef.current);
+      clipboardRef.current = { group: lone, dx: f ? lone.x - f.x : 0, dy: f ? lone.y - f.y : 0, frameId: f?.id ?? null };
+      return;
+    }
     let group: Group;
     if (g.items.every((it) => ids.has(it.id))) {
       /* a copy starts unlocked; the lock belongs to the original */
@@ -1855,7 +1989,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     } else {
       const rect = itemRects().find((r) => r.id === selected.id);
       if (!rect) return;
-      group = { id: g.id, x: rect.l, y: rect.t, axis: connectSpecOf(selected)?.axis ?? "x", items: [structuredClone(selected)] };
+      group = { id: g.id, x: rect.l, y: rect.t, axis: connectSpecOf(selected)?.axis ?? "x", items: [copySubtree(selected, uid, new Map())] };
     }
     /* a group on no screen keeps its canvas position; one on a screen keeps its offset there */
     const f = frameOfGroup(g, framesRef.current, widthsRef.current);
@@ -1880,17 +2014,11 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       x += 24;
       y += 24;
     }
-    const idMap = new Map(clip.group.items.map((it) => [it.id, uid()]));
+    const idMap = new Map<string, string>();
+    const items = clip.group.items.map((it) => copySubtree(it, uid, idMap));
     const pos: Record<string, { x: number; y: number }> | undefined = clip.group.pos ? {} : undefined;
     if (pos) for (const it of clip.group.items) pos[idMap.get(it.id)!] = clip.group.pos?.[it.id] ?? { x: 0, y: 0 };
-    const copy: Group = {
-      ...structuredClone(clip.group),
-      id: uid(),
-      x,
-      y,
-      pos,
-      items: clip.group.items.map((it) => ({ ...structuredClone(it), id: idMap.get(it.id)! })),
-    };
+    const copy: Group = { ...clip.group, id: uid(), x, y, pos, items };
     snapshot();
     setGroups((prev) => [...prev, copy]);
     setSelectedIds(copy.items.map((it) => it.id));
@@ -2042,6 +2170,140 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     setSelectedIds(picked.map((it) => it.id));
   }, [selectedIds, itemRects, snapshot]);
 
+  /* ---------- containers: parts that hold other parts ---------- */
+
+  /** the parts of the selection that still sit on a screen (a child already inside
+   *  another container is left where it is) */
+  const pickedTop = useCallback((ids: Set<string>) => {
+    const rects = new Map(itemRects().map((r) => [r.id, r]));
+    const picked: Item[] = [];
+    let top = -1;
+    groupsRef.current.forEach((g, i) => {
+      for (const it of g.items) if (ids.has(it.id)) {
+        picked.push(it);
+        top = i;
+      }
+    });
+    return { picked, rects, top };
+  }, [itemRects]);
+
+  /** Wraps the selection in a new box: the container is the selection's bounding box with
+   *  a margin, and every selected part becomes a child with its place inside it kept. */
+  const containerizeSelected = useCallback(() => {
+    const ids = new Set(selectedIds);
+    if (ids.size === 0) return;
+    if (groupsRef.current.some((g) => g.locked && g.items.some((it) => ids.has(it.id)))) {
+      showToast(lockedGroupMsg());
+      return;
+    }
+    const { picked, rects, top } = pickedTop(ids);
+    if (picked.length === 0) return;
+    const l = Math.min(...picked.map((it) => rects.get(it.id)!.l));
+    const t = Math.min(...picked.map((it) => rects.get(it.id)!.t));
+    const r = Math.max(...picked.map((it) => rects.get(it.id)!.r));
+    const b = Math.max(...picked.map((it) => rects.get(it.id)!.b));
+    const boxW = Math.min(PHONE_W, Math.round(r - l + CONTAINER_PAD * 2));
+    const boxH = Math.round(b - t + CONTAINER_PAD * 2);
+    const box = makeItem("box");
+    box.id = uid();
+    box.size = boxW;
+    box.size2 = boxH;
+    box.children = picked.map((it) => ({ ...it, x: Math.round(rects.get(it.id)!.l - l + CONTAINER_PAD), y: Math.round(rects.get(it.id)!.t - t + CONTAINER_PAD) }));
+    const ng: Group = { id: uid(), x: Math.round(l - CONTAINER_PAD), y: Math.round(t - CONTAINER_PAD), axis: "x", items: [box], free: true };
+    snapshot();
+    setGroups((prev) => {
+      const out: Group[] = [];
+      prev.forEach((g, i) => {
+        if (g.free) {
+          const rest = g.items.filter((it) => !ids.has(it.id));
+          if (rest.length) out.push(collapseFree({ ...g, items: rest }, widthsRef.current));
+        } else {
+          const items = g.items.filter((it) => !ids.has(it.id));
+          if (items.length) out.push({ ...g, items });
+        }
+        if (i === top) out.push(ng);
+      });
+      return out.length ? out : [ng];
+    });
+    setSelectedIds([box.id]);
+    setRightTab("edit");
+  }, [selectedIds, pickedTop, snapshot]);
+
+  /** Puts the rest of the selection inside the one box the selection holds. */
+  const adoptSelected = useCallback(() => {
+    const ids = new Set(selectedIds);
+    const { picked, rects } = pickedTop(ids);
+    const boxes = picked.filter((it) => it.kind === "box");
+    if (boxes.length !== 1 || picked.length < 2) return;
+    const box = boxes[0];
+    const boxRect = rects.get(box.id)!;
+    const kids = picked.filter((it) => it.id !== box.id);
+    if (groupsRef.current.some((g) => g.locked && g.items.some((it) => it.id === box.id))) {
+      showToast(lockedGroupMsg());
+      return;
+    }
+    snapshot();
+    setGroups((prev) => {
+      const out: Group[] = [];
+      for (const g of prev) {
+        /* only the box stays where it was; the adopted parts leave their groups */
+        const rest = g.items.filter((it) => !ids.has(it.id) || it.id === box.id);
+        if (rest.length === 0) continue;
+        out.push(g.free ? collapseFree({ ...g, items: rest }, widthsRef.current) : { ...g, items: rest });
+      }
+      return out.map((g) => ({
+        ...g,
+        items: g.items.map((it) =>
+          it.id === box.id
+            ? {
+                ...it,
+                children: [
+                  ...(it.children ?? []),
+                  ...kids.map((k) => ({ ...k, x: Math.round(rects.get(k.id)!.l - boxRect.l), y: Math.round(rects.get(k.id)!.t - boxRect.t) })),
+                ] as PlacedItem[],
+              }
+            : it,
+        ),
+      }));
+    });
+    setSelectedIds([box.id]);
+  }, [selectedIds, pickedTop, snapshot]);
+
+  /** Takes the selection back out of its container, at the place it sits now. Naming a
+   *  container lets all of its children go; naming a child lets that one go. */
+  const unlinkSelected = useCallback(() => {
+    const ids = new Set(selectedIds);
+    if (ids.size === 0) return;
+    const rects = new Map(itemRects().map((r) => [r.id, r]));
+    snapshot();
+    setGroups((prev) => {
+      const freeing = new Set<string>();
+      for (const g of prev) for (const it of g.items) {
+        if (ids.has(it.id)) for (const c of it.children ?? []) freeing.add(c.id);
+        if ((it.children ?? []).some((c) => ids.has(c.id))) freeing.add(it.id);
+      }
+      const out: Group[] = [];
+      for (const g of prev) {
+        const freed: { child: PlacedItem; owner: Item }[] = [];
+        const items = g.items.map((it) => {
+          if (!it.children) return it;
+          const keep = it.children.filter((c) => !freeing.has(c.id));
+          for (const c of it.children) if (freeing.has(c.id)) freed.push({ child: c, owner: it });
+          return { ...it, children: keep.length ? keep : undefined };
+        });
+        out.push({ ...g, items });
+        /* a freed part lands on the screen as its own layer, where it was drawn */
+        for (const { child, owner } of freed) {
+          const o = rects.get(owner.id);
+          const { x: _x, y: _y, ...it } = child;
+          out.push({ id: uid(), x: (o?.l ?? g.x) + child.x, y: (o?.t ?? g.y) + child.y, axis: "x", items: [it], free: true });
+        }
+      }
+      return out.filter((g) => g.items.length > 0);
+    });
+    setSelectedIds([]);
+  }, [selectedIds, snapshot]);
+
   /** Split a free group back into single runs at their current positions, in the same layer slot. */
   const ungroupSelected = useCallback(() => {
     const g = selectedGroup;
@@ -2093,12 +2355,24 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           .filter((g) => !g.locked && g.items.some((it) => ids.has(it.id)))
           .map((g) => g.id),
       );
-      if (moving.size === 0) return;
+      /* a part inside a container moves within it instead of moving the whole group */
+      const inside = [...ids].filter(
+        (id) => !groupsRef.current.some((g) => g.items.some((it) => it.id === id)) && groupsRef.current.some((g) => !!findItemIn(g.items, id)),
+      );
+      if (moving.size === 0 && inside.length === 0) return;
       snapshotFor("nudge:" + selectedIds.join(","));
       setGroups((prev) =>
-        prev.map((g) =>
-          moving.has(g.id) ? { ...g, x: g.x + dx, y: g.y + dy } : g,
-        ),
+        prev.map((g) => {
+          const kids = inside.filter((id) => !!findItemIn(g.items, id));
+          const moved = moving.has(g.id) ? { ...g, x: g.x + dx, y: g.y + dy } : g;
+          if (kids.length === 0) return moved;
+          let items = moved.items;
+          for (const id of kids) {
+            const it = findItemIn(items, id) as PlacedItem | null;
+            if (it) items = patchItemIn(items, id, { x: it.x + dx, y: it.y + dy });
+          }
+          return { ...moved, items };
+        }),
       );
     },
     [selectedIds, selectedFrameId, snapshotFor],
@@ -2606,6 +2880,14 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   };
 
   /** the runs of one screen drawn with plain divs: the export layer */
+  /** a container's children as the plain, deterministic renderer needs them */
+  const staticChildren = (parent: Item): React.ReactNode =>
+    [...(parent.children ?? [])].sort(byLayer).map((c) => (
+      <div key={c.id} style={{ position: "absolute", left: c.x, top: c.y }}>
+        <M3Static item={c} palette={p} overlay={staticChildren(c)} />
+      </div>
+    ));
+
   const renderExport = (f: Frame) => {
     const gs = groups.filter((g) => frameOfGroup(g, frames, widths)?.id === f.id);
     const { w, h } = frameSizeOf(f);
@@ -2630,6 +2912,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   palette={p}
                   radii={corners.get(pl.item.id)}
                   style={MEASURED.includes(pl.item.kind) ? undefined : { width: pl.w, height: pl.h }}
+                  overlay={staticChildren(pl.item)}
                 />
               </div>
             )))(freeRadii(g, widths))
@@ -2663,6 +2946,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   palette={p}
                   radii={radii}
                   style={MEASURED.includes(it.kind) ? undefined : { width: sizeOf(it, widths).w, height: sizeOf(it, widths).h }}
+                  overlay={staticChildren(it)}
                 />
               );
             })}
@@ -2697,6 +2981,12 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     setView(v);
     window.setTimeout(() => setCameraEasing(false), SETTLE_MS + 40);
   };
+  /** Opens the flow diagram: the page reads the same autosaved document, so the
+   *  transitions drawn there are the ones on the canvas. */
+  const openFlow = () => {
+    window.location.href = `${BASE_PATH}/flow/`;
+  };
+
   const openPreview = (startId?: string | null) => {
     if (frame !== "phone") {
       changeFrame("phone");
@@ -2878,8 +3168,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const dragSize = drag ? sizeOf(drag.item, widths) : { w: 0, h: 0 };
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const doc: Doc = useMemo(
-    () => ({ groups, frames, paletteKey, frame, title, brief, promptEdit, platform: platform ?? undefined, customPalette: customPalette ?? undefined, dynamicColor, theme }),
-    [groups, frames, paletteKey, frame, title, brief, promptEdit, platform, customPalette, dynamicColor, theme],
+    () => ({ groups, frames, paletteKey, frame, title, brief, promptEdit, platform: platform ?? undefined, customPalette: customPalette ?? undefined, dynamicColor, theme, customParts: customParts.length ? customParts : undefined }),
+    [groups, frames, paletteKey, frame, title, brief, promptEdit, platform, customPalette, dynamicColor, theme, customParts],
   );
   /** the same document, for callbacks that were created on an earlier render */
   const docRef = useRef(doc);
@@ -3006,10 +3296,6 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     if (selectedFrameId) return frames.find((f) => f.id === selectedFrameId) ?? null;
     return frames.find((f) => f.id === layersFrameId) ?? frames[0] ?? null;
   }, [frame, primaryId, groups, frameOf, frames, selectedFrameId, layersFrameId]);
-  const layerGroups = useMemo(
-    () => (layersFrame ? groups.filter((g) => frameOf.get(g.id) === layersFrame.id) : []),
-    [groups, frameOf, layersFrame],
-  );
   /** A drag in the layers panel is one undo step: the snapshot is taken when it starts,
    *  and the reorders it fires along the way record nothing more. */
   const layerDragRef = useRef(false);
@@ -3065,6 +3351,47 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     setGroups((gs) => gs.map((x) => (x.id === groupId ? { ...x, items, pos } : x)));
   };
 
+  /** A part being moved inside its container: the pointer moves it in the container's own
+   *  coordinates, so it stays inside the box it belongs to. */
+  const onChildPointerDown = (e: React.PointerEvent, g: Group, parent: Item, child: PlacedItem) => {
+    if (e.button === 1 || modeRef.current === "hand" || spaceRef.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      startPan(e.clientX, e.clientY);
+      return;
+    }
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    flushPending();
+    setSelectedIds((cur) => (e.shiftKey ? [...cur.filter((x) => x !== child.id), child.id] : [child.id]));
+    setSelectedFrameId(null);
+    setSelectedLinkId(null);
+    setRightTab("edit");
+    if (g.locked) return;
+    const gg: Gesture = { kind: "child", groupId: g.id, parentId: parent.id, id: child.id, sx: e.clientX, sy: e.clientY, ox: child.x, oy: child.y, moved: false };
+    gestureRef.current = gg;
+    setGesture(gg);
+  };
+
+  /** the children of one part, drawn inside its box in the order their levels ask for */
+  const childNodes = (parent: Item, g: Group): React.ReactNode =>
+    [...(parent.children ?? [])].sort(byLayer).map((c) => (
+      <div key={c.id} style={{ position: "absolute", left: c.x, top: c.y }}>
+        <M3Node
+          item={c}
+          palette={p}
+          widths={widths}
+          pressed={pressedId === c.id}
+          selected={selectedSet.has(c.id)}
+          inRun={false}
+          interactive={!handMode}
+          onPointerDown={(e) => onChildPointerDown(e, g, parent, c)}
+          overlay={childNodes(c, g)}
+        />
+      </div>
+    ));
+
   const renderGroup = (g: Group, ox: number, oy: number) => {
     const modalRail = modalRailOf(g);
     if (g.free) {
@@ -3100,6 +3427,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                 inRun={runIds.has(pl.item.id)}
                 interactive={!handMode}
                 onPointerDown={(e) => onItemPointerDown(e, g, pl.index, pl.item)}
+                overlay={childNodes(pl.item, g)}
               />
             </div>
           ))}
@@ -3203,6 +3531,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
               inRun={g.items.length > 1}
               interactive={!handMode}
               onPointerDown={(e) => onItemPointerDown(e, g, c.index, c.item)}
+              overlay={childNodes(c.item, g)}
             />
           );
         })}
@@ -3467,6 +3796,20 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                       )
                     }
                     onPartPointerDown={onPartPointerDown}
+                    customParts={customParts}
+                    onCompositePointerDown={onCompositePointerDown}
+                    onNewComposite={() => {
+                      setComposeEditing(null);
+                      setComposeOpen(true);
+                    }}
+                    onEditComposite={(part) => {
+                      setComposeEditing(part);
+                      setComposeOpen(true);
+                    }}
+                    onDeleteComposite={(part) => {
+                      setCustomParts((cur) => cur.filter((x) => x.id !== part.id));
+                      showToast(t("deleteComposite", lang), 1400, "delete");
+                    }}
                   />
                 ) : leftTab === "color" ? (
                   <ColorPanel
@@ -3498,7 +3841,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                       setSelectedIds([]);
                       setSelectedFrameId(id);
                     }}
-                    groups={layerGroups}
+                    groups={groups}
+                    frameIdOf={(id) => frameOf.get(id) ?? null}
                     widths={widths}
                     selectedIds={selectedIds}
                     onSelect={(ids, add) => {
@@ -3857,6 +4201,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
             note={aiNote}
             onSaveProject={() => saveProject(doc)}
             onOpenProject={() => projectFileRef.current?.click()}
+            onFlow={() => openFlow()}
             onShare={!isMobile ? () => setShareOpen(true) : undefined}
             shareState={draftBusy ? "busy" : draftBefore ? "review" : "idle"}
             onDraftKeep={keepDraft}
@@ -4088,6 +4433,11 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   multi={selectedIds.length}
                   grouped={!!selectedGroup}
                   onGroup={groupSelected}
+                  onContainerize={selectedIds.length > 1 ? containerizeSelected : undefined}
+                  onAdopt={selectedIds.length > 1 && selectedIds.filter((id) => groups.some((g) => g.items.some((it) => it.id === id && it.kind === "box"))).length === 1 ? adoptSelected : undefined}
+                  onUnlink={selectedIds.length > 0 ? unlinkSelected : undefined}
+                  childCount={selected?.children?.length ?? 0}
+                  inContainer={!!selected && !!parentOf(groups, selected.id)}
                   onUngroup={ungroupSelected}
                 />
               ) : (
@@ -4131,6 +4481,33 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
             setPendingImport(null);
           }}
         />
+
+        {/* composing a set of parts to keep in the palette, or changing a saved one */}
+        {composeOpen && (
+          <CompositeDialog
+            p={p}
+            editing={composeEditing}
+            initial={
+              /* what the author already selected is offered as the starting point */
+              selected?.children?.length
+                ? selected.children.map((c) => ({ ...c }))
+                : selected
+                  ? [{ ...selected, x: 24, y: 24 } as PlacedItem]
+                  : null
+            }
+            onCancel={() => {
+              setComposeOpen(false);
+              setComposeEditing(null);
+            }}
+            onDone={(part) => {
+              /* the palette keeps it; it is part of the document, so sharing a link carries it too */
+              setCustomParts((cur) => (composeEditing ? cur.map((x) => (x.id === composeEditing.id ? { ...part, id: x.id } : x)) : [...cur, { ...part, id: uid() }]));
+              setComposeOpen(false);
+              setComposeEditing(null);
+              showToast(t(composeEditing ? "editComposite" : "composite", lang), 1400, "widgets");
+            }}
+          />
+        )}
 
         <ShareDialog
           p={p}

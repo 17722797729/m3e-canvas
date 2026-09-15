@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { FrameMode, Palette, Place } from "@/lib/tokens";
 import { IconBtn, Segmented, TidyButton, TidyState } from "./ui";
@@ -86,6 +87,7 @@ export function Toolbar({
   note,
   onSaveProject,
   onOpenProject,
+  onFlow,
   onShare,
   shareState = "idle",
   onDraftKeep,
@@ -124,6 +126,8 @@ export function Toolbar({
   note?: { text: string; icon: string } | null;
   onSaveProject?: () => void;
   onOpenProject?: () => void;
+  /** opens the flow diagram page, beside the project buttons */
+  onFlow?: () => void;
   /** opens the "ask an AI" dialog from the left end of the zoom row */
   onShare?: () => void;
   /** busy while a model drafts; review while the draft waits to be kept or undone */
@@ -136,6 +140,13 @@ export function Toolbar({
   quickUndo?: boolean;
 }) {
   const lang = useLang();
+  /* the zoom readout doubles as an input: type a percentage in and press Enter */
+  const [zoomText, setZoomText] = useState<string | null>(null);
+  const commitZoom = () => {
+    const typed = Number.parseFloat((zoomText ?? "").replace("%", "").trim());
+    setZoomText(null);
+    if (Number.isFinite(typed) && typed > 0) onZoom(Math.min(4, Math.max(0.1, typed / 100)));
+  };
   if (mobile) {
     const S = 42;
     return (
@@ -257,25 +268,43 @@ export function Toolbar({
             title={t("zoomOut", lang)}
             size={40}
           />
-          <button
-            onClick={onFit}
-            title={t("fit", lang)}
-            className="m3-press"
+          <input
+            value={zoomText ?? String(Math.round(zoom * 100))}
+            onChange={(e) => setZoomText(e.target.value)}
+            onFocus={(e) => {
+              setZoomText(String(Math.round(zoom * 100)));
+              e.currentTarget.select();
+            }}
+            onBlur={commitZoom}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+              else if (e.key === "Escape") {
+                setZoomText(null);
+                e.currentTarget.blur();
+              }
+            }}
+            inputMode="numeric"
+            aria-label={t("zoomLevel", lang)}
+            title={t("zoomLevel", lang)}
             style={{
-              height: 40,
-              minWidth: 56,
-              borderRadius: 20,
-              border: "none",
-              background: "transparent",
+              width: 44,
+              height: 32,
+              borderRadius: 16,
+              border: `1px solid ${zoomText === null ? "transparent" : p.primary}`,
+              background: zoomText === null ? "transparent" : p.surfaceContainerHigh,
               color: p.onSurface,
               fontSize: 13,
               fontWeight: 600,
-              cursor: "pointer",
+              /* the number sits at the right edge until it is being typed, then centres */
+              textAlign: zoomText === null ? "right" : "center",
+              padding: 0,
+              outline: "none",
               fontVariantNumeric: "tabular-nums",
             }}
-          >
-            {Math.round(zoom * 100)}%
-          </button>
+          />
+          <span aria-hidden style={{ color: p.onSurfaceVariant, fontSize: 13, fontWeight: 600, marginLeft: -2, fontVariantNumeric: "tabular-nums" }}>
+            %
+          </span>
           <IconBtn
             icon="add"
             p={p}
@@ -432,6 +461,13 @@ export function Toolbar({
             </Popover>
           )}
         </Pill>
+
+        {/* the flow diagram sits right of the upload button, as the screen's own map */}
+        {onFlow && (
+          <Pill p={p}>
+            <IconBtn icon="account_tree" p={p} onClick={onFlow} title={t("viewFlow", lang)} size={40} />
+          </Pill>
+        )}
       </div>
     </>
   );

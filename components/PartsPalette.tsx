@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CATEGORIES, KIND_ORDER, KIND_SPEC, Category, Kind, Palette } from "@/lib/tokens";
+import { CATEGORIES, CustomPart, KIND_ORDER, KIND_SPEC, Category, Kind, Palette } from "@/lib/tokens";
 import { Icon } from "./M3Node";
 import { KIND_TEXT, t, useLang } from "@/lib/i18n";
 import { Field, Section, Tile } from "./ui";
@@ -15,13 +15,28 @@ const CATEGORY_TEXT = {
 export function PartsPalette({
   palette: p,
   favorites,
+  customParts = [],
   onToggleFavorite,
   onPartPointerDown,
+  onCompositePointerDown,
+  onNewComposite,
+  onEditComposite,
+  onDeleteComposite,
 }: {
   palette: Palette;
   favorites: Kind[];
+  /** the author's own composite parts, ready to drop onto a screen */
+  customParts?: CustomPart[];
   onToggleFavorite: (k: Kind) => void;
   onPartPointerDown: (e: React.PointerEvent, kind: Kind) => void;
+  /** starts dragging one saved composite onto the canvas */
+  onCompositePointerDown?: (e: React.PointerEvent, part: CustomPart) => void;
+  /** opens the dialog that composes a new one */
+  onNewComposite?: () => void;
+  /** opens the dialog on a saved composite, to change it */
+  onEditComposite?: (part: CustomPart) => void;
+  /** drops a saved composite from the palette */
+  onDeleteComposite?: (part: CustomPart) => void;
 }) {
   const lang = useLang();
   const [q, setQ] = useState("");
@@ -67,6 +82,57 @@ export function PartsPalette({
         {!q && favorites.length > 0 && (
           <Section id="fav" icon="star" title={t("favorites", lang)} p={p}>
             <div style={grid}>{favorites.filter((k) => KIND_SPEC[k]).map(tile)}</div>
+          </Section>
+        )}
+        {!q && (
+          /* the author's own sets of parts: compose one, then drop it as often as you like */
+          <Section id="composite" icon="widgets" title={t("composites", lang)} p={p}>
+            <div style={grid}>
+              {onNewComposite && (
+                <Tile
+                  key="__new"
+                  icon="add_box"
+                  label={t("composeNew", lang)}
+                  p={p}
+                  onClick={onNewComposite}
+                />
+              )}
+              {customParts.map((part) => (
+                /* a saved composite: drag the body to use it, the corner buttons change it */
+                <div key={part.id} style={{ position: "relative" }}>
+                  <Tile
+                    icon="dashboard_customize"
+                    label={part.name || t("composite", lang)}
+                    p={p}
+                    onPointerDown={onCompositePointerDown ? (e) => onCompositePointerDown(e, part) : undefined}
+                  />
+                  <span style={{ position: "absolute", top: 2, right: 2, display: "flex", gap: 2 }}>
+                    {onEditComposite && (
+                      <button
+                        onClick={() => onEditComposite(part)}
+                        title={t("editComposite", lang)}
+                        aria-label={t("editComposite", lang)}
+                        className="m3-press"
+                        style={{ width: 22, height: 22, borderRadius: 11, border: "none", padding: 0, background: p.surfaceContainerHighest, color: p.onSurfaceVariant, cursor: "pointer", display: "grid", placeItems: "center" }}
+                      >
+                        <Icon name="edit" size={14} />
+                      </button>
+                    )}
+                    {onDeleteComposite && (
+                      <button
+                        onClick={() => onDeleteComposite(part)}
+                        title={t("deleteComposite", lang)}
+                        aria-label={t("deleteComposite", lang)}
+                        className="m3-press"
+                        style={{ width: 22, height: 22, borderRadius: 11, border: "none", padding: 0, background: p.errorContainer, color: p.onErrorContainer, cursor: "pointer", display: "grid", placeItems: "center" }}
+                      >
+                        <Icon name="delete" size={14} />
+                      </button>
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
           </Section>
         )}
         {q ? (

@@ -9,6 +9,7 @@ import {
   FramePreset,
   HALF_W,
   Item,
+  ItemState,
   KIND_SPEC,
   PHONE_H,
   PHONE_W,
@@ -23,7 +24,11 @@ import {
   Transition,
   VARIANTS,
   Variant,
+  STATE_EFFECTS,
+  StateEffect,
   actionSlotsOf,
+  isVariant,
+  uid,
   TRACK_DEFAULT,
   TRACK_MAX,
   TRACK_MIN,
@@ -47,6 +52,7 @@ import {
   halfWidth,
   isPhoneFrame,
   isWideRail,
+  layerOf,
   onToken,
   toggleIcon,
   iconSlotsOf,
@@ -60,10 +66,10 @@ import {
 } from "@/lib/tokens";
 import { IconPicker } from "./IconPicker";
 import { Icon } from "./M3Node";
-import { ButtonRun, CardLayoutPicker, CornerIcon, Field, IconBtn, Section, Segmented, SizePresets, Slider, TextTokenChips, TidyButton, TidyState, Toggle, TokenChips } from "./ui";
+import { ButtonRun, CardLayoutPicker, CornerIcon, Field, IconBtn, ItemColorChips, Section, Segmented, SizePresets, Slider, TextTokenChips, TidyButton, TidyState, Toggle, TokenChips } from "./ui";
 import { AiWriteBtn } from "./AiPanel";
 import { popHistory } from "@/lib/ai";
-import { KIND_TEXT, SWIPE_TEXT, TRANSITION_TEXT, UIKey, t, useLang } from "@/lib/i18n";
+import { KIND_TEXT, Lang, SWIPE_TEXT, TRANSITION_TEXT, UIKey, t, useLang } from "@/lib/i18n";
 
 /** A text field for a web address: what is typed stays in the box, and only a complete
  *  http(s) address (or an emptied box) reaches the part. */
@@ -223,6 +229,16 @@ export function FrameSizePicker({
 
 /** Downscale a picked file so the document stays small enough for localStorage. */
 function readImage(file: File): Promise<string> {
+  /* an SVG is kept as it is: it stays sharp at any zoom, and it may have no intrinsic
+     size for a canvas to draw */
+  if (file.type === "image/svg+xml" || /\.svg$/i.test(file.name)) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error("image"));
+      reader.readAsDataURL(file);
+    });
+  }
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
@@ -623,6 +639,11 @@ export function Inspector({
   onGroup,
   onUngroup,
   onAlign,
+  onContainerize,
+  onAdopt,
+  onUnlink,
+  childCount = 0,
+  inContainer = false,
 }: {
   /** the AI button beside the behavior field */
   ai: AiHooks;
@@ -643,6 +664,16 @@ export function Inspector({
   onUngroup?: () => void;
   /** lines the selected parts up with each other, or spaces them evenly */
   onAlign?: (kind: AlignKind) => void;
+  /** wraps the selection in a new container box */
+  onContainerize?: () => void;
+  /** puts the selection inside the one box it holds (set only when that makes sense) */
+  onAdopt?: () => void;
+  /** takes the selection back out of the container that holds it */
+  onUnlink?: () => void;
+  /** how many parts the selected container holds */
+  childCount?: number;
+  /** the selected part sits inside a container */
+  inContainer?: boolean;
 }) {
   const lang = useLang();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -708,6 +739,8 @@ export function Inspector({
           </div>
           {onAlign && <AlignSection single={false} onAlign={onAlign} p={p} />}
           {grouped ? bigBtn("ungroup", t("ungroup", lang), onUngroup) : bigBtn("group_work", t("makeGroup", lang), onGroup)}
+          {onContainerize && bigBtn("select_all", t("createContainer", lang), onContainerize)}
+          {onAdopt && bigBtn("move_down", t("putInContainer", lang), onAdopt)}
           <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant, padding: "0 6px" }}>
             {grouped ? t("groupEditNote", lang) : `${t("groupHint", lang)} (Ctrl+G)`}
           </div>
@@ -1044,7 +1077,7 @@ export function Inspector({
           <input
             ref={fileRef}
             type="file"
-            accept="image/*"
+            accept="image/*,.svg"
             hidden
             onChange={async (e) => {
               const f = e.target.files?.[0];
@@ -1091,7 +1124,42 @@ export function Inspector({
         </Section>
       )}
 
-      {mainSlots.length > 0 && activeSlot && !item.src && (
+      {/* a button can wear a picture of its own, drawn behind its words and icon */}
+      {item.kind === "button" && !editOn && (
+        <Section id="button-bg" icon="image" title={t("backgroundImage", lang)} p={p}>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*,.svg"
+            hidden
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (!f) return;
+              try {
+                onChange({ src: await readImage(f) });
+              } catch {}
+            }}
+          />
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <button
+              onClick={() => fileRef.current?.click()}
+              className="m3-press"
+              style={{ flex: 1, height: 44, borderRadius: 22, border: "none", background: p.primary, color: p.onPrimary, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+            >
+              <Icon name="upload" size={20} />
+              {t("pickImage", lang)}
+            </button>
+            {item.src && <IconBtn icon="close" p={p} size={44} onClick={() => onChange({ src: undefined })} title={t("removeImage", lang)} />}
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <UrlField key={item.id + ":bg"} value={item.src && /^https?:\/\//.test(item.src) ? item.src : ""} onChange={(src) => onChange({ src })} placeholder={t("imageUrl", lang)} p={p} />
+          </div>
+        </Section>
+      )}
+
+      {/* a picture fills an image or a card, but a button keeps its icon over it */}
+      {mainSlots.length > 0 && activeSlot && !(item.src && (item.kind === "image" || item.kind === "card")) && (
         <Section id="icon" icon="emoji_symbols" title={t("icon", lang)} p={p} onToggle={(open) => { if (!open && !activeSlot.key.startsWith("tab:")) setPickerOpen(false); }}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {mainSlots.map((s) =>
@@ -1185,6 +1253,47 @@ export function Inspector({
               />
             </>
           )}
+        </Section>
+      )}
+
+      {/* what a part holds, and how to let it go */}
+      {(childCount > 0 || inContainer) && onUnlink && !editOn && (
+        <Section id="container" icon="select_all" title={t("container", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant }}>
+              {childCount > 0 ? t("children", lang).replace("{n}", String(childCount)) : t("insideContainer", lang)}
+            </div>
+            <button
+              onClick={onUnlink}
+              className="m3-press"
+              style={{ height: 40, borderRadius: 20, border: "none", background: p.secondaryContainer, color: p.onSecondaryContainer, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+            >
+              <Icon name="move_up" size={20} />
+              {childCount > 0 ? t("releaseChildren", lang) : t("takeOut", lang)}
+            </button>
+          </div>
+        </Section>
+      )}
+
+      {/* every part carries a colour and a level of its own, whatever its kind */}
+      {!editOn && (
+        <Section id="appearance" icon="format_paint" title={t("appearance", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("partColor", lang)}</div>
+            <ItemColorChips value={item.color} onChange={(color) => onChange({ color })} p={p} />
+            <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, marginTop: 4 }}>{t("layer", lang)}</div>
+            <Slider
+              icon="layers"
+              title={t("layer", lang)}
+              value={layerOf(item)}
+              min={0}
+              max={99}
+              step={1}
+              onChange={(z) => onChange({ z })}
+              p={p}
+            />
+            <div style={{ fontSize: 11, lineHeight: 1.4, color: p.outline }}>{t("layerHint", lang)}</div>
+          </div>
         </Section>
       )}
 
@@ -1565,6 +1674,67 @@ export function Inspector({
         />
       </Section>
       )}
+
+      {/* what the part does after it has been tapped: grey out, cool down, change or go */}
+      {!editOn && (
+        <Section id="transitions" icon="change_circle" title={t("transitions", lang)} p={p}>
+          <StateRules item={item} p={p} lang={lang} onChange={onChange} />
+        </Section>
+      )}
+    </div>
+  );
+}
+
+/** The state rules hung on one part: each says what a tap changes about the part itself. */
+function StateRules({ item, p, lang, onChange }: { item: Item; p: Palette; lang: Lang; onChange: (patch: Partial<Item>) => void }) {
+  const rules = item.states ?? [];
+  const patch = (id: string, next: Partial<ItemState>) => onChange({ states: rules.map((r) => (r.id === id ? { ...r, ...next } : r)) });
+  const remove = (id: string) => onChange({ states: rules.filter((r) => r.id !== id).length ? rules.filter((r) => r.id !== id) : undefined });
+  const add = () => onChange({ states: [...rules, { id: uid(), trigger: "tap", effect: "disable" }] });
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {rules.length === 0 && <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant }}>{t("transitionsHint", lang)}</div>}
+      {rules.map((rule) => (
+        <div key={rule.id} style={{ display: "flex", flexDirection: "column", gap: 8, padding: 10, borderRadius: 14, background: p.surfaceContainerLow }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Icon name="touch_app" size={18} color={p.onSurfaceVariant} />
+            <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: 1, minWidth: 0 }}>{t("onTap", lang)}</span>
+            <IconBtn icon="delete" p={p} danger title={t("removeRule", lang)} size={30} onClick={() => remove(rule.id)} />
+          </div>
+          <Segmented<StateEffect>
+            options={STATE_EFFECTS.map((e) => ({ key: e.key, icon: e.icon, title: t(`state_${e.key}` as UIKey, lang) }))}
+            value={rule.effect}
+            onChange={(effect) => patch(rule.id, { effect })}
+            p={p}
+            height={36}
+          />
+          <div style={{ fontSize: 12, color: p.onSurfaceVariant }}>{t(`state_${rule.effect}` as UIKey, lang)}</div>
+          {rule.effect === "cooldown" && (
+            <Slider icon="timer" title={t("cooldownSeconds", lang)} value={rule.seconds ?? 3} min={1} max={60} step={1} onChange={(seconds) => patch(rule.id, { seconds })} p={p} unit="s" />
+          )}
+          {rule.effect === "label" && (
+            <Field value={rule.value ?? ""} onChange={(value) => patch(rule.id, { value })} p={p} placeholder={t("label", lang)} icon="edit" />
+          )}
+          {rule.effect === "color" && <ItemColorChips value={rule.value} onChange={(value) => patch(rule.id, { value })} p={p} />}
+          {rule.effect === "variant" && (
+            <Segmented<Variant>
+              options={VARIANTS.map((v) => ({ key: v.key, title: t(v.key, lang) }))}
+              value={(isVariant(rule.value) ? rule.value : "tonal") as Variant}
+              onChange={(variant) => patch(rule.id, { value: variant })}
+              p={p}
+              height={36}
+            />
+          )}
+        </div>
+      ))}
+      <button
+        onClick={add}
+        className="m3-press"
+        style={{ height: 40, borderRadius: 20, border: `1px dashed ${p.outline}`, background: "transparent", color: p.onSurfaceVariant, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+      >
+        <Icon name="add" size={20} />
+        {t("addRule", lang)}
+      </button>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { FAB_MENU_TABS, KIND_TEXT, Lang, NAV_TABS, TAB_LABELS, getLang, t, SELECT_OPTIONS } from "./i18n";
-import { Contrast, isLightColor, schemeFromSeed } from "./color";
+import { Contrast, isHex, isLightColor, onColorFor, schemeFromSeed } from "./color";
 
 /* ---------- geometry ---------- */
 export const H = 56; // M3 medium button height (dp)
@@ -421,6 +421,8 @@ export const VARIANTS: { key: Variant; label: string }[] = [
   { key: "outlined", label: "Outlined" },
   { key: "text", label: "Text" },
 ];
+
+export const isVariant = (v: unknown): v is Variant => VARIANTS.some((variant) => variant.key === v);
 
 export function variantStyle(v: Variant, p: Palette): CSSProperties {
   switch (v) {
@@ -1116,6 +1118,9 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasIcon: false,
     defLabel: "3",
     defIcon: null,
+    /* a badge is a pill or a dot, and either can be given its own size */
+    size: { min: 6, max: 160, step: 1, icon: "width" },
+    size2: { min: 6, max: 160, step: 1, icon: "height" },
   },
 };
 
@@ -1220,9 +1225,52 @@ export type Item = {
   actions?: Record<string, Action>;
   /** the look a toggle button takes once tapped; undefined = not a toggle */
   toggle?: ToggleLook;
+  /** interaction rules hung on this part: what a tap changes about it (grey out, cool
+   *  down, swap its words or look, disappear) */
+  states?: ItemState[];
+  /** The parts this one holds: a container's children, drawn inside its box. Their x/y
+   *  are offsets from the container's top-left corner, so moving or resizing the
+   *  container carries them along. */
+  children?: PlacedItem[];
+  /** a colour of this part's own: a palette role key or a #rrggbb literal. Unset keeps
+   *  the role the kind would pick for itself. */
+  color?: string;
+  /** stacking level among the parts it shares a screen with: a higher one draws on top.
+   *  Unset means LAYER_DEFAULT. */
+  z?: number;
+};
+
+/* ---------- state transitions hung on a part ---------- */
+
+/** What a tap changes about the part itself. `disable` and `cooldown` grey the part
+ *  out (a cooldown also counts down for `seconds`), `label`, `color` and `variant`
+ *  swap what the part says or looks like using `value`, and `hide` takes it off screen. */
+export type StateEffect = "disable" | "cooldown" | "label" | "color" | "variant" | "hide";
+export const STATE_EFFECTS: { key: StateEffect; icon: string }[] = [
+  { key: "disable", icon: "block" },
+  { key: "cooldown", icon: "timer" },
+  { key: "label", icon: "edit" },
+  { key: "color", icon: "format_color_fill" },
+  { key: "variant", icon: "palette" },
+  { key: "hide", icon: "visibility_off" },
+];
+export const isStateEffect = (v: unknown): v is StateEffect => STATE_EFFECTS.some((e) => e.key === v);
+
+export type ItemState = {
+  id: string;
+  /** what sets the rule off; only a tap for now */
+  trigger: "tap";
+  effect: StateEffect;
+  /** the label a `label` rule writes, or the variant a `variant` rule takes */
+  value?: string;
+  /** a `cooldown` rule's length in seconds */
+  seconds?: number;
 };
 
 export type ToggleLook = { icon?: string | null; variant?: Variant; label?: string };
+
+/** a part placed inside a container: its own offsets from the container's top-left */
+export type PlacedItem = Item & { x: number; y: number };
 
 /** kinds that can act as a toggle button in the preview */
 export const TOGGLEABLE: Kind[] = ["button", "iconButton", "fab", "extendedFab"];
@@ -1355,6 +1403,8 @@ export const isTextToken = (v: unknown): v is TextToken => TEXT_TOKENS.some((t) 
 /** the card's text color: the chosen role, else white over a photo, the container's
  *  "on" color over a placeholder background or a chosen fill, and onSurface otherwise */
 export function cardTextColorOf(it: Item, p: Palette): string {
+  const own = colorOverrideOf(it, p);
+  if (own) return own.on;
   if (it.textColor) return p[it.textColor];
   if (!it.noImage && cardImagePosOf(it) === "background") return it.src ? "#ffffff" : p.onPrimaryContainer;
   return it.fill ? onToken(it.fill, p) : p.onSurface;
@@ -1362,7 +1412,7 @@ export function cardTextColorOf(it: Item, p: Palette): string {
 /** the body's color: a plain card keeps M3's onSurfaceVariant at full opacity; anything
  *  colored, filled or over an image reuses the headline color at reduced opacity */
 export function cardBodyColorOf(it: Item, p: Palette): { color: string; opacity: number } {
-  const plain = !it.textColor && !it.fill && (it.noImage || cardImagePosOf(it) !== "background");
+  const plain = !it.color && !it.textColor && !it.fill && (it.noImage || cardImagePosOf(it) !== "background");
   return plain ? { color: p.onSurfaceVariant, opacity: 1 } : { color: cardTextColorOf(it, p), opacity: 0.8 };
 }
 /** the scrim under text on a photo: it fades in from the text's side, dark under light
@@ -1420,6 +1470,149 @@ export function onToken(t: ColorToken, p: Palette): string {
   }
 }
 
+/* ---------- a part's own colour and layer ---------- */
+
+/** every part starts at this level; a higher one draws over the parts beside it */
+export const LAYER_DEFAULT = 10;
+/** the level a part draws at: its own, else the default */
+export const layerOf = (it: Item) => it.z ?? LAYER_DEFAULT;
+
+/** whether a part carries a colour this build can resolve: a palette role or a hex literal */
+export const isCustomColor = (v: unknown): v is string =>
+  typeof v === "string" && (isHex(v) || COLOR_TOKENS.some(({ key }) => key === v));
+
+/** the surface and ink a part's own colour makes, or null when it keeps the kind's role */
+export function colorOverrideOf(it: Item, p: Palette): { main: string; on: string } | null {
+  if (!isCustomColor(it.color)) return null;
+  return isHex(it.color)
+    ? { main: it.color, on: onColorFor(it.color) }
+    : { main: p[it.color as ColorToken], on: onToken(it.color as ColorToken, p) };
+}
+
+/** The scheme a part draws from, with its own colour standing in for the primary role:
+ *  every accent the kind uses (fills, tracks, selected icons) follows it, and a plain
+ *  text part inks itself with it. */
+export function paletteForItem(it: Item, p: Palette): Palette {
+  const own = colorOverrideOf(it, p);
+  if (!own) return p;
+  return {
+    ...p,
+    primary: own.main,
+    onPrimary: own.on,
+    primaryContainer: own.main,
+    onPrimaryContainer: own.on,
+    ...(it.kind === "text" ? { onSurface: own.main } : undefined),
+  };
+}
+
+/* ---------- containers and their children ---------- */
+
+/** what a part has become once its own rules have been set off: `fired` maps a part id
+ *  to the moment its tap happened, and a cooldown runs out on its own after `seconds`. */
+export type PartState = {
+  /** the part as its rules leave it: a label or a look may have changed */
+  item: Item;
+  hidden: boolean;
+  /** greyed out and no longer answering taps */
+  disabled: boolean;
+  /** whole seconds still to wait, 0 when nothing is cooling down */
+  cooldown: number;
+};
+
+export function resolveStates(it: Item, fired: Record<string, number | undefined>, now: number): PartState {
+  let item = it;
+  let hidden = false;
+  let disabled = false;
+  let cooldown = 0;
+  const at = fired[it.id];
+  if (at !== undefined) {
+    /* A cooldown is a state the part comes back from: while it runs the part is greyed,
+     * and the moment it runs out the part is exactly what its author drew again, ready
+     * to be tapped. A `disable` has no such end and stays for good. */
+    const cooling = (it.states ?? []).find((rule) => rule.effect === "cooldown");
+    if (cooling) {
+      const left = (cooling.seconds ?? 3) - (now - at) / 1000;
+      if (left <= 0) return { item: it, hidden: false, disabled: false, cooldown: 0 };
+      cooldown = Math.ceil(left);
+      disabled = true;
+    }
+    for (const rule of it.states ?? []) {
+      switch (rule.effect) {
+        case "disable":
+          disabled = true;
+          break;
+        case "cooldown":
+          /* counted above, so the part goes back to its own look when the wait is over */
+          break;
+        case "label":
+          if (rule.value !== undefined && rule.value !== item.label) item = { ...item, label: rule.value };
+          break;
+        case "color":
+          if (isCustomColor(rule.value) && rule.value !== item.color) item = { ...item, color: rule.value };
+          break;
+        case "variant":
+          if (isVariant(rule.value) && rule.value !== item.variant) item = { ...item, variant: rule.value };
+          break;
+        case "hide":
+          hidden = true;
+          break;
+      }
+    }
+  }
+  return { item, hidden, disabled, cooldown };
+}
+
+/** whether a part answers a tap at all: a hidden part is gone, a disabled one ignores it */
+export const tappable = (state: PartState) => !state.hidden && !state.disabled;
+
+/** a part and everything it holds, parents before children */
+export function subtreeOf(it: Item): Item[] {
+  const out: Item[] = [it];
+  for (const c of it.children ?? []) out.push(...subtreeOf(c));
+  return out;
+}
+
+/** every part a document holds, containers' children included, in canvas order */
+export function itemsOf(groups: Group[]): Item[] {
+  const out: Item[] = [];
+  for (const g of groups) for (const it of g.items) out.push(...subtreeOf(it));
+  return out;
+}
+
+/** the container a part sits in, or null when it sits on the screen itself */
+export function parentOf(groups: Group[], id: string): Item | null {
+  const walk = (it: Item): Item | null => {
+    for (const c of it.children ?? []) {
+      if (c.id === id) return it;
+      const found = walk(c);
+      if (found) return found;
+    }
+    return null;
+  };
+  for (const g of groups) for (const it of g.items) {
+    const found = walk(it);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** a part's own level, then its children's: the order a container stacks its contents in */
+export const byLayer = (a: Item, b: Item) => layerOf(a) - layerOf(b);
+
+/** A copy of a part and everything it holds, with fresh ids from `next`. The mapping is
+ *  written into `ids` so a caller can also remap the interactions that point at them. */
+export function copySubtree(it: Item, next: () => string, ids: Map<string, string>): Item {
+  const id = next();
+  ids.set(it.id, id);
+  return {
+    ...it,
+    id,
+    ...(it.tabs ? { tabs: it.tabs.map((t) => ({ ...t })) } : undefined),
+    ...(it.states ? { states: it.states.map((s) => ({ ...s, id: next() })) } : undefined),
+    ...(it.children ? { children: it.children.map((c) => copySubtree(c, next, ids)) as PlacedItem[] } : undefined),
+  };
+}
+
 export type Frame = {
   id: string;
   name: string;
@@ -1471,9 +1664,14 @@ export const frameRadius = (f: Frame) => (isPhoneFrame(f) ? PHONE_R : DESKTOP_R)
 /** parts that span the screen edge to edge and follow its width when it changes */
 export const FULL_WIDTH: Kind[] = ["topAppBar", "bottomNav", "tabs"];
 
+/** The spec a part draws from. A part whose kind this build does not know — one from a
+ *  document another build wrote, or one left in state while this list was being edited —
+ *  falls back to the box, so no geometry call takes the editor down with it. */
+const specOf = (it: Item): KindSpec => KIND_SPEC[it.kind] ?? KIND_SPEC.box;
+
 /** a part no taller than the screen it is placed on: a box or a rail sized to a phone shrinks to a shorter screen */
 export function fitHeight(it: Item, screenH: number): Item {
-  const spec = KIND_SPEC[it.kind];
+  const spec = specOf(it);
   if (!spec.size2 && it.kind !== "navRail") return it;
   const h = it.size2 ?? spec.h;
   return h > screenH ? { ...it, size2: screenH } : it;
@@ -1485,7 +1683,7 @@ export function fitHeight(it: Item, screenH: number): Item {
  *  size, since its height follows its width. Nothing ends up wider than the new
  *  content area. */
 export function carryItemSize(it: Item, from: { w: number; h: number }, to: { w: number; h: number }): Item {
-  const spec = KIND_SPEC[it.kind];
+  const spec = specOf(it);
   const patch: Partial<Item> = {};
   const keepsShape = it.kind === "card" || it.kind === "image" || it.kind === "camera" || it.kind === "map";
   if (spec.size && (spec.size.icon === "width" || keepsShape)) {
@@ -1662,7 +1860,54 @@ export type Doc = {
   promptEdit?: string;
   /** shape, type, motion and the light / dark and contrast switches */
   theme?: Theme;
+  /** the author's own composite parts: ready-made sets of parts the palette offers */
+  customParts?: CustomPart[];
 };
+
+/** A set of parts the author composed once and can drop again and again. On the canvas
+ *  an instance is a container holding the parts, so the set keeps its own layout and
+ *  the layers panel shows the containment. */
+export type CustomPart = {
+  id: string;
+  name: string;
+  /** the box an instance takes, before anything inside it is edited */
+  w: number;
+  h: number;
+  /** the parts, with their offsets from the composite's top-left corner */
+  items: PlacedItem[];
+};
+
+/** A container's contents, stretched with it: every offset and every size the parts
+ *  carry of their own follows the box, however deep the nesting goes. */
+export function scaleChildren(kids: PlacedItem[], sx: number, sy: number): PlacedItem[] {
+  const one = (v: number | undefined, k: number) => (v === undefined ? undefined : Math.max(1, Math.round(v * k)));
+  return kids.map((c) => ({
+    ...c,
+    x: Math.round(c.x * sx),
+    y: Math.round(c.y * sy),
+    ...(c.size !== undefined ? { size: one(c.size, sx) } : undefined),
+    ...(c.size2 !== undefined ? { size2: one(c.size2, sy) } : undefined),
+    ...(c.children ? { children: scaleChildren(c.children, sx, sy) } : undefined),
+  }));
+}
+
+/** The part a composite becomes on a screen: one container box holding a fresh copy of
+ *  everything the author composed, so an instance can be moved, edited or deleted whole. */
+export function compositeInstance(part: CustomPart, id: () => string = uid): Item {
+  const box = makeItem("box");
+  box.id = id();
+  box.label = part.name;
+  box.size = part.w;
+  box.size2 = part.h;
+  /* the box is only the frame the parts were composed in: it draws nothing of its own,
+   * so an instance on a screen looks just like the set did in the compose dialog */
+  box.fill = "surface";
+  box.radiusTop = 0;
+  box.radiusBottom = 0;
+  box.checked = false;
+  box.children = part.items.map((it) => copySubtree(it, id, new Map()) as PlacedItem);
+  return box;
+}
 
 export const defaultTabs = (): NavTab[] => NAV_TABS[getLang()].map((t) => ({ ...t }));
 
@@ -1736,7 +1981,7 @@ export const progressThickness = (it: Item): number => {
 };
 
 export function sizeOf(it: Item, widths: Record<string, number>) {
-  const s = KIND_SPEC[it.kind];
+  const s = specOf(it);
   const n = it.size ?? s.defSize ?? s.w;
   switch (it.kind) {
     case "switch":
@@ -1749,7 +1994,7 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
     case "radio":
       return { w: widths[it.id] ?? 128, h: s.h };
     case "badge":
-      return { w: widths[it.id] ?? 16, h: it.label.trim() ? s.h : 6 };
+      return { w: it.size ?? widths[it.id] ?? 16, h: it.size2 ?? (it.label.trim() ? s.h : 6) };
     case "fabMenu":
       return { w: n, h: 56 + (it.tabs?.length ?? 0) * (FAB_MENU_ITEM_H + FAB_MENU_GAP) };
     case "toolbar":
@@ -1795,7 +2040,7 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
 /** Corners for a part that is not part of a connected run. Defaults follow the
  *  document's shape scale; a radius the author typed in is kept as is. */
 export function baseRadii(it: Item): Radii {
-  const s = KIND_SPEC[it.kind];
+  const s = specOf(it);
   switch (it.kind) {
     case "box":
       if (it.corners) return { ...it.corners };
@@ -1908,10 +2153,10 @@ export const toolbarWidth = (it: Item) => {
 };
 
 export const connectSpecOf = (it: Item): ConnectSpec | undefined => {
-  const c = KIND_SPEC[it.kind].connect;
+  const c = specOf(it).connect;
   return c && { ...c, outer: scaleR(c.outer), inner: scaleR(c.inner) };
 };
-export const connectable = (it: Item) => !!KIND_SPEC[it.kind].connect;
+export const connectable = (it: Item) => !!specOf(it).connect;
 /** two parts fuse when they share an axis and a family (buttons and icon buttons mix) */
 export const canJoin = (a: Item, b: Item) => {
   const sa = connectSpecOf(a);
@@ -1945,7 +2190,7 @@ export function iconSlotsOf(it: Item): IconSlot[] {
         ...(it.tabs ?? []).map((t, i) => ({ key: `tab:${i}`, label: `${i + 1}`, value: t.icon || null })),
       ];
     default:
-      return KIND_SPEC[it.kind].hasIcon
+      return specOf(it).hasIcon
         ? [{ key: "icon", label: t("icon"), value: it.icon }]
         : [];
   }

@@ -5,7 +5,7 @@ import { COLOR_TOKENS, CardLayout, ColorToken, PLACES, Palette, Place, R_INNER, 
 import { AnimatePresence, motion } from "motion/react";
 import { COLOR_TOKEN_TEXT, TEXT_TOKEN_TEXT, t, useLang } from "@/lib/i18n";
 import { Icon } from "./M3Node";
-import { onColorFor } from "@/lib/color";
+import { isHex, onColorFor } from "@/lib/color";
 
 export function IconBtn({
   icon,
@@ -832,6 +832,49 @@ export function TokenChips({
       {COLOR_TOKENS.map((tk) => (
         <TokenDisc key={tk.key} color={p[tk.key]} label={lang === "en" ? tk.label : COLOR_TOKEN_TEXT[lang][tk.key]} on={!noneOn && tk.key === value} onClick={() => onChange(tk.key)} p={p} />
       ))}
+    </div>
+  );
+}
+
+/** Colour chips for one part: every palette role, a free colour picker, and an
+ *  "automatic" chip that hands the part back to the role its kind would pick.
+ *  `value` is a role key or a #rrggbb literal. */
+export function ItemColorChips({ value, onChange, p }: { value?: string; onChange: (color?: string) => void; p: Palette }) {
+  const lang = useLang();
+  const custom = isHex(value ?? "");
+  return (
+    <div role="group" aria-label={t("partColor", lang)} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+      <TokenDisc color="transparent" label={t("autoColor", lang)} on={!value} onClick={() => onChange(undefined)} p={p} icon="restart_alt" iconColor={p.onSurfaceVariant} />
+      {COLOR_TOKENS.map((tk) => (
+        <TokenDisc key={tk.key} color={p[tk.key]} label={lang === "en" ? tk.label : COLOR_TOKEN_TEXT[lang][tk.key]} on={value === tk.key} onClick={() => onChange(value === tk.key ? undefined : tk.key)} p={p} />
+      ))}
+      <label
+        title={t("customColor", lang)}
+        style={{
+          position: "relative",
+          width: 30,
+          height: 30,
+          borderRadius: 15,
+          border: `1px solid ${p.outlineVariant}`,
+          background: custom ? value : "conic-gradient(#f44336,#ffeb3b,#4caf50,#00bcd4,#3f51b5,#e91e63,#f44336)",
+          display: "grid",
+          placeItems: "center",
+          cursor: "pointer",
+          outline: custom ? `2px solid ${p.primary}` : "2px solid transparent",
+          outlineOffset: 2,
+          overflow: "hidden",
+          flex: "0 0 auto",
+        }}
+      >
+        <input
+          type="color"
+          value={custom ? value : p.primary}
+          onChange={(e) => onChange(e.target.value.toUpperCase())}
+          aria-label={t("customColor", lang)}
+          style={{ position: "absolute", inset: -10, width: 50, height: 50, opacity: 0, cursor: "pointer" }}
+        />
+        {!custom && <Icon name="palette" size={16} />}
+      </label>
     </div>
   );
 }

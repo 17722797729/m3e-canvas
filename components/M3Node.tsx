@@ -23,7 +23,10 @@ import {
   cardBodyColorOf,
   cardScrimOf,
   cardTextColorOf,
+  colorOverrideOf,
+  layerOf,
   onToken,
+  paletteForItem,
   scaleR,
   sizeOf,
   variantShadow,
@@ -357,21 +360,26 @@ function RadioContent({ item, p }: { item: Item; p: Palette }) {
 /** A badge: a 6dp dot when it has no text, a 16dp pill with the count otherwise. */
 function BadgeContent({ item, p }: { item: Item; p: Palette }) {
   const text = item.label.trim();
-  if (!text) return <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: 3, background: p.error }} />;
+  /* a badge the author sized fills the box it was given; otherwise it hugs its number
+     (a dot when it is empty) */
+  const own = item.size !== undefined;
+  const h = item.size2 ?? (text ? 16 : 6);
+  const w = own ? "100%" : text ? undefined : 6;
   return (
     <span
       style={{
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        minWidth: 16,
-        height: 16,
-        padding: "0 4px",
-        borderRadius: 8,
+        width: w,
+        minWidth: own || !text ? undefined : 16,
+        height: h,
+        padding: text && !own ? "0 4px" : 0,
+        borderRadius: h / 2,
         boxSizing: "border-box",
         background: p.error,
         color: p.onError,
-        fontSize: 11,
+        fontSize: own ? Math.max(9, Math.min(20, Math.round(h * 0.7))) : 11,
         fontWeight: 500,
         lineHeight: 1,
         whiteSpace: "nowrap",
@@ -1235,6 +1243,13 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
 
 function boxStyle(item: Item, p: Palette): React.CSSProperties {
   if (NO_BOX.includes(item.kind)) return { background: "transparent", border: "none" };
+  /* a part given a colour of its own paints its surface with it, drawing its own
+   * readable ink; an outlined part keeps an outline in the same colour */
+  const own = colorOverrideOf(item, p);
+  if (own) {
+    const outlined = item.variant === "outlined" || item.kind === "textField" || item.kind === "select";
+    return { background: own.main, color: own.on, border: outlined ? `1px solid ${own.main}` : "none" };
+  }
   switch (item.kind) {
     case "box": {
       const t = item.fill ?? "surfaceContainerLow";
@@ -1243,8 +1258,11 @@ function boxStyle(item: Item, p: Palette): React.CSSProperties {
     case "button":
     case "iconButton":
     case "fab":
-    case "extendedFab":
-      return variantStyle(item.variant, p);
+    case "extendedFab": {
+      /* a picture of its own sits behind the words and the icon */
+      const look = variantStyle(item.variant, p);
+      return item.src ? { ...look, backgroundImage: `url("${item.src}")`, backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat" } : look;
+    }
     case "chip":
       if (item.checked) return { background: p.secondaryContainer, color: p.onSecondaryContainer, border: "none" };
       return item.variant === "outlined"
@@ -1328,6 +1346,7 @@ export function M3Node({
   interactive = true,
   onPointerDown,
   tabScroll,
+  overlay,
 }: {
   item: Item;
   palette: Palette;
@@ -1342,14 +1361,18 @@ export function M3Node({
   onPointerDown?: (e: React.PointerEvent) => void;
   /** how far a scrollable tab row is scrolled in the preview; the canvas uses the resting position */
   tabScroll?: number;
+  /** a container's children, drawn inside its box (their offsets are the container's own) */
+  overlay?: React.ReactNode;
 }) {
   const reducedMotion = useReducedMotion();
   const instantRail = reducedMotion && item.kind === "navRail" && isWideRail(item);
   const radiusTransition = instantRail ? { duration: 0 } : RADIUS_TWEEN;
   const r = radii ?? baseRadii(item);
   const size = sizeOf(item, widths);
-  const measured = MEASURED.includes(item.kind) && !((item.kind === "switch" || item.kind === "button") && item.size);
+  const measured = MEASURED.includes(item.kind) && !((item.kind === "switch" || item.kind === "button" || item.kind === "badge") && item.size);
   const clips = !NO_BOX.includes(item.kind) && item.kind !== "textField" && item.kind !== "select";
+  /* a part with a colour of its own draws from a scheme whose primary role is that colour */
+  const ep = paletteForItem(item, palette);
 
   return (
     <motion.div
@@ -1373,7 +1396,7 @@ export function M3Node({
         scale: instantRail ? { duration: 0 } : { type: "spring", stiffness: 700, damping: 30, mass: 0.5 },
       }}
       style={{
-        ...boxStyle(item, palette),
+        ...boxStyle(item, ep),
         width: measured ? undefined : size.w,
         height: size.h,
         display: measured ? "inline-flex" : "block",
@@ -1383,8 +1406,10 @@ export function M3Node({
            sibling sits 3px away and would overpaint that edge — lift the selected part.
            Runs never overlap, so the lift only beats the sibling that hides the ring.
            Lone parts in free groups may overlap by design: keep their layer order. */
-        position: selected && inRun ? "relative" : undefined,
-        zIndex: selected && inRun ? 1 : undefined,
+        position: "relative",
+        /* the author's own level decides what draws over what; parts at the same level
+           keep the order they are listed in */
+        zIndex: selected && inRun ? 1_000_000 : layerOf(item),
         cursor: !interactive ? "default" : dragging ? "grabbing" : "grab",
         userSelect: "none",
         touchAction: "none",
@@ -1397,7 +1422,8 @@ export function M3Node({
         flex: "0 0 auto",
       }}
     >
-      <Body item={item} p={palette} tabScroll={tabScroll} />
+      <Body item={item} p={ep} tabScroll={tabScroll} />
+      {overlay}
     </motion.div>
   );
 }
@@ -1408,25 +1434,31 @@ export function M3Static({
   palette,
   radii,
   style,
+  overlay,
 }: {
   item: Item;
   palette: Palette;
   radii?: Radii;
   style?: React.CSSProperties;
+  /** a container's children, drawn inside its box */
+  overlay?: React.ReactNode;
 }) {
   const r = radii ?? baseRadii(item);
   const size = sizeOf(item, {});
-  const measured = MEASURED.includes(item.kind) && !((item.kind === "switch" || item.kind === "button") && item.size);
+  const measured = MEASURED.includes(item.kind) && !((item.kind === "switch" || item.kind === "button" || item.kind === "badge") && item.size);
   const clips = !NO_BOX.includes(item.kind) && item.kind !== "textField" && item.kind !== "select";
+  const ep = paletteForItem(item, palette);
   return (
     <div
       style={{
-        ...boxStyle(item, palette),
+        ...boxStyle(item, ep),
         width: measured ? undefined : size.w,
         height: size.h,
         display: measured ? "inline-flex" : "block",
         alignItems: "center",
         overflow: clips ? "hidden" : "visible",
+        position: "relative",
+        zIndex: layerOf(item),
         boxSizing: "border-box",
         boxShadow: shadowOf(item),
         borderTopLeftRadius: r.tl,
@@ -1437,7 +1469,8 @@ export function M3Static({
         ...style,
       }}
     >
-      <Body item={item} p={palette} />
+      <Body item={item} p={ep} />
+      {overlay}
     </div>
   );
 }

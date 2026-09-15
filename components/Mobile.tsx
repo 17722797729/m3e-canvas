@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { motion, useDragControls } from "motion/react";
-import { CONTRASTS, Contrast, FONTS, Item, KIND_SPEC, NavTab, PALETTES, Palette, SHAPES, ShapeScale, Theme, defaultTabsFor, iconSlotsOf, setIconSlot } from "@/lib/tokens";
+import { CONTRASTS, Contrast, FONTS, Item, KIND_SPEC, NavTab, PALETTES, Palette, SHAPES, ShapeScale, Theme, defaultTabsFor, iconSlotsOf, layerOf, setIconSlot } from "@/lib/tokens";
 import { ensureFontLoaded } from "@/lib/theme";
 import { KIND_TEXT, LANGS, Lang, t, useLang } from "@/lib/i18n";
 import { IconPicker } from "./IconPicker";
 import { Icon } from "./M3Node";
 import { VariantSwatch, variantsOf } from "./Inspector";
-import { Field, IconBtn, Segmented, Toggle } from "./ui";
+import { Field, IconBtn, ItemColorChips, Segmented, Slider, Toggle } from "./ui";
 
 /** Sheet that slides up from the bottom edge; the canvas above stays usable.
  *  Dragging the handle moves the sheet with the finger; a flick or a long pull closes it. */
@@ -329,6 +329,13 @@ export function MobileInspector({
           />
         </Row>
       )}
+
+      <Row icon="format_paint" label={t("appearance", lang)} p={p}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <ItemColorChips value={item.color} onChange={(color) => onChange({ color })} p={p} />
+          <Slider icon="layers" title={t("layer", lang)} value={layerOf(item)} min={0} max={99} step={1} onChange={(z) => onChange({ z })} p={p} />
+        </div>
+      </Row>
 
       <Row icon="bolt" label={t("behavior", lang)} p={p}>
         <Field value={item.note ?? ""} onChange={(note) => onChange({ note })} placeholder={["button", "fab", "iconButton", "extendedFab"].includes(item.kind) ? t("whenPressed", lang) : t("whatItDoes", lang)} p={p} icon="bolt" height={48} />

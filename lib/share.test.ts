@@ -44,11 +44,28 @@ describe("shareable", () => {
     expect(shareable(value).groups[0].items[0]).not.toHaveProperty("src");
   });
 
+  it("strips the same private fields from a part inside a container, however deep", () => {
+    const value = doc();
+    const inner: Item = { ...value.groups[0].items[0], id: "inner", src: "data:image/png;base64,BBBB", noteHistory: ["draft"] };
+    const nested: Item = { ...value.groups[0].items[1], id: "nested", children: [{ ...inner, x: 5, y: 6, children: [{ ...inner, id: "deep", x: 1, y: 2 }] }] };
+    value.groups[0].items.push(nested);
+    const shared = shareable(value).groups[0].items[2];
+    expect(shared.children?.[0]).toMatchObject({ id: "inner", x: 5, y: 6 });
+    expect(shared.children?.[0]).not.toHaveProperty("src");
+    expect(shared.children?.[0]).not.toHaveProperty("noteHistory");
+    const deep = shared.children?.[0].children?.[0];
+    expect(deep).toMatchObject({ id: "deep", x: 1, y: 2 });
+    expect(deep).not.toHaveProperty("src");
+    expect(deep).not.toHaveProperty("noteHistory");
+    /* a public source inside a container travels like one on the screen */
+    const publicChild: Item = { ...value.groups[0].items[1], id: "public", children: [{ ...inner, id: "pub", x: 0, y: 0, src: "https://example.test/c.png" }] };
+    expect(shareable({ ...value, groups: [{ ...value.groups[0], items: [publicChild] }] }).groups[0].items[0].children?.[0].src).toBe("https://example.test/c.png");
+  });
+
   it("does not mutate or reuse the edited document's frame/group/item objects", () => {
     const value = doc();
     const before = structuredClone(value);
-    const result = shareable(value);
-    expect(value).toEqual(before);
+    const result = shareable(value);    expect(value).toEqual(before);
     expect(result).not.toBe(value);
     expect(result.frames).not.toBe(value.frames);
     expect(result.groups).not.toBe(value.groups);

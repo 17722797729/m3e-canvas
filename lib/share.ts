@@ -1,4 +1,4 @@
-import { Doc } from "./tokens";
+import { Doc, Item } from "./tokens";
 import { isProject } from "./project";
 
 /* A design travels in a link: the document as JSON, deflated and base64url-encoded
@@ -10,13 +10,19 @@ export const DOCZ_PARAM = "docz";
 
 /** the document with what a link should not carry: picked images and AI rewrite history */
 export function shareable(doc: Doc): Doc {
+  /* a part inside a container is stripped the same way as one on the screen */
+  const item = (it: Item): Item => {
+    const { src, noteHistory: _h, children, ...rest } = it;
+    return {
+      ...rest,
+      ...(src && /^https?:\/\//.test(src) ? { src } : undefined),
+      ...(children ? { children: children.map((c) => ({ ...item(c), x: c.x, y: c.y })) } : undefined),
+    };
+  };
   return {
     ...doc,
     frames: doc.frames.map(({ noteHistory: _h, ...f }) => f),
-    groups: doc.groups.map((g) => ({
-      ...g,
-      items: g.items.map(({ src, noteHistory: _h, ...it }) => (src && /^https?:\/\//.test(src) ? { ...it, src } : it)),
-    })),
+    groups: doc.groups.map((g) => ({ ...g, items: g.items.map(item) })),
   };
 }
 
