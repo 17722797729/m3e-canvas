@@ -1,8 +1,8 @@
 "use client";
 
-import { ReactNode, useEffect, useMemo, useState } from "react";
-import { Reorder, useDragControls } from "motion/react";
+import { ReactNode, createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Frame, Group, Item, KIND_SPEC, LAYER_DEFAULT, Palette, byLayer, explodeGroup, isPhoneFrame, layerOf } from "@/lib/tokens";
+import { contrastRatio } from "@/lib/color";
 import { Icon } from "./M3Node";
 import { Lang, KIND_TEXT, t, useLang } from "@/lib/i18n";
 
@@ -24,6 +24,8 @@ function nameOf(it: Item, lang: Lang) {
 }
 
 function runLabel(g: Group, lang: Lang) {
+  /* a group the editor made for itself says so by name */
+  if (g.name) return g.name;
   const first = g.items[0];
   const noun = KIND_TEXT[lang][first.kind]?.noun ?? (KIND_SPEC[first.kind] ?? KIND_SPEC.box).label;
   return g.free ? `${t("group", lang)} × ${g.items.length}` : g.items.length > 1 ? `${noun} × ${g.items.length}` : nameOf(first, lang);
@@ -34,6 +36,16 @@ const badgeOf = (it: Item) => {
   const z = layerOf(it);
   return z === LAYER_DEFAULT ? undefined : String(z);
 };
+
+/** One level's order and the way it wants a new one, plus the running drag. */
+type LevelInfo = { values: string[]; onReorder: (next: string[]) => void };
+type Dnd = {
+  levels: Map<string, LevelInfo>;
+  level: string;
+  dragging: string | null;
+  begin: (e: React.PointerEvent, value: string, part: string, holds: boolean) => void;
+};
+const DndCtx = createContext<Dnd>({ levels: new Map(), level: "", dragging: null, begin: () => {} });
 
 function Row({
   id,
@@ -50,6 +62,11 @@ function Row({
   onDragging,
   badge,
   plain,
+  onNest,
+  holds,
+  hover,
+  onFree,
+  inContainer,
   children,
 }: {
   id: string;
@@ -66,18 +83,34 @@ function Row({
   locked?: boolean;
   /** flips the group's lock; set only on a whole group's row */
   onLock?: () => void;
-  onDragging: (dragging: boolean) => void;
+  onDragging: (dragging: boolean, id?: string) => void;
   /** the part's own layer, when it is not the default */
   badge?: string;
   /** a row that is not reorderable (a page, or a part inside a container) */
   plain?: boolean;
+  /** asks to put this row's part inside a container on the same screen */
+  onNest?: () => void;
+  /** takes this row's part out of its container */
+  onFree?: () => void;
+  /** this row is a container's own child */
+  inContainer?: boolean;
+  /** this row's part can hold others (a container, or a bar with buttons) */
+  holds?: boolean;
+  /** a drag is hovering this row: it lights up, and a holder opens to receive */
+  hover?: boolean;
   children?: ReactNode;
 }) {
   const lang = useLang();
-  const controls = useDragControls();
+  /* the row's own background decides what its icons and label can be seen in: a custom
+     scheme can put a dark surface under a light one, and icons must still read */
+  const bg = hover ? (holds ? p.tertiaryContainer : p.surfaceContainerHigh) : on ? p.secondaryContainer : depth === 0 ? p.surfaceContainerLow : p.surface;
+  const ink = (want: string) => (contrastRatio(want, bg) >= 3 ? want : contrastRatio(p.onSurface, bg) >= contrastRatio(p.onSurfaceVariant, bg) ? p.onSurface : p.onSurfaceVariant);
+  const dnd = useContext(DndCtx);
+  const draggable = !plain;
   const h = depth === 0 ? 40 : 36;
   const body = (
     <div
+      {...(draggable ? { "data-value": id, "data-level": dnd.level, "data-part": id, "data-holds": holds ? "1" : undefined } : { "data-part": id, "data-holds": holds ? "1" : undefined })}
       style={{
         display: "flex",
         alignItems: "center",
@@ -86,9 +119,13 @@ function Row({
         padding: "0 6px 0 2px",
         marginLeft: depth * 14,
         borderRadius: depth === 0 ? 14 : 12,
-        background: on ? p.secondaryContainer : depth === 0 ? p.surfaceContainerLow : p.surface,
-        color: on ? p.onSecondaryContainer : p.onSurface,
+        background: hover ? (holds ? p.tertiaryContainer : p.surfaceContainerHigh) : on ? p.secondaryContainer : depth === 0 ? p.surfaceContainerLow : p.surface,
+        color: hover ? (holds ? p.onTertiaryContainer : p.onSurface) : on ? p.onSecondaryContainer : ink(p.onSurface),
+        outline: hover && holds ? `2px solid ${p.primary}` : undefined,
+        outlineOffset: hover && holds ? 1 : undefined,
+        opacity: dnd.dragging === id ? 0.45 : 1,
         userSelect: "none",
+        touchAction: draggable ? "none" : undefined,
       }}
     >
       {plain ? (
@@ -96,15 +133,15 @@ function Row({
       ) : (
         <span
           onPointerDown={(e) => {
-            e.preventDefault();
-            controls.start(e);
+            dnd.begin(e, id, id, !!holds);
           }}
-          style={{ cursor: "grab", color: p.outline, display: "grid", placeItems: "center", width: depth === 0 ? 24 : 20, height: h, touchAction: "none", flex: "0 0 auto" }}
+          style={{ cursor: "grab", color: ink(p.outline), display: "grid", placeItems: "center", width: depth === 0 ? 24 : 20, height: h, touchAction: "none", flex: "0 0 auto" }}
         >
           <Icon name="drag_indicator" size={18} />
         </span>
       )}
       <button
+        onPointerDown={draggable ? (e) => dnd.begin(e, id, id, !!holds) : undefined}
         onClick={(e) => onSelect(e.shiftKey)}
         style={{
           flex: 1,
@@ -121,7 +158,7 @@ function Row({
           textAlign: "left",
         }}
       >
-        <span style={{ display: "inline-flex", gap: 2, color: on ? p.onSecondaryContainer : p.primary }}>{icon}</span>
+        <span style={{ display: "inline-flex", gap: 2, color: on ? p.onSecondaryContainer : ink(p.primary) }}>{icon}</span>
         <span style={{ fontSize: 12, fontWeight: depth === 0 ? 600 : 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
         {badge && (
           <span
@@ -132,6 +169,20 @@ function Row({
           </span>
         )}
       </button>
+      {inContainer && onFree && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onFree();
+          }}
+          title={t("takeOut", lang)}
+          aria-label={t("takeOut", lang)}
+          className="m3-press"
+          style={{ width: 28, height: 28, borderRadius: 14, border: "none", background: "transparent", color: "#ffffff", cursor: "pointer", padding: 0, display: "grid", placeItems: "center", flex: "0 0 auto" }}
+        >
+          <Icon name="move_up" size={18} />
+        </button>
+      )}
       {onLock && (
         <button
           onClick={onLock}
@@ -139,7 +190,7 @@ function Row({
           aria-label={t(locked ? "unlock" : "lock", lang)}
           aria-pressed={!!locked}
           className="m3-press"
-          style={{ width: 28, height: 28, borderRadius: 14, border: "none", background: "transparent", color: locked ? (on ? p.onSecondaryContainer : p.primary) : p.outline, cursor: "pointer", padding: 0, display: "grid", placeItems: "center", flex: "0 0 auto" }}
+          style={{ width: 28, height: 28, borderRadius: 14, border: "none", background: "transparent", color: locked ? (on ? p.onSecondaryContainer : ink(p.primary)) : ink(p.outline), cursor: "pointer", padding: 0, display: "grid", placeItems: "center", flex: "0 0 auto" }}
         >
           <Icon name={locked ? "lock" : "lock_open"} size={20} fill={locked} />
         </button>
@@ -150,7 +201,7 @@ function Row({
           title={t(open ? "hideParts" : "showParts", lang)}
           aria-expanded={open}
           className="m3-press"
-          style={{ width: 28, height: 28, borderRadius: 14, border: "none", background: "transparent", color: on ? p.onSecondaryContainer : p.onSurfaceVariant, cursor: "pointer", padding: 0, display: "grid", placeItems: "center", flex: "0 0 auto" }}
+          style={{ width: 28, height: 28, borderRadius: 14, border: "none", background: "transparent", color: on ? p.onSecondaryContainer : ink(p.onSurfaceVariant), cursor: "pointer", padding: 0, display: "grid", placeItems: "center", flex: "0 0 auto" }}
         >
           <span style={{ display: "inline-flex", transform: open ? "rotate(90deg)" : "none", transition: "transform 160ms" }}>
             <Icon name="chevron_right" size={20} />
@@ -159,26 +210,22 @@ function Row({
       )}
     </div>
   );
-  const inner = (
-    <>
+  return (
+    <div style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 4, position: "relative" }}>
       {body}
       {open && children}
-    </>
-  );
-  if (plain) return <div style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 4, position: "relative" }}>{inner}</div>;
-  return (
-    <Reorder.Item value={id} layout="position" transition={{ layout: { duration: 0 } }} dragListener={false} dragControls={controls} onDragStart={() => onDragging(true)} onDragEnd={() => onDragging(false)} style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 4, position: "relative" }}>
-      {inner}
-    </Reorder.Item>
+    </div>
   );
 }
 
-/** One reorderable level: drag the handles; `values` is the shown order. */
-function Level({ values, onReorder, children }: { values: string[]; onReorder: (next: string[]) => void; children: ReactNode }) {
+/** One level of the tree: it records the order it shows and the way it takes a new one. */
+function Level({ levelKey, values, onReorder, children }: { levelKey: string; values: string[]; onReorder: (next: string[]) => void; children: ReactNode }) {
+  const parent = useContext(DndCtx);
+  parent.levels.set(levelKey, { values, onReorder });
   return (
-    <Reorder.Group axis="y" values={values} onReorder={onReorder} style={{ display: "flex", flexDirection: "column", gap: 4, padding: 0, margin: 0 }}>
-      {children}
-    </Reorder.Group>
+    <DndCtx.Provider value={{ ...parent, level: levelKey }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: 0, margin: 0 }}>{children}</div>
+    </DndCtx.Provider>
   );
 }
 
@@ -197,23 +244,39 @@ function PartRow({
   reorderable = false,
   locked,
   onLock,
+  onNest,
+  hoverId,
+  onFree,
+  inContainer,
 }: {
   it: Item;
   p: Palette;
   depth: number;
   sel: Set<string>;
   onSelect: (itemIds: string[], add: boolean) => void;
-  onDragging: (dragging: boolean) => void;
+  onDragging: (dragging: boolean, id?: string) => void;
   openIds: Set<string>;
   toggle: (id: string) => void;
   reorderable?: boolean;
   /** the lock of the group the part stands for, when it is shown in the group's place */
   locked?: boolean;
   onLock?: () => void;
+  /** asks to put this part inside one of the screen's containers */
+  onNest?: (it: Item) => void;
+  /** takes this part out of its container */
+  onFree?: (itemId: string) => void;
+  /** the row a drag is hovering */
+  hoverId?: string | null;
+  /** this part is a container's own child, so it offers the way out */
+  inContainer?: boolean;
 }) {
   const lang = useLang();
   const kids = [...(it.children ?? [])].sort(byLayer).reverse();
-  const open = kids.length > 0 && openIds.has(it.id);
+  /* a bar's destinations are buttons of their own: they belong under it in the tree */
+  const slots = (it.tabs ?? []).map((t, i) => ({ key: `tab:${i}`, icon: t.icon, label: t.label }));
+  /* anything with room inside can take a dropped part */
+  const holds = it.kind === "box" || slots.length > 0 || (it.children?.length ?? 0) > 0;
+  const open = (kids.length > 0 || slots.length > 0) && openIds.has(it.id);
   return (
     <Row
       id={it.id}
@@ -225,16 +288,40 @@ function PartRow({
       badge={badgeOf(it)}
       on={sel.has(it.id)}
       onSelect={(add) => onSelect([it.id], add)}
-      open={kids.length ? open : undefined}
-      onToggle={kids.length ? () => toggle(it.id) : undefined}
+      open={kids.length || slots.length ? open : undefined}
+      onToggle={kids.length || slots.length ? () => toggle(it.id) : undefined}
       onDragging={onDragging}
       locked={locked}
       onLock={onLock}
+      onNest={onNest ? () => onNest(it) : undefined}
+      onFree={onFree ? () => onFree(it.id) : undefined}
+      inContainer={inContainer}
+      holds={holds}
+      hover={hoverId === it.id}
     >
       {kids.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {kids.map((c) => (
-            <PartRow key={c.id} it={c} p={p} depth={depth + 1} sel={sel} onSelect={onSelect} onDragging={onDragging} openIds={openIds} toggle={toggle} />
+            <PartRow key={c.id} it={c} p={p} depth={depth + 1} sel={sel} onSelect={onSelect} onDragging={onDragging} openIds={openIds} toggle={toggle} hoverId={hoverId} onFree={onFree} inContainer />
+          ))}
+        </div>
+      )}
+      {/* the bar's own buttons, each with the icon and words it shows on the canvas */}
+      {slots.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {slots.map((sl) => (
+            <Row
+              key={sl.key}
+              id={`${it.id}:${sl.key}`}
+              p={p}
+              depth={depth + 1}
+              plain
+              icon={<Icon name={sl.icon || "radio_button_unchecked"} size={16} />}
+              label={sl.label.trim() || sl.key}
+              on={false}
+              onSelect={() => onSelect([it.id], false)}
+              onDragging={onDragging}
+            />
           ))}
         </div>
       )}
@@ -253,6 +340,9 @@ function RunParts({
   onDragging,
   openIds,
   toggle,
+  onNest,
+  hoverId,
+  onFree,
 }: {
   run: Group;
   p: Palette;
@@ -261,15 +351,18 @@ function RunParts({
   onSelect: (itemIds: string[], add: boolean) => void;
   /** the run's parts in a new reading order */
   onReorder: (ids: string[]) => void;
-  onDragging: (dragging: boolean) => void;
+  onDragging: (dragging: boolean, id?: string) => void;
   openIds: Set<string>;
   toggle: (id: string) => void;
+  onNest?: (it: Item) => void;
+  hoverId?: string | null;
+  onFree?: (itemId: string) => void;
 }) {
   const ids = run.items.map((it) => it.id);
   return (
-    <Level values={ids} onReorder={onReorder}>
+    <Level levelKey={`parts:${run.id}`} values={ids} onReorder={onReorder}>
       {run.items.map((it) => (
-        <PartRow key={it.id} it={it} p={p} depth={depth} sel={sel} onSelect={onSelect} onDragging={onDragging} openIds={openIds} toggle={toggle} reorderable />
+        <PartRow key={it.id} it={it} p={p} depth={depth} sel={sel} onSelect={onSelect} onDragging={onDragging} openIds={openIds} toggle={toggle} reorderable onNest={onNest} hoverId={hoverId} onFree={onFree} />
       ))}
     </Level>
   );
@@ -291,6 +384,9 @@ export function LayersPanel({
   onToggleLock,
   onReorderItems,
   onDragging,
+  onNest,
+  onDropPart,
+  onFreePart,
 }: {
   p: Palette;
   frames: Frame[];
@@ -312,6 +408,12 @@ export function LayersPanel({
   onReorderItems: (groupId: string, ids: string[]) => void;
   /** a drag on any level starting or ending, so the page can record one undo step for the whole drag */
   onDragging: (dragging: boolean) => void;
+  /** a part was dropped onto another one: make it a child when the drop asks for it */
+  onDropPart?: (itemId: string, targetId: string) => void;
+  /** asks to put one part inside a container on the same screen */
+  onNest?: (it: Item) => void;
+  /** takes one part out of the container that holds it */
+  onFreePart?: (itemId: string) => void;
 }) {
   const lang = useLang();
   const sel = new Set(selectedIds);
@@ -336,6 +438,68 @@ export function LayersPanel({
       else next.add(id);
       return next;
     });
+  /* The drag is ours: rows never move while it runs, so a row you aim at stays put. The
+   * places the rows stood when the drag began decide both the highlight and the drop. */
+  const levels = useRef(new Map<string, LevelInfo>()).current;
+  const [hoverId, setHoverId] = useState<string | null>(null);
+  const [draggingRow, setDraggingRow] = useState<string | null>(null);
+  const openTimer = useRef<number | null>(null);
+  const begin = (e: React.PointerEvent, value: string, part: string, holds: boolean) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rows = [...document.querySelectorAll<HTMLElement>("[data-value]")].map((el) => ({
+      value: el.dataset.value ?? "",
+      part: el.dataset.part ?? "",
+      level: el.dataset.level ?? "",
+      holds: el.dataset.holds === "1",
+      top: el.getBoundingClientRect().top,
+      bottom: el.getBoundingClientRect().bottom,
+    }));
+    const mine = rows.find((r) => r.value === value);
+    if (!mine) return;
+    const overAt = (y: number) => rows.find((r) => y >= r.top && y <= r.bottom && r.value !== value) ?? null;
+    setDraggingRow(value);
+    onDragging(true);
+    const move = (ev: PointerEvent) => {
+      const over = overAt(ev.clientY);
+      setHoverId(over?.part ?? null);
+      /* a holder the pointer rests on opens itself, so its parts can be aimed at */
+      if (over?.holds) {
+        if (openTimer.current) window.clearTimeout(openTimer.current);
+        openTimer.current = window.setTimeout(() => setOpenIds((cur) => new Set(cur).add(over.part)), 420);
+      } else if (openTimer.current) {
+        window.clearTimeout(openTimer.current);
+        openTimer.current = null;
+      }
+    };
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      if (openTimer.current) window.clearTimeout(openTimer.current);
+      openTimer.current = null;
+      setHoverId(null);
+      setDraggingRow(null);
+      const over = overAt(ev.clientY);
+      if (!over) return;
+      /* onto something that can hold it: that is the parent / child gesture */
+      if (over.holds && over.part && over.part !== part && !holds) {
+        onDropPart?.(part, over.part);
+        return;
+      }
+      /* anywhere else it is the ordinary reorder, inside the row's own level */
+      const info = levels.get(mine.level);
+      if (!info) return;
+      const siblings = rows.filter((r) => r.level === mine.level && r.value !== value).sort((a, b) => a.top - b.top);
+      const at = siblings.filter((r) => r.top < ev.clientY).length;
+      const next = siblings.map((r) => r.value);
+      next.splice(at, 0, value);
+      if (next.join("|") !== info.values.join("|")) info.onReorder(next);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
   const groupsOf = useMemo(() => {
     const map = new Map<string, Group[]>();
     for (const g of groups) {
@@ -354,7 +518,7 @@ export function LayersPanel({
 
   const groupBody = (g: Group, depth: number) => {
     if (!g.free) {
-      return <RunParts run={g} p={p} depth={depth} sel={sel} onSelect={onSelect} onReorder={(order) => onReorderItems(g.id, order)} onDragging={onDragging} openIds={openIds} toggle={toggle} />;
+      return <RunParts run={g} p={p} depth={depth} sel={sel} onSelect={onSelect} onReorder={(order) => onReorderItems(g.id, order)} onDragging={onDragging} openIds={openIds} toggle={toggle} onNest={onNest} hoverId={hoverId} onFree={onFreePart} />;
     }
     const runs = freeRuns(g);
     /* the key a run is known by in this level: a run of one is the part itself, so the
@@ -364,7 +528,7 @@ export function LayersPanel({
     const byId = new Map(runs.map((r) => [keyOf(r), r]));
     const reorderRuns = (next: string[]) => onReorderItems(g.id, flatten(next.map((id) => byId.get(id)).filter((r): r is Group => !!r)));
     return (
-      <Level values={runIds} onReorder={reorderRuns}>
+      <Level levelKey={`runs:${g.id}`} values={runIds} onReorder={reorderRuns}>
         {runs.map((r) => {
           const many = r.items.length > 1;
           /* a run of one is the part itself: wrapping it in a second row would show the
@@ -398,6 +562,7 @@ export function LayersPanel({
                 onDragging={onDragging}
                 openIds={openIds}
                 toggle={toggle}
+                hoverId={hoverId}
                 onReorder={(order) => {
                   /* the run's members take each other's places in the list; every other part keeps its own */
                   const members = new Set(r.items.map((it) => it.id));
@@ -454,6 +619,9 @@ export function LayersPanel({
             reorderable={reorderable}
             locked={g.locked}
             onLock={() => onToggleLock(g.id)}
+            onNest={onNest}
+            hoverId={hoverId}
+            onFree={onFreePart}
           />
         );
       }
@@ -481,13 +649,14 @@ export function LayersPanel({
     });
     if (!reorderable) return <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{rows}</div>;
     return (
-      <Level values={topFirst.map(keyOf)} onReorder={reorderPage}>
+      <Level levelKey={`page:${f.id}`} values={topFirst.map(keyOf)} onReorder={reorderPage}>
         {rows}
       </Level>
     );
   };
 
   return (
+    <DndCtx.Provider value={{ levels, level: "", dragging: draggingRow, begin }}>
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <div className="no-scrollbar" style={{ flex: 1, overflowY: "auto", padding: "8px 10px 12px" }}>
         {frames.length === 0 ? (
@@ -520,5 +689,6 @@ export function LayersPanel({
         )}
       </div>
     </div>
+    </DndCtx.Provider>
   );
 }

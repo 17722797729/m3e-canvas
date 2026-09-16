@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type ItemState, type PlacedItem } from "./tokens";
+import { BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type ItemState, type PlacedItem } from "./tokens";
 
 afterEach(() => setGlobalShape("rounded")); // restore the module default
 
@@ -164,6 +164,20 @@ describe("a button's shape", () => {
     setGlobalShape("rounded");
     expect(baseRadii({ ...makeItem("iconButton"), shape: "square" }).tl).toBe(8);
     expect(SHAPED).toEqual(["button", "iconButton", "fab", "extendedFab"]);
+  });
+});
+
+describe("a part's border", () => {
+  const p = PALETTES[0];
+  it("draws nothing at zero and an inset ring otherwise", () => {
+    const plain = makeItem("button");
+    expect(strokeOf(plain, p)).toBeNull();
+    expect(strokeOf({ ...plain, strokeWidth: 0 }, p)).toBeNull();
+    expect(strokeOf({ ...plain, strokeWidth: 3 }, p)).toBe(`inset 0 0 0 3px ${p.outline}`);
+    expect(strokeOf({ ...plain, strokeWidth: 2, strokeColor: "primary" }, p)).toBe(`inset 0 0 0 2px ${p.primary}`);
+    expect(strokeOf({ ...plain, strokeWidth: 2, strokeColor: "#ff0000" }, p)).toBe("inset 0 0 0 2px #ff0000");
+    /* an unknown colour name falls back to the outline role */
+    expect(strokeOf({ ...plain, strokeWidth: 1, strokeColor: "chartreuse" }, p)).toBe(`inset 0 0 0 1px ${p.outline}`);
   });
 });
 
@@ -351,7 +365,7 @@ describe("composite parts", () => {
   it("drops as one container holding a fresh copy of the set", () => {
     let n = 0;
     const box = compositeInstance(part, () => `n${++n}`);
-    expect(box).toMatchObject({ id: "n1", kind: "box", label: "Card row", size: 300, size2: 120 });
+    expect(box).toMatchObject({ kind: "box", label: "Card row", size: 300, size2: 120 });
     /* the frame draws nothing of its own, so an instance looks like the composed set */
     expect(box).toMatchObject({ fill: "surface", radiusTop: 0, radiusBottom: 0 });
     expect(box.children?.map((c) => c.id)).not.toContain("b");
@@ -365,6 +379,13 @@ describe("composite parts", () => {
     expect(subtreeOf(box).map((it) => it.id)).not.toContain("inner");
     /* the template itself is untouched */
     expect(part.items[0].id).toBe("b");
+  });
+
+  it("returns a template that is one container as that very container", () => {
+    const single: CustomPart = { id: "p2", name: "Box set", w: 200, h: 120, items: [{ ...makeItem("box"), id: "b", x: 12, y: 12, size: 176, size2: 96, children: [{ ...makeItem("button"), id: "kid", x: 8, y: 8 }] }] };
+    const one = compositeInstance(single, () => "z1");
+    expect(one).toMatchObject({ kind: "box", id: "z1", size: 200, size2: 120 });
+    expect(one.children?.[0]).toMatchObject({ x: 8, y: 8 });
   });
 
   it("scales a container's contents with it, offsets and sizes alike", () => {

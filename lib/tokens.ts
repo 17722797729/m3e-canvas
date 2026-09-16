@@ -1243,6 +1243,10 @@ export type Item = {
   actions?: Record<string, Action>;
   /** the look a toggle button takes once tapped; undefined = not a toggle */
   toggle?: ToggleLook;
+  /** a border drawn inside the part: its thickness in dp; 0 or unset means none */
+  strokeWidth?: number;
+  /** the border's colour: a palette role key or a #rrggbb literal; unset uses outline */
+  strokeColor?: string;
   /** interaction rules hung on this part: what a tap changes about it (grey out, cool
    *  down, swap its words or look, disappear) */
   states?: ItemState[];
@@ -1656,6 +1660,23 @@ export function parentOf(groups: Group[], id: string): Item | null {
 /** a part's own level, then its children's: the order a container stacks its contents in */
 export const byLayer = (a: Item, b: Item) => layerOf(a) - layerOf(b);
 
+/** The border a part draws inside itself, written as a shadow so no layout moves for it;
+ *  a thickness of 0 (or nothing at all) leaves the part without a border. */
+export function strokeOf(it: Item, p: Palette): string | null {
+  const w = it.strokeWidth;
+  if (typeof w !== "number" || w <= 0) return null;
+  const colour = isCustomColor(it.strokeColor)
+    ? isHex(it.strokeColor)
+      ? it.strokeColor
+      : p[it.strokeColor as ColorToken]
+    : p.outline;
+  return `inset 0 0 0 ${Math.round(w)}px ${colour}`;
+}
+
+/** Whether a container lets a child be seen. A child is drawn inside its container, so a
+ *  child the author put BELOW the container is covered by it: the box hides it. */
+export const childShown = (parent: Item, child: Item) => layerOf(child) >= layerOf(parent);
+
 /** A copy of a part and everything it holds, with fresh ids from `next`. The mapping is
  *  written into `ids` so a caller can also remap the interactions that point at them. */
 export function copySubtree(it: Item, next: () => string, ids: Map<string, string>): Item {
@@ -1881,6 +1902,8 @@ export const groupsInFrame = (groups: Group[], f: Frame, frames: Frame[], widths
 
 export type Group = {
   id: string;
+  /** the name the layers panel shows for it; unset means it is named after its parts */
+  name?: string;
   x: number;
   y: number;
   axis: Axis;
@@ -1953,6 +1976,13 @@ export function scaleChildren(kids: PlacedItem[], sx: number, sy: number): Place
 /** The part a composite becomes on a screen: one container box holding a fresh copy of
  *  everything the author composed, so an instance can be moved, edited or deleted whole. */
 export function compositeInstance(part: CustomPart, id: () => string = uid): Item {
+  /* A template that is one container — a box with parts inside — becomes that very
+   * container: the frame the author saved is the frame that lands, not a second one. */
+  const copied = part.items.map((it) => copySubtree(it, id, new Map()) as PlacedItem);
+  const only = copied[0];
+  if (copied.length === 1 && only && (only.kind === "box" || (only.children?.length ?? 0) > 0)) {
+    return { ...only, size: part.w, size2: part.h };
+  }
   const box = makeItem("box");
   box.id = id();
   box.label = part.name;
@@ -1964,7 +1994,7 @@ export function compositeInstance(part: CustomPart, id: () => string = uid): Ite
   box.radiusTop = 0;
   box.radiusBottom = 0;
   box.checked = false;
-  box.children = part.items.map((it) => copySubtree(it, id, new Map()) as PlacedItem);
+  box.children = copied;
   return box;
 }
 

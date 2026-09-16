@@ -34,14 +34,19 @@ export default function RootLayout({
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        {/* The text face still comes from Google; the fallbacks carry the page when it is unreachable. */}
         <link
           rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600;700&display=swap"
         />
-        <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400..700,0..1,0&display=block"
+        {/* The icon font is served from this site, so the icons never fall back to their
+            names when Google cannot be reached. */}
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `@font-face{font-family:"Material Symbols Rounded";src:url("${BASE}/fonts/material-symbols-rounded.woff2") format("woff2-variations");font-weight:100 700;font-style:normal;font-display:block;}`,
+          }}
         />
+        <link rel="preload" as="font" type="font/woff2" href={`${BASE}/fonts/material-symbols-rounded.woff2`} crossOrigin="anonymous" />
       </head>
       <body style={{ fontFamily: "Roboto, system-ui, sans-serif" }}>{children}</body>
     </html>

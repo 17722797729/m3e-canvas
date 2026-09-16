@@ -22,7 +22,6 @@ import {
   ButtonShape,
   SHAPED,
   TAPPABLE,
-  TOGGLEABLE,
   TRANSITIONS,
   Transition,
   VARIANTS,
@@ -709,9 +708,9 @@ export function Inspector({
   onUngroup,
   onAlign,
   onContainerize,
-  onAdopt,
   onUnlink,
   onDialog,
+  onSaveComposite,
   childCount = 0,
   inContainer = false,
 }: {
@@ -742,6 +741,8 @@ export function Inspector({
   onUnlink?: () => void;
   /** makes, or finds, the dialog screen a tap pops over the page */
   onDialog?: () => void;
+  /** keeps this part and everything it holds as a composite part */
+  onSaveComposite?: () => void;
   /** how many parts the selected container holds */
   childCount?: number;
   /** the selected part sits inside a container */
@@ -812,7 +813,6 @@ export function Inspector({
           {onAlign && <AlignSection single={false} onAlign={onAlign} p={p} />}
           {grouped ? bigBtn("ungroup", t("ungroup", lang), onUngroup) : bigBtn("group_work", t("makeGroup", lang), onGroup)}
           {onContainerize && bigBtn("select_all", t("createContainer", lang), onContainerize)}
-          {onAdopt && bigBtn("move_down", t("putInContainer", lang), onAdopt)}
           <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant, padding: "0 6px" }}>
             {grouped ? t("groupEditNote", lang) : `${t("groupHint", lang)} (Ctrl+G)`}
           </div>
@@ -944,44 +944,28 @@ export function Inspector({
       >
         <Icon name={spec.paletteIcon} size={20} />
         <span style={{ fontSize: 14, fontWeight: 600, flex: 1, minWidth: 0 }}>{KIND_TEXT[lang][item.kind]?.noun ?? spec.label}</span>
-        <IconBtn icon="content_copy" p={p} onClick={onDuplicate} title={t("duplicateKey", lang)} size={32} />
+        {onSaveComposite && (
+          <button
+            onClick={onSaveComposite}
+            title={t("addToComposites", lang)}
+            aria-label={t("addToComposites", lang)}
+            className="m3-press"
+            style={{ width: 32, height: 32, borderRadius: 16, border: "none", background: "transparent", color: "#ffffff", cursor: "pointer", display: "grid", placeItems: "center" }}
+          >
+            <Icon name="library_add" size={20} />
+          </button>
+        )}
+        <button
+          onClick={onDuplicate}
+          title={t("duplicateKey", lang)}
+          aria-label={t("duplicateKey", lang)}
+          className="m3-press"
+          style={{ width: 32, height: 32, borderRadius: 16, border: "none", background: "transparent", color: "#ffffff", cursor: "pointer", display: "grid", placeItems: "center" }}
+        >
+          <Icon name="content_copy" size={20} />
+        </button>
         <IconBtn icon="delete" p={p} danger onClick={onDelete} title={t("delete", lang)} size={32} />
       </div>
-
-      {TOGGLEABLE.includes(item.kind) && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "10px 4px 12px", marginBottom: 12 }}>
-          <Toggle
-            on={!!item.toggle}
-            onChange={(on) => {
-              onChange({ toggle: on ? {} : undefined });
-              setOnTab(on);
-              setPickerOpen(false);
-            }}
-            p={p}
-            icon="swap_horiz"
-            label={t("toggle", lang)}
-            grow
-          />
-          {item.toggle && (
-            <>
-              <Segmented<"off" | "on">
-                options={[
-                  { key: "off", icon: "radio_button_unchecked", label: t("normalState", lang) },
-                  { key: "on", icon: "check_circle", label: t("onState", lang) },
-                ]}
-                value={onTab ? "on" : "off"}
-                onChange={(k) => {
-                  setOnTab(k === "on");
-                  setPickerOpen(false);
-                }}
-                p={p}
-                height={36}
-              />
-              {editOn && <div style={{ fontSize: 11, color: p.onSurfaceVariant, padding: "0 4px" }}>{t("onStateHint", lang)}</div>}
-            </>
-          )}
-        </div>
-      )}
 
       {onAlign && !editOn && <AlignSection single onAlign={onAlign} p={p} />}
 
@@ -1322,7 +1306,8 @@ export function Inspector({
         </Section>
       )}
 
-      {spec.hasFill && !editOn && (
+      {/* a container's colour comes from its own colour control, so its fill row is gone */}
+      {spec.hasFill && item.kind !== "box" && !editOn && (
         <Section id="fill" icon="format_color_fill" title={t("background", lang)} p={p}>
           <TokenChips
             value={item.kind === "card" ? cardFillOf(item) : (item.fill ?? "surfaceContainerLow")}
@@ -1352,21 +1337,23 @@ export function Inspector({
         </Section>
       )}
 
-      {/* what a part holds, and how to let it go */}
-      {(childCount > 0 || inContainer) && onUnlink && !editOn && (
-        <Section id="container" icon="select_all" title={t("container", lang)} p={p}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant }}>
-              {childCount > 0 ? t("children", lang).replace("{n}", String(childCount)) : t("insideContainer", lang)}
-            </div>
-            <button
-              onClick={onUnlink}
-              className="m3-press"
-              style={{ height: 40, borderRadius: 20, border: "none", background: p.secondaryContainer, color: p.onSecondaryContainer, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }}
-            >
-              <Icon name="move_up" size={20} />
-              {childCount > 0 ? t("releaseChildren", lang) : t("takeOut", lang)}
-            </button>
+      {/* every part can wear a border of its own, of any thickness and colour */}
+      {!editOn && (
+        <Section id="stroke" icon="border_style" title={t("stroke", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <Slider
+              icon="line_weight"
+              title={t("stroke", lang)}
+              value={item.strokeWidth ?? 0}
+              min={0}
+              max={5}
+              step={1}
+              onChange={(strokeWidth) => onChange({ strokeWidth })}
+              p={p}
+            />
+            <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("strokeColorLabel", lang)}</div>
+            <ItemColorChips value={item.strokeColor} onChange={(strokeColor) => onChange({ strokeColor })} p={p} />
+            <div style={{ fontSize: 11, lineHeight: 1.4, color: p.outline }}>{t("strokeHint", lang)}</div>
           </div>
         </Section>
       )}
@@ -1375,7 +1362,7 @@ export function Inspector({
       {!editOn && (
         <Section id="appearance" icon="format_paint" title={t("appearance", lang)} p={p}>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("partColor", lang)}</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("bgColor", lang)}</div>
             <ItemColorChips value={item.color} onChange={(color) => onChange({ color })} p={p} />
             <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, marginTop: 4 }}>{t("layer", lang)}</div>
             <Slider

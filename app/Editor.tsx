@@ -90,6 +90,8 @@ import {
   fitHeight,
   railExpansionSide,
   isWideRail,
+  LAYER_DEFAULT,
+  childShown,
   railMetrics,
   RAIL_TOP,
 } from "@/lib/tokens";
@@ -104,7 +106,7 @@ import { PromptPanel } from "@/components/PromptPanel";
 import { Mode, Toolbar } from "@/components/Toolbar";
 import { LangMenu } from "@/components/Menus";
 import { AiActionKey, AiPanel, aiErrorText } from "@/components/AiPanel";
-import { TidyState } from "@/components/ui";
+import { Field, TidyState } from "@/components/ui";
 import { AiSettings, DEFAULT_AI, hasKey, isSecureUrl, loadAiSettings, proposeBehavior, proposeDescription, pushHistory, saveAiSettings } from "@/lib/ai";
 import { barSlotOf, bodyRect, carryFrame, pullInto, tidyFrame } from "@/lib/tidy";
 import { constrainModalRails, modalRailOf, updateRail } from "@/lib/rail";
@@ -1984,7 +1986,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   /* The in-app clipboard: Ctrl+C keeps a copy of the selection (a whole group when
    * the selection covers one) with its offset inside its screen, so Ctrl+V can put it
    * at the same spot on another screen, or a step aside on the same one. */
-  const clipboardRef = useRef<{ group: Group; dx: number; dy: number; frameId: string | null } | null>(null);
+  const clipboardRef = useRef<{ group: Group; dx: number; dy: number; frameId: string | null; parentId?: string } | null>(null);
 
   const copySelected = useCallback(() => {
     if (!selected) return;
@@ -1998,7 +2000,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       if (!rect) return;
       const lone: Group = { id: home.id, x: rect.l, y: rect.t, axis: connectSpecOf(selected)?.axis ?? "x", items: [copySubtree(selected, uid, new Map())] };
       const f = frameOfGroup(home, framesRef.current, widthsRef.current);
-      clipboardRef.current = { group: lone, dx: f ? lone.x - f.x : 0, dy: f ? lone.y - f.y : 0, frameId: f?.id ?? null };
+      /* a part inside a container is pasted back beside itself, in that same container */
+      clipboardRef.current = { group: lone, dx: f ? lone.x - f.x : 0, dy: f ? lone.y - f.y : 0, frameId: f?.id ?? null, parentId: parentOf(groupsRef.current, selected.id)?.id };
       return;
     }
     let group: Group;
@@ -2018,6 +2021,21 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const pasteClipboard = useCallback(() => {
     const clip = clipboardRef.current;
     if (!clip) return;
+    /* a part that came out of a container is pasted next to it, inside the same container */
+    if (clip.parentId) {
+      const parent = parentOf(groupsRef.current, clip.parentId) ?? findItemIn(groupsRef.current.flatMap((g) => g.items), clip.parentId);
+      const kids = parent?.children ?? [];
+      const source = clip.group.items[0];
+      if (parent && source) {
+        const copy = copySubtree(source, uid, new Map()) as PlacedItem;
+        const at = kids.find((c) => c.id === source.id) ?? { x: 0, y: 0 };
+        const born: PlacedItem = { ...copy, x: at.x + 16, y: at.y + 16 };
+        snapshot();
+        setGroups((gs) => gs.map((g) => (!!findItemIn(g.items, parent.id) ? { ...g, items: patchItemIn(g.items, parent.id, { children: [...(parent.children ?? []), born] as PlacedItem[] }) } : g)));
+        setSelectedIds([born.id]);
+        return;
+      }
+    }
     const fs = framesRef.current;
     /* the screen to paste into: the selected screen, else the selection's, else the source */
     let target = selectedFrameId ? fs.find((f) => f.id === selectedFrameId) : undefined;
@@ -2298,8 +2316,10 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     setGroups((prev) => {
       const freeing = new Set<string>();
       for (const g of prev) for (const it of g.items) {
+        /* a container the author names lets all of its children go */
         if (ids.has(it.id)) for (const c of it.children ?? []) freeing.add(c.id);
-        if ((it.children ?? []).some((c) => ids.has(c.id))) freeing.add(it.id);
+        /* a child the author names is the one that leaves */
+        for (const c of it.children ?? []) if (ids.has(c.id)) freeing.add(c.id);
       }
       const out: Group[] = [];
       for (const g of prev) {
@@ -2322,6 +2342,145 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     });
     setSelectedIds([]);
   }, [selectedIds, snapshot]);
+
+  /** Saves a part and everything inside it — the container included — as a composite. */
+  const saveAsComposite = useCallback((id: string, name: string) => {
+    const owner = groupsRef.current.find((g) => !!findItemIn(g.items, id));
+    const it = owner ? findItemIn(owner.items, id) : null;
+    if (!it) return;
+    const size = sizeOf(it, widthsRef.current);
+    /* the container itself is the template, at exactly the size it has on the canvas */
+    const part: CustomPart = {
+      id: uid(),
+      name: name.trim() || it.label.trim() || t("composite", lang),
+      w: Math.round(size.w),
+      h: Math.round(size.h),
+      items: [{ ...(it as PlacedItem), x: 0, y: 0 }],
+    };
+    const taken = customParts.find((c) => c.name.trim() === part.name);
+    setCustomParts((cur) => (taken ? cur.map((c) => (c.id === taken.id ? { ...part, id: c.id } : c)) : [...cur, part]));
+    setSaveAsk(null);
+    setLeftTab("parts");
+    setLeftOpen(true);
+    showToast(t("addToComposites", lang), 1600, "library_add");
+  }, [customParts, lang]);
+
+  /** the composite being named before it is kept */
+  const [saveAsk, setSaveAsk] = useState<{ itemId: string; name: string } | null>(null);
+
+  /** Takes one part out of the container that holds it, right where it sits. */
+  const freePart = useCallback((itemId: string) => {
+    const parent = parentOf(groupsRef.current, itemId);
+    const rect = itemRects().find((r) => r.id === itemId);
+    if (!parent || !rect) return;
+    const held = findItemIn(groupsRef.current.flatMap((g) => g.items), itemId) as PlacedItem | null;
+    if (!held) return;
+    snapshot();
+    setGroups((prev) => {
+      const out = prev.map((g) => {
+        const owner = findItemIn(g.items, parent.id);
+        if (!owner) return g;
+        const keep = (owner.children ?? []).filter((c) => c.id !== itemId);
+        return { ...g, items: patchItemIn(g.items, parent.id, { children: keep.length ? keep : undefined }) };
+      });
+      const { x: _x, y: _y, ...it } = held;
+      /* they gather in one group of their own, named so the panel says what it is */
+      const name = t("movedOut", lang);
+      const bin = out.find((g) => g.name === name);
+      const bornPos = { x: rect.l - (bin?.x ?? rect.l), y: rect.t - (bin?.y ?? rect.t) };
+      if (bin) {
+        return out.map((g) => (g.id === bin.id ? { ...g, items: [...g.items, it], pos: { ...(g.pos ?? {}), [it.id]: bornPos } } : g));
+      }
+      return [...out, { id: uid(), name, x: rect.l, y: rect.t, axis: "x", items: [it], free: true, pos: { [it.id]: { x: 0, y: 0 } } }];
+    });
+    setSelectedIds([itemId]);
+  }, [itemRects, snapshot]);
+
+  /** Asks, with both names, before moving a part into a container on its screen. */
+  const [nestAsk, setNestAsk] = useState<{ itemId: string; containerId: string; itemName: string; containerName: string } | null>(null);
+
+  const askNest = useCallback((it: Item, wants?: string) => {
+    const rects = new Map(itemRects().map((r) => [r.id, r]));
+    const me = rects.get(it.id);
+    if (!me) return;
+    /* the box the part already sits in, else the nearest one on the same screen */
+    const boxes = itemsOf(groupsRef.current).filter((b) => b.kind === "box" && b.id !== it.id && !subtreeOf(it).some((d) => d.id === b.id));
+    if (boxes.length === 0) {
+      showToast(t("nestNoContainer", lang), 1800, "info");
+      return;
+    }
+    const home = groupsRef.current.find((g) => !!findItemIn(g.items, it.id));
+    const page = home ? frameOfGroup(home, framesRef.current, widthsRef.current) : null;
+    const here = boxes.filter((b) => {
+      const owner = groupsRef.current.find((g) => !!findItemIn(g.items, b.id));
+      return !page || (owner ? frameOfGroup(owner, framesRef.current, widthsRef.current)?.id === page.id : false);
+    });
+    const chosen = wants ? boxes.find((b) => b.id === wants) : undefined;
+    const pool = chosen ? [chosen] : here.length ? here : boxes;
+    const mine = (b: Item) => {
+      const r = rects.get(b.id);
+      return r ? Math.max(0, Math.min(r.r, me.r) - Math.max(r.l, me.l)) * Math.max(0, Math.min(r.b, me.b) - Math.max(r.t, me.t)) : 0;
+    };
+    const box = [...pool].sort((a, b) => mine(b) - mine(a))[0];
+    setNestAsk({
+      itemId: it.id,
+      containerId: box.id,
+      /* the name the layers panel shows for it, so the question reads as the author sees it */
+      itemName: it.label.trim() || (KIND_SPEC[it.kind] ?? KIND_SPEC.box).label,
+      containerName: box.label.trim() || t("container", lang),
+    });
+  }, [itemRects, lang]);
+
+  /** the confirmed move: the part becomes a child, keeping the place it had on screen */
+  const nestInto = useCallback((itemId: string, containerId: string) => {
+    const rects = new Map(itemRects().map((r) => [r.id, r]));
+    const me = rects.get(itemId);
+    const box = rects.get(containerId);
+    const src = groupsRef.current.find((g) => !!findItemIn(g.items, itemId));
+    const dest = groupsRef.current.find((g) => !!findItemIn(g.items, containerId));
+    if (!me || !box || !src || !dest) return;
+    const moving = findItemIn(src.items, itemId);
+    if (!moving) return;
+    snapshot();
+    setGroups((prev) => {
+      /* the part leaves its group (and its run) and lands in the container's own coordinates */
+      const out: Group[] = [];
+      for (const g of prev) {
+        const without = pruneItems(g.items, new Set([itemId]));
+        if (g.id === src.id) {
+          if (g.free) {
+            if (without.length) out.push(collapseFree({ ...g, items: without }, widthsRef.current));
+          } else {
+            let x = g.x;
+            let y = g.y;
+            let rest = g.items;
+            while (rest.length && rest[0].id === itemId) {
+              const sz = sizeOf(rest[0], widthsRef.current);
+              if (g.axis === "x") x += sz.w + GAP;
+              else y += sz.h + GAP;
+              rest = rest.slice(1);
+            }
+            if (without.length) out.push({ ...g, x, y, items: without });
+          }
+        } else if (without.length) out.push({ ...g, items: without });
+      }
+      /* a child sits over its parent in the layer order */
+      const parentItem = dest ? findItemIn(dest.items, containerId) : null;
+      const parentZ = parentItem ? layerOf(parentItem) : LAYER_DEFAULT;
+      const boxSize = sizeOf(parentItem ?? (moving as Item), widthsRef.current);
+      const kidSize = sizeOf(moving, widthsRef.current);
+      /* a part dropped past the container's edge is pulled inside, where it can be seen */
+      const born: PlacedItem = {
+        ...(moving as PlacedItem),
+        x: Math.round(clamp(me.l - box.l, 0, Math.max(0, boxSize.w - kidSize.w))),
+        y: Math.round(clamp(me.t - box.t, 0, Math.max(0, boxSize.h - kidSize.h))),
+        z: parentZ + 1,
+      };
+      return out.map((g) => (g.id === dest.id ? { ...g, items: patchItemIn(g.items, containerId, { children: [...(findItemIn(g.items, containerId)?.children ?? []), born] as PlacedItem[] }) } : g));
+    });
+    setSelectedIds([itemId]);
+    setNestAsk(null);
+  }, [itemRects, snapshot]);
 
   /** Binds a dialog to a part. The dialog lives on the part's own page, hidden until the
    *  tap: the first press adds it there (making a page first when the part has none), and
@@ -2956,7 +3115,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   /** the runs of one screen drawn with plain divs: the export layer */
   /** a container's children as the plain, deterministic renderer needs them */
   const staticChildren = (parent: Item): React.ReactNode =>
-    [...(parent.children ?? [])].sort(byLayer).map((c) => (
+    (parent.children ?? []).filter((c) => childShown(parent, c)).sort(byLayer).map((c) => (
       <div key={c.id} style={{ position: "absolute", left: c.x, top: c.y }}>
         <M3Static item={c} palette={p} overlay={staticChildren(c)} />
       </div>
@@ -3489,7 +3648,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
 
   /** the children of one part, drawn inside its box in the order their levels ask for */  /** the children of one part, drawn inside its box in the order their levels ask for */
   const childNodes = (parent: Item, g: Group): React.ReactNode =>
-    [...(parent.children ?? [])].sort(byLayer).map((c) => (
+    (parent.children ?? []).filter((c) => childShown(parent, c)).sort(byLayer).map((c) => (
       <div key={c.id} style={{ position: "absolute", left: c.x, top: c.y }}>
         <M3Node
           item={c}
@@ -3983,6 +4142,14 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                     onToggleLock={toggleGroupLock}
                     onReorderItems={reorderGroupItems}
                     onDragging={onLayerDragging}
+                    onNest={askNest}
+                    onFreePart={freePart}
+                    onDropPart={(from, to) => {
+                      const moved = groupsRef.current.map((g) => findItemIn(g.items, from)).find(Boolean);
+                      const target = groupsRef.current.map((g) => findItemIn(g.items, to)).find(Boolean);
+                      if (!moved || !target) return;
+                      askNest(moved, to);
+                    }}
                   />
                 )}
               </div>
@@ -4562,9 +4729,9 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   grouped={!!selectedGroup}
                   onGroup={groupSelected}
                   onContainerize={selectedIds.length > 1 ? containerizeSelected : undefined}
-                  onAdopt={selectedIds.length > 1 && selectedIds.filter((id) => groups.some((g) => g.items.some((it) => it.id === id && it.kind === "box"))).length === 1 ? adoptSelected : undefined}
                   onUnlink={selectedIds.length > 0 ? unlinkSelected : undefined}
                   onDialog={selected ? () => bindDialog(selected.id) : undefined}
+                  onSaveComposite={selected ? () => setSaveAsk({ itemId: selected.id, name: "" }) : undefined}
                   childCount={selected?.children?.length ?? 0}
                   inContainer={!!selected && !!parentOf(groups, selected.id)}
                   onUngroup={ungroupSelected}
@@ -4595,6 +4762,66 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
             const file = e.target.files?.[0];
             e.target.value = "";
             if (file) void readProject(file).then((next) => (next ? setPendingImport(next) : showToast(t("invalidProject", lang), 3000, "error")));
+          }}
+        />
+
+        {saveAsk && (
+          <div
+            role="dialog"
+            aria-label={t("addToComposites", lang)}
+            style={{ position: "fixed", inset: 0, zIndex: 80, display: "grid", placeItems: "center", background: "rgba(0,0,0,0.38)" }}
+            onPointerDown={(e) => {
+              if (e.target === e.currentTarget) setSaveAsk(null);
+            }}
+          >
+            <div style={{ width: "min(420px, 92vw)", display: "flex", flexDirection: "column", gap: 12, padding: 18, borderRadius: 28, background: p.surfaceContainerHigh, color: p.onSurface, boxShadow: "0 8px 30px rgba(0,0,0,0.30)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <Icon name="library_add" size={22} />
+                <span style={{ fontSize: 15, fontWeight: 700 }}>{t("addToComposites", lang)}</span>
+              </div>
+              <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant }}>{t("compositeNameHint", lang)}</div>
+              {/* the field wears a border of its own, so it reads as something to fill in */}
+              <div style={{ border: `1px solid ${p.outline}`, borderRadius: 14, padding: 2 }}>
+                <Field
+                  value={saveAsk.name}
+                  onChange={(name) => setSaveAsk({ ...saveAsk, name })}
+                  placeholder={t("compositeNameHint", lang)}
+                  p={p}
+                  icon="label"
+                  height={44}
+                />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <button onClick={() => setSaveAsk(null)} className="m3-press" style={{ height: 40, padding: "0 18px", borderRadius: 20, border: `1px solid ${p.outline}`, background: "transparent", color: p.primary, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+                  {t("cancel", lang)}
+                </button>
+                <button
+                  onClick={() => {
+                    const name = saveAsk.name.trim();
+                    if (!name) return;
+                    if (customParts.some((c) => c.name.trim() === name) && !window.confirm(t("overwriteName", lang))) return;
+                    saveAsComposite(saveAsk.itemId, name);
+                  }}
+                  disabled={!saveAsk.name.trim()}
+                  className="m3-press"
+                  style={{ height: 40, padding: "0 18px", borderRadius: 20, border: "none", background: saveAsk.name.trim() ? p.primary : p.surfaceContainerHighest, color: saveAsk.name.trim() ? p.onPrimary : p.outline, fontSize: 14, fontWeight: 600, cursor: saveAsk.name.trim() ? "pointer" : "default" }}
+                >
+                  {t("ok", lang)}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <ConfirmDialog
+          open={nestAsk !== null}
+          icon="subdirectory_arrow_right"
+          title={nestAsk ? t("nestTitle", lang).replace("{a}", nestAsk.itemName).replace("{b}", nestAsk.containerName) : ""}
+          body={nestAsk ? t("nestBody", lang).replace("{a}", nestAsk.itemName).replace("{b}", nestAsk.containerName) : ""}
+          p={p}
+          onCancel={() => setNestAsk(null)}
+          onConfirm={() => {
+            if (nestAsk) nestInto(nestAsk.itemId, nestAsk.containerId);
           }}
         />
 

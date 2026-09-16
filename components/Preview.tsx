@@ -25,6 +25,7 @@ import {
   Transition,
   baseRadii,
   byLayer,
+  childShown,
   connectSpecOf,
   fontFamilyOf,
   freeRadii,
@@ -127,7 +128,8 @@ const screenVariants: Variants = {
 
 /** kinds whose on/off state flips when tapped in the preview */
 const TOGGLES = ["switch", "checkbox", "chip"] as const;
-const flips = (it: Item) => (TOGGLES as readonly string[]).includes(it.kind) || !!it.toggle;
+/** A tap no longer swaps a button for a second look: the toggle feature is gone. */
+const flips = (_it: Item) => false;
 
 /** the live effect of every part's own state rules, shared down the screen */
 type StateRuntime = {
@@ -321,7 +323,7 @@ function Tappable({
 
   /* A container's children are tappable in their own right: the one with a target opens
    * that screen, and a toggle inside a container flips just like one on the screen. */
-  const childNodes = [...(item.children ?? [])].sort(byLayer).map((c) => (
+  const childNodes = (item.children ?? []).filter((c) => childShown(item, c)).sort(byLayer).map((c) => (
     <div key={c.id} style={{ position: "absolute", left: c.x, top: c.y }}>
       <Tappable
         item={c}
