@@ -17,6 +17,7 @@
  *  - carryFrame: a navRail placed on the right stays on the right
  */
 import { describe, expect, it } from "vitest";
+import { frameOfGroup } from "./tokens";
 import {
   tidyFrame,
   pullInto,
@@ -328,4 +329,29 @@ describe("integration with makeItem", () => {
     expect(out).toHaveLength(1);
     expect(out[0].items[0].id).toBe(it.id);
   });
+describe("a screen changing size keeps its neighbours' parts", () => {
+  it("leaves a part that is pinned to the screen beside it alone", () => {
+    const frames: Frame[] = [{ id: "a", name: "A", x: 0, y: 0 }, { id: "b", name: "B", x: 460, y: 0 }];
+    const mine = { id: "g1", x: 16, y: 96, axis: "x" as const, items: [makeItem("button")] };
+    const theirs = { id: "g2", x: 476, y: 96, axis: "x" as const, items: [makeItem("card")], frameId: "b" };
+    const grown = { ...frames[0], w: 892, h: 412 };
+    const out = carryFrame([mine, theirs], frames[0], grown, frames, {});
+    /* the widened screen keeps its own part and never adopts the one next door: the part
+       travels with its own screen, keeping the offset it had on it */
+    const kept = out.groups.find((g) => g.id === "g2")!;
+    expect(kept.frameId).toBe("b");
+    const b = out.frames.find((f) => f.id === "b")!;
+    expect(kept.x - b.x).toBe(16);
+    /* the screen's own part stays on it (the editor pins it before it grows) */
+    expect(frameOfGroup(out.groups.find((g) => g.id === "g1")!, out.frames, {})?.id).toBe("a");
+  });
+
+  it("reads a placed group's screen from its own field before geometry", () => {
+    const frames: Frame[] = [{ id: "a", name: "A", x: 0, y: 0 }, { id: "b", name: "B", x: 460, y: 0 }];
+    /* the part's centre lies inside screen a's rectangle, but it was placed on b */
+    const g = { id: "g", x: 300, y: 96, axis: "x" as const, items: [makeItem("button")], frameId: "b" };
+    expect(frameOfGroup(g, frames, {})?.id).toBe("b");
+  });
+});
+
 });

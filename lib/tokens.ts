@@ -1723,15 +1723,23 @@ export const isPlace = (v: unknown): v is Place => v === "top" || v === "center"
 /** how a selection of parts is lined up: an edge or centre to share, or equal gaps along an axis */
 export type AlignKind = "left" | "centerH" | "right" | "distributeH" | "top" | "centerV" | "bottom" | "distributeV";
 
-export type FramePreset = "phone" | "desktop";
+export type FramePreset = "phone" | "landscape" | "desktop";
+/** a phone held sideways: the portrait screen turned around */
+export const LANDSCAPE_W = PHONE_H;
+export const LANDSCAPE_H = PHONE_W;
 export const frameSizeOf = (f: Frame) => ({ w: f.w ?? PHONE_W, h: f.h ?? PHONE_H });
+export const isLandscapeFrame = (f: Frame) => {
+  const { w, h } = frameSizeOf(f);
+  return w === LANDSCAPE_W && h === LANDSCAPE_H;
+};
+/* a landscape screen is still a phone: rounded glass, a status bar, one-handed layout */
 export const isPhoneFrame = (f: Frame) => {
   const { w, h } = frameSizeOf(f);
-  return w === PHONE_W && h === PHONE_H;
+  return (w === PHONE_W && h === PHONE_H) || isLandscapeFrame(f);
 };
-export const framePresetOf = (f: Frame): FramePreset => (isPhoneFrame(f) ? "phone" : "desktop");
+export const framePresetOf = (f: Frame): FramePreset => (isLandscapeFrame(f) ? "landscape" : isPhoneFrame(f) ? "phone" : "desktop");
 export const framePresetPatch = (preset: FramePreset): Pick<Frame, "w" | "h"> =>
-  preset === "desktop" ? { w: DESKTOP_W, h: DESKTOP_H } : { w: undefined, h: undefined };
+  preset === "desktop" ? { w: DESKTOP_W, h: DESKTOP_H } : preset === "landscape" ? { w: LANDSCAPE_W, h: LANDSCAPE_H } : { w: undefined, h: undefined };
 export const frameRect = (f: Frame) => {
   const { w, h } = frameSizeOf(f);
   return { l: f.x, t: f.y, r: f.x + w, b: f.y + h };
@@ -1888,6 +1896,13 @@ export function freeRadii(g: Group, widths: Record<string, number>): Map<string,
 
 /** a run belongs to the frame that contains its centre */
 export function frameOfGroup(g: Group, frames: Frame[], widths: Record<string, number>): Frame | undefined {
+  /* A group the author has placed on a screen stays on it: widening that screen must not
+     swallow the parts of the screen beside it. Groups saved before this was recorded fall
+     back to the geometry below, which is how the canvas always read them. */
+  if (g.frameId) {
+    const placed = frames.find((f) => f.id === g.frameId);
+    if (placed) return placed;
+  }
   const bb = groupBounds(g, widths);
   const cx = (bb.l + bb.r) / 2;
   const cy = (bb.t + bb.b) / 2;
@@ -1912,6 +1927,8 @@ export type Group = {
   locked?: boolean;
   /** a hand-made group: parts keep their own offsets (in `pos`) and move as one layer */
   free?: boolean;
+  /** the screen this group belongs to, once the editor has placed it on one */
+  frameId?: string;
   pos?: Record<string, { x: number; y: number }>;
 };
 

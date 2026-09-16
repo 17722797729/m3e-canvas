@@ -36,6 +36,7 @@ import {
   FrameMode,
   frameOfGroup,
   framePresetPatch,
+  framePresetOf,
   frameRadius,
   frameRect,
   frameSizeOf,
@@ -2764,6 +2765,9 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     return g ? (frameOfGroup(g, frames, widths) ?? null) : null;
   }, [frame, isMobile, selectedFrame, primaryId, groups, frames, widths]);
 
+  /** the document as it stood on a screen size the author has already worked on */
+  const presetMemory = useRef(new Map<string, { frames: Frame[]; groups: Group[] }>());
+
   const nextFrameX = () =>
     framesRef.current.length
       ? Math.max(...framesRef.current.map((f) => frameRect(f).r)) + FRAME_GAP
@@ -2879,7 +2883,17 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     const frames = framesRef.current;
     /* the screens to the right move over, parts take the sizes the new screen calls for,
      * and the screen is laid out again by the tidy rules */
-    const laid = carryFrame(groupsRef.current, current, next, frames, widthsRef.current);
+    /* A screen size is a round trip: the whole document as it stood on a size is kept, so
+     *  coming back to that size puts every screen and every part exactly where it was —
+     *  the screens beside it included, which is what stops them drifting away. */
+    const key = (size: FramePreset) => `${id}:${size}`;
+    /* Pin what stands on this screen first: the screen is about to get wider or taller, and
+     * a part must not change hands because the new rectangle happens to reach over it. */
+    const pinned = groupsRef.current.map((g) => (frameOfGroup(g, frames, widthsRef.current)?.id === id && g.frameId !== id ? { ...g, frameId: id } : g));
+    if (pinned.some((g, i) => g !== groupsRef.current[i])) setGroups(pinned);
+    presetMemory.current.set(key(framePresetOf(current)), { frames: framesRef.current, groups: pinned });
+    const arriving = presetMemory.current.get(key(preset));
+    const laid = arriving ?? carryFrame(pinned, current, next, frames, widthsRef.current);
     /* a target the author never picked follows the screens */
     if (platform === defaultPlatformOf(frames, frameRef.current)) setPlatform(null);
     snapshot();

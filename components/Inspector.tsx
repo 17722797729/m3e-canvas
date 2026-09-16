@@ -221,6 +221,7 @@ export function FrameSizePicker({
     <Segmented<FramePreset>
       options={[
         { key: "phone", icon: "smartphone", label: compact ? undefined : t("phoneFrame", lang), title: t("phoneFrame", lang) },
+        { key: "landscape", icon: "crop_landscape", label: compact ? undefined : t("landscapeFrame", lang), title: t("landscapeFrame", lang) },
         { key: "desktop", icon: "desktop_windows", label: compact ? undefined : t("desktopFrame", lang), title: t("desktopFrame", lang) },
       ]}
       value={framePresetOf(frame)}
@@ -526,8 +527,25 @@ export function FrameInspector({
       >
         <Icon name={isPhoneFrame(frame) ? "smartphone" : "desktop_windows"} size={20} />
         <span style={{ fontSize: 14, fontWeight: 600, flex: 1, minWidth: 0 }}>{t("screen", lang)}</span>
-        <IconBtn icon="play_arrow" p={p} onClick={onPreview} title={t("previewFrom", lang)} size={32} fill />
-        <IconBtn icon="content_copy" p={p} onClick={onDuplicate} title={t("duplicate", lang)} size={32} />
+        {/* the play and copy icons read white on the screen's own bar */}
+        <button
+          onClick={onPreview}
+          title={t("previewFrom", lang)}
+          aria-label={t("previewFrom", lang)}
+          className="m3-press"
+          style={{ width: 32, height: 32, borderRadius: 16, border: "none", background: "transparent", color: "#ffffff", cursor: "pointer", display: "grid", placeItems: "center" }}
+        >
+          <Icon name="play_arrow" size={22} fill />
+        </button>
+        <button
+          onClick={onDuplicate}
+          title={t("duplicate", lang)}
+          aria-label={t("duplicate", lang)}
+          className="m3-press"
+          style={{ width: 32, height: 32, borderRadius: 16, border: "none", background: "transparent", color: "#ffffff", cursor: "pointer", display: "grid", placeItems: "center" }}
+        >
+          <Icon name="content_copy" size={20} />
+        </button>
         <IconBtn icon="delete" p={p} danger onClick={onDelete} title={t("delete", lang)} size={32} />
       </div>
       <Section id="frame-size" icon="aspect_ratio" title={t("frameSize", lang)} p={p}>
