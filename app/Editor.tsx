@@ -64,6 +64,7 @@ import {
   makeItem,
   DEFAULT_THEME,
   Theme,
+  CONTENT_W,
   fontFamilyOf,
   uiFontFamily,
   normalizeTheme,
@@ -88,6 +89,9 @@ import {
   FULL_WIDTH,
   fitHeight,
   railExpansionSide,
+  isWideRail,
+  railMetrics,
+  RAIL_TOP,
 } from "@/lib/tokens";
 import { Icon, M3Node, M3Static, MeasuredContent } from "@/components/M3Node";
 import { LayersPanel } from "@/components/Layers";
@@ -97,7 +101,7 @@ import { Logo } from "@/components/Logo";
 import { PartsPalette } from "@/components/PartsPalette";
 import { CompositeDialog } from "@/components/CompositeDialog";
 import { PromptPanel } from "@/components/PromptPanel";
-import { GitHubLink, Mode, Toolbar } from "@/components/Toolbar";
+import { Mode, Toolbar } from "@/components/Toolbar";
 import { LangMenu } from "@/components/Menus";
 import { AiActionKey, AiPanel, aiErrorText } from "@/components/AiPanel";
 import { TidyState } from "@/components/ui";
@@ -1863,6 +1867,21 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     }
   };
 
+  /** writes one field of one part, wherever it sits: the canvas itself uses this for the
+   *  controls a component carries (a navigation bar's collapse button, say). */
+  const patchItemById = useCallback(
+    (id: string, patch: Partial<Item>) => {
+      if ("railExpanded" in patch || "railModal" in patch) {
+        snapshotFor(id + ":" + Object.keys(patch).join(","));
+        setGroups((prev) => updateRail(prev, framesRef.current, widthsRef.current, id, patch));
+        return;
+      }
+      snapshotFor(id + ":" + Object.keys(patch).join(","));
+      setGroups((prev) => prev.map((g) => (findItemIn(g.items, id) ? { ...g, items: patchItemIn(g.items, id, patch) } : g)));
+    },
+    [snapshotFor],
+  );
+
   const deleteSelected = useCallback(() => {
     if (selectedIds.length === 0) return;
     const ids = new Set(selectedIds);
@@ -2303,6 +2322,61 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     });
     setSelectedIds([]);
   }, [selectedIds, snapshot]);
+
+  /** Binds a dialog to a part. The dialog lives on the part's own page, hidden until the
+   *  tap: the first press adds it there (making a page first when the part has none), and
+   *  every press after that finds the very same one again. */
+  const bindDialog = useCallback(
+    (itemId: string) => {
+      const owner = groupsRef.current.find((g) => !!findItemIn(g.items, itemId));
+      const item = owner ? findItemIn(owner.items, itemId) : null;
+      if (!owner || !item) return;
+      /* already bound, and the dialog is still in the layers: take the author to it */
+      const boundTo = item.action?.dialog ? item.action.to : null;
+      if (boundTo && groupsRef.current.some((g) => !!findItemIn(g.items, boundTo))) {
+        setSelectedFrameId(null);
+        setSelectedIds([boundTo]);
+        return;
+      }
+      /* the composite the author keeps as a dialog, by any name that reads like one */
+      const template = customParts.find((c) => /(弹框|弹窗|对话框|dialog|popup|modal)/i.test(c.name)) ?? customParts[0] ?? null;
+      const inside: Item = template ? compositeInstance(template, uid) : (() => {
+        const d = makeItem("dialog");
+        d.size = CONTENT_W;
+        return d;
+      })();
+      inside.modal = true;
+      const size = sizeOf(inside, widthsRef.current);
+
+      /* where the dialog goes: the page the button sits on, or a fresh page for it */
+      const page = frameOfGroup(owner, framesRef.current, widthsRef.current);
+      const pageX = framesRef.current.length ? Math.max(...framesRef.current.map((f) => frameRect(f).r)) + FRAME_GAP : 0;
+      const fresh: Frame | null = page ? null : { id: uid(), name: `${item.label.trim() || t("dialog", lang)}`, x: pageX, y: framesRef.current[0]?.y ?? 0, w: framesRef.current[0]?.w, h: framesRef.current[0]?.h };
+      const target = page ?? fresh!;
+      const { w, h } = frameSizeOf(target);
+      const group: Group = {
+        id: uid(),
+        x: target.x + Math.round((w - size.w) / 2),
+        y: target.y + Math.round((h - size.h) / 2),
+        axis: "x",
+        items: [inside],
+        free: true,
+      };
+      snapshot();
+      if (fresh) {
+        setFrames((fs) => [...fs, fresh]);
+        /* a part with no page of its own is brought onto the page just made for the dialog */
+        const dx = fresh.x + PHONE_MARGIN - owner.x;
+        const dy = fresh.y + 120 - owner.y;
+        setGroups((gs) => gs.map((g) => (g.id === owner.id ? { ...g, x: g.x + dx, y: g.y + dy } : g)));
+      }
+      setGroups((gs) => [...gs, group]);
+      setGroups((gs) => gs.map((g) => (findItemIn(g.items, itemId) ? { ...g, items: patchItemIn(g.items, itemId, { action: { to: inside.id, transition: "expand", dialog: true } }) } : g)));
+      setSelectedFrameId(null);
+      setSelectedIds([inside.id]);
+    },
+    [customParts, lang, snapshot],
+  );
 
   /** Split a free group back into single runs at their current positions, in the same layer slot. */
   const ungroupSelected = useCallback(() => {
@@ -3374,7 +3448,46 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     setGesture(gg);
   };
 
-  /** the children of one part, drawn inside its box in the order their levels ask for */
+  /** A navigation part's own collapse button, live on the canvas: clicking it folds the
+   *  destinations away exactly as the preview will, so the author can try it while editing. */
+  const navToggleNode = (it: Item): React.ReactNode => {
+    if (it.kind === "bottomNav" && it.barFolded !== undefined) {
+      return (
+        <button
+          type="button"
+          title={t(it.barFolded ? "expandNavigation" : "collapseNavigation", lang)}
+          aria-label={t(it.barFolded ? "expandNavigation" : "collapseNavigation", lang)}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            patchItemById(it.id, { barFolded: !it.barFolded });
+          }}
+          style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 44, border: "none", padding: 0, background: "transparent", cursor: "pointer" }}
+        />
+      );
+    }
+    if (it.kind === "navRail" && isWideRail(it)) {
+      const rail = railMetrics(it);
+      /* folded, the whole rail is the button's own pill, so it sits at its corner */
+      const at = it.railFolded ? { left: 4, top: 4 } : { left: rail.headerLeft, top: RAIL_TOP };
+      return (
+        <button
+          type="button"
+          title={t(it.railFolded ? "expandNavigation" : "collapseNavigation", lang)}
+          aria-label={t(it.railFolded ? "expandNavigation" : "collapseNavigation", lang)}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            patchItemById(it.id, { railFolded: !it.railFolded, railExpanded: !!it.railFolded });
+          }}
+          style={{ position: "absolute", ...at, width: 48, height: 48, border: "none", padding: 0, background: "transparent", cursor: "pointer", borderRadius: 24 }}
+        />
+      );
+    }
+    return null;
+  };
+
+  /** the children of one part, drawn inside its box in the order their levels ask for */  /** the children of one part, drawn inside its box in the order their levels ask for */
   const childNodes = (parent: Item, g: Group): React.ReactNode =>
     [...(parent.children ?? [])].sort(byLayer).map((c) => (
       <div key={c.id} style={{ position: "absolute", left: c.x, top: c.y }}>
@@ -3387,7 +3500,12 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           inRun={false}
           interactive={!handMode}
           onPointerDown={(e) => onChildPointerDown(e, g, parent, c)}
-          overlay={childNodes(c, g)}
+          overlay={
+            <>
+              {childNodes(c, g)}
+              {navToggleNode(c)}
+            </>
+          }
         />
       </div>
     ));
@@ -3427,7 +3545,12 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                 inRun={runIds.has(pl.item.id)}
                 interactive={!handMode}
                 onPointerDown={(e) => onItemPointerDown(e, g, pl.index, pl.item)}
-                overlay={childNodes(pl.item, g)}
+                overlay={
+                  <>
+                    {childNodes(pl.item, g)}
+                    {navToggleNode(pl.item)}
+                  </>
+                }
               />
             </div>
           ))}
@@ -3507,7 +3630,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           }
           const ic = connectSpecOf(c.item);
           const radii =
-            conn && ic
+            conn && ic && !c.item.shape
               ? runRadii(
                   g.axis,
                   r === 0,
@@ -3531,7 +3654,12 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
               inRun={g.items.length > 1}
               interactive={!handMode}
               onPointerDown={(e) => onItemPointerDown(e, g, c.index, c.item)}
-              overlay={childNodes(c.item, g)}
+              overlay={
+                <>
+                  {childNodes(c.item, g)}
+                  {navToggleNode(c.item)}
+                </>
+              }
             />
           );
         })}
@@ -3722,8 +3850,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
-                gap: 6,
-                padding: "10px 0",
+                gap: 8,
+                padding: "12px 0",
                 background: p.surfaceContainerLow,
                 cursor: leftOpen ? undefined : "pointer",
               }}
@@ -3738,9 +3866,9 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   <Logo size={32} color={p.primary} glyph={p.onPrimary} />
                 </div>
               )}
-              <div style={{ height: 6 }} />
+              <span aria-hidden style={{ width: 24, height: 1, background: p.outlineVariant }} />
               {LEFT_TABS.map((tab, i) => (
-                <div key={tab.key} style={{ marginTop: i === 2 || i === 6 ? 10 : 0 }}>
+                <div key={tab.key} style={{ marginTop: i === 0 ? 2 : 0 }}>
                   <IconBtn
                     icon={tab.icon}
                     p={p}
@@ -3755,8 +3883,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                 </div>
               ))}
               <div style={{ flex: 1 }} onClick={() => !leftOpen && setLeftOpen(true)} />
+              <span aria-hidden style={{ width: 24, height: 1, background: p.outlineVariant }} />
               <LangMenu p={p} onLang={changeLanguage} side="right" size={44} />
-              <GitHubLink p={p} size={44} />
             </div>
             {leftOpen && (
             <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
@@ -4436,6 +4564,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   onContainerize={selectedIds.length > 1 ? containerizeSelected : undefined}
                   onAdopt={selectedIds.length > 1 && selectedIds.filter((id) => groups.some((g) => g.items.some((it) => it.id === id && it.kind === "box"))).length === 1 ? adoptSelected : undefined}
                   onUnlink={selectedIds.length > 0 ? unlinkSelected : undefined}
+                  onDialog={selected ? () => bindDialog(selected.id) : undefined}
                   childCount={selected?.children?.length ?? 0}
                   inContainer={!!selected && !!parentOf(groups, selected.id)}
                   onUngroup={ungroupSelected}

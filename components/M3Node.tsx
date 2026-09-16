@@ -37,7 +37,9 @@ import {
   RAIL_W,
   RAIL_ITEM_H,
   RAIL_GAP,
+  BAR_FOLDED_W,
   isWideRail,
+  navRows,
   railMetrics,
   isScrollableTabs,
   tabScrollOffset,
@@ -925,27 +927,77 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
       const rail = railMetrics(item);
       if (wide) return (
         <div style={{ position: "relative", height: "100%" }}>
-          <div className="m3-rail-geometry" style={{ position: "absolute", left: rail.headerLeft, top: RAIL_TOP, width: 48, height: 48, display: "grid", placeItems: "center", color: p.onSurfaceVariant }}>
-            <Icon name={expanded ? "menu_open" : "menu"} size={24} />
+          {/* the rail folds up and down: "V" folds everything away, the turned-around "V" opens it */}
+          <div className="m3-rail-geometry" style={{ position: "absolute", left: Math.round(((item.railFolded ? BAR_FOLDED_W : rail.width) - 48) / 2), top: item.railFolded ? 4 : 12, width: 48, height: 48, display: "grid", placeItems: "center", color: p.onSurfaceVariant }}>
+            <Icon name={item.railFolded || !expanded ? "expand_less" : "expand_more"} size={24} />
           </div>
-          {tabs.map((tab, i) => {
-            const on = i === Math.min(item.selected ?? 0, Math.max(0, tabs.length - 1));
-            return <div key={i} className="m3-rail-geometry" style={{ position: "absolute", left: rail.inset, top: rail.top + i * (rail.itemHeight + rail.gap), width: rail.width - rail.inset * 2, height: rail.itemHeight }}>
-              <div className="m3-rail-geometry" style={{ position: "absolute", left: expanded ? 0 : 8, top: 0, width: expanded ? rail.width - rail.inset * 2 : 56, height: expanded ? 56 : 32, borderRadius: expanded ? 28 : 16, background: on ? p.secondaryContainer : "transparent" }} />
-              <div className="m3-rail-geometry" style={{ position: "absolute", left: 0, top: 0, width: 24, height: 24, transform: `translate(${expanded ? 16 : 24}px, ${expanded ? 16 : 4}px)`, color: on ? p.onSecondaryContainer : p.onSurfaceVariant }}>
-                {tab.icon && <Icon name={tab.icon} size={24} fill={on} />}
-              </div>
-              {tab.label.trim() && <span className="m3-rail-geometry" style={{ position: "absolute", left: expanded ? 48 : 0, top: expanded ? 18 : 36, width: expanded ? rail.width - 88 : 72, textAlign: expanded ? "left" : "center", fontSize: expanded ? 14 : 12, lineHeight: "20px", fontWeight: on ? w(600, 700) : w(400, 500), color: on ? railSelectedLabelColor(p, expanded) : p.onSurfaceVariant, ...ellipsis }}>{tab.label}</span>}
-            </div>;
-          })}
+          {!item.railFolded &&
+            tabs.map((tab, i) => {
+              const on = i === Math.min(item.selected ?? 0, Math.max(0, tabs.length - 1));
+              /* every position is read off the rail's own width, and the icon always sits
+                 above its label, so a rail the author widened stays centred and readable */
+              const inner = rail.width - rail.inset * 2;
+              const pillW = expanded ? inner : Math.min(inner, 56);
+              /* past the author's per-line limit the destinations start another column */
+              const per = perColumn(tabs.length, item.navPerRow);
+              const col = Math.floor(i / per);
+              const row = i % per;
+              return (
+                <div
+                  key={i}
+                  className="m3-rail-geometry"
+                  style={{
+                    position: "absolute",
+                    left: rail.inset + col * rail.width,
+                    top: rail.top + row * (rail.itemHeight + rail.gap),
+                    width: inner,
+                    height: rail.itemHeight,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 2,
+                  }}
+                >
+                  <div
+                    className="m3-rail-geometry"
+                    style={{
+                      width: pillW,
+                      height: 32,
+                      borderRadius: 16,
+                      display: "grid",
+                      placeItems: "center",
+                      background: on ? p.secondaryContainer : "transparent",
+                      color: on ? p.onSecondaryContainer : p.onSurfaceVariant,
+                      transition: "background 160ms, color 160ms",
+                      filter: tab.disabled ? "grayscale(1)" : undefined,
+                      opacity: tab.disabled ? 0.45 : 1,
+                      transform: tab.grown ? "scale(1.15)" : undefined,
+                    }}
+                  >
+                    {tab.icon && <Icon name={tab.icon} size={24} fill={on} />}
+                  </div>
+                  {tab.label.trim() && (
+                    <span
+                      className="m3-rail-geometry"
+                      /* the pill is secondaryContainer, so its label reads on that, whatever the scheme */
+                      style={{ width: inner, textAlign: "center", fontSize: expanded ? 12 : 11, lineHeight: "16px", fontWeight: on ? w(600, 700) : w(400, 500), color: on ? p.onSecondaryContainer : p.onSurfaceVariant, ...ellipsis }}
+                    >
+                      {tab.label}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
         </div>
       );
       return (
         <div
           style={{
             display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
+            flexDirection: "row",
+            alignItems: "flex-start",
+            justifyContent: "center",
             gap: RAIL_GAP,
             height: "100%",
             padding: `${RAIL_TOP}px 0`,
@@ -953,7 +1005,9 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
             position: "relative",
           }}
         >
-          {tabs.map((t, i) => {
+          {chunks(tabs, perRow(tabs.length, item.navPerRow)).map((column, c) => (
+          <div key={c} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: RAIL_GAP }}>
+          {column.map(({ tab: t, index: i }) => {
             const on = i === Math.min(item.selected ?? 0, Math.max(0, tabs.length - 1));
             const withLabel = t.label.trim().length > 0;
             return (
@@ -978,7 +1032,11 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
                     placeItems: "center",
                     background: on ? p.secondaryContainer : "transparent",
                     color: on ? p.onSecondaryContainer : p.onSurfaceVariant,
-                    transition: "background 160ms, color 160ms",
+                    /* a destination its own rule has greyed out, or grown, shows it */
+                    transition: "background 160ms, color 160ms, transform 160ms",
+                    filter: t.disabled ? "grayscale(1)" : undefined,
+                    opacity: t.disabled ? 0.45 : 1,
+                    transform: t.grown ? "scale(1.15)" : undefined,
                   }}
                 >
                   {t.icon && <Icon name={t.icon} size={22} fill={on} />}
@@ -999,25 +1057,38 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
               </div>
             );
           })}
+          </div>
+          ))}
         </div>
       );
     }
 
     case "bottomNav": {
       const tabs = item.tabs ?? [];
+      /* the bar's own collapse button: "<" folds every label away, ">" brings them back */
+      const folded = item.barFolded === true;
+      const hasToggle = item.barFolded !== undefined;
       return (
         <div
           style={{
             display: "flex",
+            flexWrap: "wrap",
             alignItems: "center",
-            justifyContent: "space-around",
+            alignContent: "center",
+            /* Folded, the one thing left is its button, at the trailing edge. On one line the
+             * destinations spread out; once they wrap, a short last row is pushed right so its
+             * columns line up with the full rows above it. */
+            justifyContent: folded || Math.ceil(tabs.length / perRow(tabs.length, item.navPerRow)) > 1 ? "flex-end" : "space-around",
             height: "100%",
-            padding: `0 4px ${NAV_BAR_H}px`,
+            /* the collapse button owns the trailing strip, so no destination sits under it */
+            padding: `0 ${hasToggle ? 44 : 4}px ${folded ? 0 : NAV_BAR_H}px 4px`,
             boxSizing: "border-box",
             position: "relative",
           }}
         >
-          {tabs.map((t, i) => {
+          {/* folded, the bar keeps nothing but its own ">" button; more tabs than one row
+              holds flow onto the next row, which is why the bar grows taller */}
+          {!folded && tabs.map((t, i) => {
             const on = i === Math.min(item.selected ?? 0, Math.max(0, tabs.length - 1));
             const withLabel = t.label.trim().length > 0;
             return (
@@ -1028,7 +1099,7 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
                   flexDirection: "column",
                   alignItems: "center",
                   gap: 4,
-                  flex: 1,
+                  flex: `0 0 ${100 / perRow(tabs.length, item.navPerRow)}%`,
                   minWidth: 0,
                 }}
               >
@@ -1046,7 +1117,7 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
                 >
                   {t.icon && <Icon name={t.icon} size={22} fill={on} />}
                 </div>
-                {withLabel && (
+                {withLabel && !folded && (
                   <span
                     style={{
                       fontSize: 11,
@@ -1062,6 +1133,11 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
               </div>
             );
           })}
+          {hasToggle && (
+            <div style={{ position: "absolute", right: folded ? 4 : 0, top: 0, bottom: folded ? 0 : NAV_BAR_H, width: 44, display: "grid", placeItems: "center", color: p.onSurfaceVariant }}>
+              <Icon name={folded ? "chevron_right" : "chevron_left"} size={20} />
+            </div>
+          )}
         </div>
       );
     }
@@ -1427,6 +1503,19 @@ export function M3Node({
     </motion.div>
   );
 }
+
+/** splits destinations into columns of at most `per`, the plain rail's own wrapping */
+function chunks<T>(list: T[], per: number): { tab: T; index: number }[][] {
+  const out: { tab: T; index: number }[][] = [];
+  for (let i = 0; i < list.length; i += per) out.push(list.slice(i, i + per).map((tab, k) => ({ tab, index: i + k })));
+  return out;
+}
+
+/** how many destinations share one line of a bar (and one column of a rail) */
+function perRow(count: number, per: number | undefined) {
+  return per && per > 0 ? Math.min(count || 1, per) : count || 1;
+}
+const perColumn = perRow;
 
 /** Plain (non-animated) rendering of a part; used where frames must be deterministic. */
 export function M3Static({

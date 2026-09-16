@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { FAB_MENU_TABS, KIND_TEXT, Lang, NAV_TABS, TAB_LABELS, getLang, t, SELECT_OPTIONS } from "./i18n";
+import { FAB_MENU_TABS, GAME_NAV_TABS, KIND_TEXT, Lang, TAB_LABELS, getLang, t, SELECT_OPTIONS } from "./i18n";
 import { Contrast, isHex, isLightColor, onColorFor, schemeFromSeed } from "./color";
 
 /* ---------- geometry ---------- */
@@ -29,16 +29,23 @@ export const EXPANDED_W = 840;
 export const isExpanded = (w: number) => w >= EXPANDED_W;
 /** navigation rail: width, top inset and the pitch of one destination (56×32 indicator, label, gap) */
 export const RAIL_W = 80;
+/** How many lines a navigation's destinations take: more than `per` of them wrap. */
+export const navRows = (count: number, per: number | undefined) => (per && per > 0 ? Math.max(1, Math.ceil(count / per)) : 1);
+
 export const RAIL_TOP = 44;
+/** the pill a folded navigation bar shrinks to: just room for its own arrow */
+export const BAR_FOLDED_W = 56;
+export const BAR_FOLDED_H = 56;
 export const RAIL_ITEM_H = 52;
 export const RAIL_GAP = 12;
 /** M3 Expressive navigation rail tokens; the 80dp rail above is kept for saved sketches. */
 export const RAIL_COLLAPSED_W = 96;
 export const RAIL_EXPANDED_W = 220;
 export const isWideRail = (it: Item) => it.railExpanded !== undefined || it.railModal === true;
-export const railWidth = (it: Item) => it.railExpanded ? RAIL_EXPANDED_W : isWideRail(it) ? RAIL_COLLAPSED_W : RAIL_W;
+export const railWidth = (it: Item) =>
+  it.size ?? (it.railExpanded ? RAIL_EXPANDED_W : isWideRail(it) ? RAIL_COLLAPSED_W : RAIL_W);
 /** Modal expansion overlays the body, retaining only the collapsed rail's layout slot. */
-export const railLayoutWidth = (it: Item) => it.railModal ? RAIL_COLLAPSED_W : railWidth(it);
+export const railLayoutWidth = (it: Item) => (it.railModal ? Math.min(RAIL_COLLAPSED_W, railWidth(it)) : railWidth(it));
 /** Runtime-only expansion edge: copied by item edits, never included in JSON. */
 export const railExpansionSide = Symbol("railExpansionSide");
 /** Shared drawing / hit-area geometry. The header is a 48dp menu button with an 8dp gap. */
@@ -567,7 +574,7 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     connect: { axis: "x", outer: R_FULL, inner: R_INNER, family: "button" },
     size: { min: 64, max: PHONE_W, step: 4, icon: "width", presets: [HALF_W, CONTENT_W] },
     defLabel: "ボタン",
-    defIcon: "add",
+    defIcon: "swords",
   },
   iconButton: {
     label: "Icon Button",
@@ -584,7 +591,7 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     connect: { axis: "x", outer: 24, inner: R_INNER, family: "button" },
     size: { min: 40, max: 96, step: 4, icon: "open_in_full", presets: [40, 48, 56, 96] },
     defLabel: "",
-    defIcon: "favorite",
+    defIcon: "sports_esports",
     defSize: 48,
     defVariant: "tonal",
   },
@@ -602,7 +609,7 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasIcon: true,
     size: { min: 40, max: 128, step: 4, icon: "open_in_full", presets: [40, 56, 96] },
     defLabel: "",
-    defIcon: "edit",
+    defIcon: "bolt",
     defSize: 56,
     defVariant: "tonal",
   },
@@ -619,7 +626,7 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasSupporting: false,
     hasIcon: true,
     defLabel: "作成",
-    defIcon: "edit",
+    defIcon: "rocket_launch",
     defVariant: "tonal",
   },
   chip: {
@@ -672,6 +679,8 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasIcon: false,
     hasTabs: true,
     size: { min: 200, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    /* the bar's own height: the icon row plus whatever label room the author wants */
+    size2: { min: 40, max: 200, step: 4, icon: "height" },
     defLabel: "",
     defIcon: null,
     defSize: PHONE_W,
@@ -689,6 +698,8 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasSupporting: false,
     hasIcon: false,
     hasTabs: true,
+    /* a rail's width is its own: 56dp of icons up to a wide two-column rail */
+    size: { min: 56, max: 320, step: 4, icon: "width" },
     size2: { min: 200, max: PHONE_H, step: 4, icon: "height", presets: HEIGHT_PRESETS },
     defLabel: "",
     defIcon: null,
@@ -1161,7 +1172,14 @@ export const KIND_ORDER: Kind[] = [
 ];
 
 /* ---------- screen data ---------- */
-export type NavTab = { icon: string; label: string };
+export type NavTab = {
+  icon: string;
+  label: string;
+  /** the preview greys this destination out once its own rule has fired (never saved) */
+  disabled?: boolean;
+  /** the preview keeps this destination a size up once its own rule has fired (never saved) */
+  grown?: boolean;
+};
 
 export type Item = {
   id: string;
@@ -1235,6 +1253,22 @@ export type Item = {
   /** a colour of this part's own: a palette role key or a #rrggbb literal. Unset keeps
    *  the role the kind would pick for itself. */
   color?: string;
+  /** buttons and other round-able kinds: the outline they take. Unset is the kind's
+   *  own shape (a pill for a button, a circle for an icon button or a FAB). */
+  /** this container is a dialog: the screen keeps it hidden until a tap opens it */
+  modal?: boolean;
+  /** a navigation bar with a collapse button: unset means the bar has none. Folded hides
+   *  every destination's label and keeps the icons. */
+  barFolded?: boolean;
+  /** a side rail whose own button has folded every destination away, leaving the button */
+  railFolded?: boolean;
+  /** Rules hung on one destination of a bar rather than on the bar itself: the key is the
+   *  slot `actionSlotsOf` names ("tab:2", "icon", ...). */
+  slotStates?: Record<string, ItemState[]>;
+  /** how many destinations fit on one line: more than this wraps the bar onto another row
+   *  (a rail grows another column). Unset means they all share one line. */
+  navPerRow?: number;
+  shape?: ButtonShape;
   /** stacking level among the parts it shares a screen with: a higher one draws on top.
    *  Unset means LAYER_DEFAULT. */
   z?: number;
@@ -1245,13 +1279,14 @@ export type Item = {
 /** What a tap changes about the part itself. `disable` and `cooldown` grey the part
  *  out (a cooldown also counts down for `seconds`), `label`, `color` and `variant`
  *  swap what the part says or looks like using `value`, and `hide` takes it off screen. */
-export type StateEffect = "disable" | "cooldown" | "label" | "color" | "variant" | "hide";
+export type StateEffect = "disable" | "cooldown" | "label" | "color" | "variant" | "grow" | "hide";
 export const STATE_EFFECTS: { key: StateEffect; icon: string }[] = [
   { key: "disable", icon: "block" },
   { key: "cooldown", icon: "timer" },
   { key: "label", icon: "edit" },
   { key: "color", icon: "format_color_fill" },
   { key: "variant", icon: "palette" },
+  { key: "grow", icon: "open_in_full" },
   { key: "hide", icon: "visibility_off" },
 ];
 export const isStateEffect = (v: unknown): v is StateEffect => STATE_EFFECTS.some((e) => e.key === v);
@@ -1270,6 +1305,17 @@ export type ItemState = {
 export type ToggleLook = { icon?: string | null; variant?: Variant; label?: string };
 
 /** a part placed inside a container: its own offsets from the container's top-left */
+/** the outlines a button-like part can take */
+export type ButtonShape = "default" | "round" | "square";
+export const BUTTON_SHAPES: { key: ButtonShape; icon: string }[] = [
+  { key: "default", icon: "rectangle" },
+  { key: "round", icon: "circle" },
+  { key: "square", icon: "square" },
+];
+/** kinds whose outline the shape switch controls */
+export const SHAPED: Kind[] = ["button", "iconButton", "fab", "extendedFab"];
+export const isButtonShape = (v: unknown): v is ButtonShape => BUTTON_SHAPES.some((x) => x.key === v);
+
 export type PlacedItem = Item & { x: number; y: number };
 
 /** kinds that can act as a toggle button in the preview */
@@ -1297,7 +1343,12 @@ export const SLIDE_SPEC: Partial<Record<Transition, { axis: "x" | "y"; enter: nu
 };
 
 export type Transition = "slide" | "slideLeft" | "slideUp" | "slideDown" | "fade" | "expand" | "none";
-export type Action = { to: string; transition: Transition };
+export type Action = {
+  to: string;
+  transition: Transition;
+  /** the target is a dialog of its own: the button pops it over this screen */
+  dialog?: boolean;
+};
 
 export const TRANSITIONS: { key: Transition; label: string; icon: string }[] = [
   { key: "slide", label: "Slide from right", icon: "arrow_back" },
@@ -1513,6 +1564,8 @@ export type PartState = {
   /** the part as its rules leave it: a label or a look may have changed */
   item: Item;
   hidden: boolean;
+  /** the part stands a size up, as a rule asked it to */
+  grown: boolean;
   /** greyed out and no longer answering taps */
   disabled: boolean;
   /** whole seconds still to wait, 0 when nothing is cooling down */
@@ -1522,6 +1575,7 @@ export type PartState = {
 export function resolveStates(it: Item, fired: Record<string, number | undefined>, now: number): PartState {
   let item = it;
   let hidden = false;
+  let grown = false;
   let disabled = false;
   let cooldown = 0;
   const at = fired[it.id];
@@ -1532,7 +1586,7 @@ export function resolveStates(it: Item, fired: Record<string, number | undefined
     const cooling = (it.states ?? []).find((rule) => rule.effect === "cooldown");
     if (cooling) {
       const left = (cooling.seconds ?? 3) - (now - at) / 1000;
-      if (left <= 0) return { item: it, hidden: false, disabled: false, cooldown: 0 };
+      if (left <= 0) return { item: it, hidden: false, grown: false, disabled: false, cooldown: 0 };
       cooldown = Math.ceil(left);
       disabled = true;
     }
@@ -1553,13 +1607,16 @@ export function resolveStates(it: Item, fired: Record<string, number | undefined
         case "variant":
           if (isVariant(rule.value) && rule.value !== item.variant) item = { ...item, variant: rule.value };
           break;
+        case "grow":
+          grown = true;
+          break;
         case "hide":
           hidden = true;
           break;
       }
     }
   }
-  return { item, hidden, disabled, cooldown };
+  return { item, hidden, grown, disabled, cooldown };
 }
 
 /** whether a part answers a tap at all: a hidden part is gone, a disabled one ignores it */
@@ -1794,6 +1851,8 @@ export function radiiOfRuns(runs: Group[]): Map<string, Radii> {
   for (const run of runs) {
     const n = run.items.length;
     run.items.forEach((it, i) => {
+      /* a part the author gave a shape of its own (a circle, say) keeps it, even in a run */
+      if (it.shape) return;
       const c = connectSpecOf(it);
       out.set(it.id, c ? runCorners(run.axis, i === 0, i === n - 1, c.outer, c.inner) : baseRadii(it));
     });
@@ -1909,7 +1968,8 @@ export function compositeInstance(part: CustomPart, id: () => string = uid): Ite
   return box;
 }
 
-export const defaultTabs = (): NavTab[] => NAV_TABS[getLang()].map((t) => ({ ...t }));
+/** the destinations a bar starts with: the game functions, the first few that fit a bar */
+export const defaultTabs = (count = 4): NavTab[] => GAME_NAV_TABS[getLang()].slice(0, count).map((t) => ({ ...t }));
 
 const TOOLBAR_ICONS = ["format_bold", "format_italic", "format_underlined", "attach_file", "format_color_text", "more_vert"];
 
@@ -1924,6 +1984,10 @@ export function defaultTabsFor(kind: Kind): NavTab[] {
       return FAB_MENU_TABS[getLang()].map((t) => ({ ...t }));
     case "toolbar":
       return TOOLBAR_ICONS.map((icon) => ({ icon, label: "" }));
+    case "bottomNav":
+    case "navRail":
+      /* every game function is on offer, so a bar grown past four keeps going */
+      return GAME_NAV_TABS[getLang()].map((t) => ({ ...t }));
     default:
       return defaultTabs();
   }
@@ -1956,7 +2020,8 @@ export function makeItem(kind: Kind): Item {
     it.radiusBottom = 0;
   }
   if (kind === "navRail") {
-    it.tabs = defaultTabs();
+    /* the side rail speaks the game UI's language: inventory, map, party, achievements */
+    it.tabs = GAME_NAV_TABS[getLang()].map((tab) => ({ ...tab }));
     it.railExpanded = false;
   }
   if (kind === "tabs" || kind === "fabMenu" || kind === "select") it.tabs = defaultTabsFor(kind);
@@ -2017,8 +2082,16 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
       /* the status-bar inset belongs to a phone: a bar wider than one has no status bar above it.
        * (An Android tablet does; the canvas leaves that to the prompt.) */
       return { w: n, h: 64 + (n > PHONE_W ? 0 : STATUS_BAR_H) };
+    case "bottomNav": {
+      /* Folded, the bar is a small pill holding nothing but its own button: the whole bar
+       * really changes size, so the fold is visible wherever it is looked at. */
+      if (it.barFolded) return { w: BAR_FOLDED_W, h: BAR_FOLDED_H };
+      const rows = navRows(it.tabs?.length ?? 0, it.navPerRow);
+      return { w: n, h: it.size2 ?? s.h * rows };
+    }
     case "searchBar":
     case "bottomNav":
+    case "listItem":
     case "listItem":
     case "textField":
     case "select":
@@ -2030,8 +2103,11 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
       return { w: n, h: it.size2 ?? Math.round(n * 0.5875) };
     case "box":
       return { w: n, h: it.size2 ?? s.h };
-    case "navRail":
-      return { w: railWidth(it), h: it.size2 ?? s.h };
+    case "navRail": {
+      /* folded, the rail is the same small pill its button sits in */
+      if (it.railFolded) return { w: BAR_FOLDED_W, h: BAR_FOLDED_H };
+      return { w: railWidth(it) * navRows(it.tabs?.length ?? 0, it.navPerRow), h: it.size2 ?? s.h };
+    }
     default:
       return { w: s.w, h: s.h };
   }
@@ -2060,11 +2136,20 @@ export function baseRadii(it: Item): Radii {
       return { tl: l, bl: l, tr: r, br: r };
     }
     case "fab":
+      /* a circle keeps its roundness whatever the document's shape scale says */
+      if (it.shape === "round") return uniformRadii(Math.round((it.size ?? 56) / 2));
+      if (it.shape === "square") return uniformRadii(scaleR(8));
       return uniformRadii(scaleR(Math.round((it.size ?? 56) * 0.28)));
     case "fabMenu":
       return uniformRadii(0);
     case "iconButton":
+      if (it.shape === "square") return uniformRadii(scaleR(8));
       return uniformRadii(scaleR((it.size ?? 48) / 2));
+    case "chip":
+    case "splitButton":
+    case "radio":
+    case "badge":
+      return uniformRadii(s.radius);
     case "circularProgress":
     case "loadingIndicator":
       return uniformRadii((it.size ?? 48) / 2);
@@ -2079,6 +2164,12 @@ export function baseRadii(it: Item): Radii {
     case "radio":
     case "splitButton":
       return uniformRadii(s.radius);
+    case "button":
+    case "extendedFab":
+      /* the shape switch: a pill by default, a circle when the author asks for one */
+      if (it.shape === "round") return uniformRadii(Math.round(H / 2));
+      if (it.shape === "square") return uniformRadii(scaleR(8));
+      return uniformRadii(scaleR(s.radius));
     default:
       return uniformRadii(scaleR(s.radius));
   }

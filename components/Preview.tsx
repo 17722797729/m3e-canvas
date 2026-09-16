@@ -34,11 +34,13 @@ import {
   isPhoneFrame,
   normalizeTheme,
   resolveStates,
+  SHAPED,
   toggleIcon,
   uniformRadii,
   RAIL_TOP,
   isWideRail,
   railMetrics,
+  type NavTab,
   sizeOf,
   isScrollableTabs,
   tabScrollOffset,
@@ -128,7 +130,14 @@ const TOGGLES = ["switch", "checkbox", "chip"] as const;
 const flips = (it: Item) => (TOGGLES as readonly string[]).includes(it.kind) || !!it.toggle;
 
 /** the live effect of every part's own state rules, shared down the screen */
-type StateRuntime = { fired: Record<string, number>; now: number; onFire: (id: string) => void };
+type StateRuntime = {
+  fired: Record<string, number>;
+  now: number;
+  onFire: (id: string) => void;
+  /** the button the visitor touched last: it stays a size up and highlighted */
+  activeId: string | null;
+  onActivate: (id: string) => void;
+};
 
 /** The press scrim, a bar's slot hit areas and a cooldown readout ride over the part, and
  *  a part carries its own layer, so those overlays sit far above any authored level. */
@@ -166,6 +175,8 @@ function Tappable({
   onAction,
   onFlip,
   states,
+  navToggle,
+  onNavToggle,
 }: {
   item: Item;
   p: Palette;
@@ -178,6 +189,9 @@ function Tappable({
   onFlip?: (id: string) => void;
   /** the live effect of the part's own state rules */
   states?: StateRuntime;
+  /** where this part's own collapse button sits, when it carries one */
+  navToggle?: React.CSSProperties;
+  onNavToggle?: () => void;
   /** per-slot targets on bars */
   onSlot?: (slot: string, animate?: boolean) => void;
   /** live value for sliders */
@@ -196,8 +210,11 @@ function Tappable({
   /* the part's own rules, once the visitor has set them off */
   const own = states ? resolveStates(item, states.fired, states.now) : null;
   if (own?.hidden) return null;
-  const view = own && own.item !== item ? { ...item, label: own.item.label, variant: own.item.variant } : item;
+  const view0 = own && own.item !== item ? { ...item, label: own.item.label, variant: own.item.variant } : item;
+  const current = !!states && states.activeId === item.id && SHAPED.includes(item.kind) && !own?.disabled && !own?.hidden;
+  const view = current && !view0.color ? { ...view0, color: "primaryContainer" } : view0;
   const frozen = !!own?.disabled;
+  const grown = !!own?.grown;
   const menu = !!menuOpen;
   /* a tab row with more tabs than fit scrolls: by wheel, touch, or dragging the row; a chosen tab is brought into view */
   const scrollTabs = isScrollableTabs(item);
@@ -279,14 +296,14 @@ function Tappable({
     /* hit areas sit inside the scrolling layer, one per tab, so they move with the row */
     const n = item.tabs?.length ?? 0;
     for (let i = 0; i < n; i++) slots.push({ key: `tab:${i}`, style: { left: i * SCROLL_TAB_W, width: SCROLL_TAB_W, top: 0, bottom: 0, borderRadius: 16 } });
-  } else if (onSlot && (item.kind === "bottomNav" || item.kind === "tabs")) {
+  }
+  if (onSlot && (item.kind === "bottomNav" || item.kind === "tabs")) {
     const n = item.tabs?.length ?? 0;
     for (let i = 0; i < n; i++)
       slots.push({ key: `tab:${i}`, style: { left: `${(i / n) * 100}%`, width: `${100 / n}%`, top: 0, bottom: item.kind === "bottomNav" ? NAV_BAR_H : 0, borderRadius: 16 } });
   }
   if (onSlot && item.kind === "navRail") {
     const rail = railMetrics(item);
-    if (onRailToggle) slots.push({ key: "railToggle", style: { left: rail.headerLeft, top: RAIL_TOP, width: 48, height: 48, borderRadius: 24 } });
     const n = item.tabs?.length ?? 0;
     for (let i = 0; i < n; i++)
       slots.push({ key: `tab:${i}`, style: { left: rail.inset, width: rail.width - 2 * rail.inset, top: rail.top + i * (rail.itemHeight + rail.gap), height: rail.itemHeight, borderRadius: item.railExpanded ? 28 : 16 } });
@@ -300,6 +317,7 @@ function Tappable({
     const n = item.tabs?.length ?? 0;
     for (let i = 0; i < n; i++) slots.push({ key: `tab:${i}`, style: { right: 0, width: "70%", top: i * 64, height: 56, borderRadius: 28 } });
   }
+
 
   /* A container's children are tappable in their own right: the one with a target opens
    * that screen, and a toggle inside a container flips just like one on the screen. */
@@ -348,6 +366,7 @@ function Tappable({
       onClick={onPick ? () => onMenu?.(!menu) : () => {
         /* the part's own rules go off first, then whatever the tap was meant to do */
         if (view.states?.length) states?.onFire(view.id);
+        if (SHAPED.includes(view.kind)) states?.onActivate(view.id);
         onTap?.();
       }}
       style={{
@@ -359,9 +378,27 @@ function Tappable({
         filter: frozen ? "grayscale(1)" : undefined,
         opacity: frozen ? 0.55 : 1,
         pointerEvents: frozen ? "none" : undefined,
+        /* the current button stands a size up, above its neighbours */
+        transform: current ? "scale(1.08)" : grown ? "scale(1.15)" : undefined,
+        transformOrigin: "center",
+        transition: "transform 180ms cubic-bezier(0.2, 0, 0, 1)",
+        zIndex: current ? OVERLAY_Z + 2 : undefined,
       }}
     >
       <M3Node item={view} palette={p} widths={widths} radii={radii} interactive={false} pressed={pressed && !onValue} tabScroll={scrollTabs ? tabScroll : undefined} overlay={childNodes} />
+      {/* the navigation's own collapse button: a button of its own, so nothing can cover it */}
+      {navToggle && (
+        <button
+          type="button"
+          data-nav-toggle={view.id}
+          aria-label={t(view.kind === "navRail" ? (view.railFolded ? "expandNavigation" : "collapseNavigation") : view.barFolded ? "expandNavigation" : "collapseNavigation", lang)}
+          onClick={(e) => {
+            e.stopPropagation();
+            onNavToggle?.();
+          }}
+          style={{ ...navToggle, position: "absolute", border: "none", padding: 0, background: "transparent", cursor: "pointer", zIndex: OVERLAY_Z + 3 }}
+        />
+      )}
       {own && own.cooldown > 0 && (
         <div
           aria-hidden
@@ -508,6 +545,7 @@ function Screen({
   values,
   onValue,
   runtime,
+  dialog,
 }: {
   active?: boolean;
   frame: Frame;
@@ -522,6 +560,8 @@ function Screen({
   onValue: (id: string, v: number) => void;
   /** the live effect of the parts' own state rules */
   runtime: StateRuntime;
+  /** the dialog this screen has open, if any: an in-page overlay, not another screen */
+  dialog: { openId: string | null; onOpen: (id: string | null) => void };
 }) {
   /* the dropdown whose menu is open, if any; its group is lifted above the rest */
   const [menuId, setMenuId] = useState<string | null>(null);
@@ -534,14 +574,26 @@ function Screen({
   const interactiveRef = useRef(interactive);
   interactiveRef.current = interactive;
   const screenRef = useRef<HTMLDivElement>(null);
-  const shownGroups = useMemo(() => Object.entries(railStates).reduce(
-    (current, [id, railExpanded]) => updateRail(current, [frame], widths, id, { railExpanded }), constrainModalRails(groups),
-  ), [groups, frame, widths, railStates]);
+  const shownGroups = useMemo(() => Object.entries(railStates).reduce((current, [id, railExpanded]) => {
+    const patch = { railExpanded, railFolded: !railExpanded };
+    return current.some((g) => g.items.some((it) => it.id === id))
+      ? updateRail(current, [frame], widths, id, patch)
+      : current.map((g) => ({ ...g, items: patchTree(g.items, id, patch) }));
+  }, constrainModalRails(groups)), [groups, frame, widths, railStates]);
   const modalIds = new Set(shownGroups.flatMap((g) => { const rail = modalRailOf(g); return rail ? [rail.id] : []; }));
+  /* a dialog is a group on this very screen: it stays out of the way until a tap opens it */
+  const dialogItemIds = new Set(shownGroups.flatMap((g) => g.items.filter((it) => it.modal).map((it) => it.id)));
+  const runAction = (a: Action) => (dialogItemIds.has(a.to) ? dialog.onOpen(a.to) : onAction(a));
   const hasModal = modalIds.size > 0;
   const modalActive = interactive && hasModal;
+  /** The rail's own button: it folds every destination away and back, and the width it
+   *  takes while open is the expanded one. A rail nested inside a container is patched in
+   *  the tree, since `updateRail` only knows the parts that sit on the screen. */
   const changeRail = (id: string, railExpanded: boolean, animate: boolean) => {
-    const next = updateRail(shownGroups, [frame], widths, id, { railExpanded });
+    const patch = { railExpanded, railFolded: !railExpanded };
+    const next = shownGroups.some((g) => g.items.some((it) => it.id === id))
+      ? updateRail(shownGroups, [frame], widths, id, patch)
+      : shownGroups.map((g) => ({ ...g, items: patchTree(g.items, id, patch) }));
     setRailMotion({ ...railMotionTargets(shownGroups, next, widths, id), animate: animate && !reducedMotion });
     setRailStates((prev) => ({ ...prev, [id]: railExpanded }));
   };
@@ -652,7 +704,21 @@ function Screen({
           style={{ position: "absolute", inset: 0, border: 0, padding: 0, background: "rgba(0,0,0,0.32)", zIndex: 3 }}
         />}
       </AnimatePresence>
-      {shownGroups.map((g) => (
+      {/* an open dialog sits over the screen, and a tap beside it closes it again */}
+      {dialog.openId && (
+        <button
+          key="dialog-scrim"
+          data-dialog-scrim
+          aria-label={t("close", lang)}
+          tabIndex={-1}
+          onClick={() => dialog.onOpen(null)}
+          style={{ position: "absolute", inset: 0, border: 0, padding: 0, background: "rgba(0,0,0,0.32)", zIndex: 5 }}
+        />
+      )}
+      {shownGroups.map((g) => {
+        const isDialog = g.items.some((it) => it.modal);
+        if (isDialog && !g.items.some((it) => it.id === dialog.openId)) return null;
+        return (
         <div
           key={g.id}
           className="m3-preview-group"
@@ -662,12 +728,12 @@ function Screen({
           inert={hasModal && !g.items.some((it) => modalIds.has(it.id))}
           style={
             g.free
-              ? { position: "absolute", left: g.x - frame.x, top: g.y - frame.y, zIndex: g.items.some((it) => modalIds.has(it.id)) ? 4 : g.items.some((it) => it.id === menuId) ? 2 : undefined }
+              ? { position: "absolute", left: g.x - frame.x, top: g.y - frame.y, zIndex: isDialog ? 6 : g.items.some((it) => modalIds.has(it.id)) ? 4 : g.items.some((it) => it.id === menuId) ? 2 : undefined }
               : {
                   position: "absolute",
                   left: g.x - frame.x,
                   top: g.y - frame.y,
-                  zIndex: g.items.some((it) => modalIds.has(it.id)) ? 4 : g.items.some((it) => it.id === menuId) ? 2 : undefined,
+                  zIndex: isDialog ? 6 : g.items.some((it) => modalIds.has(it.id)) ? 4 : g.items.some((it) => it.id === menuId) ? 2 : undefined,
                   display: "flex",
                   flexDirection: g.axis === "x" ? "row" : "column",
                   alignItems: g.axis === "x" ? "center" : "stretch",
@@ -680,7 +746,7 @@ function Screen({
             const n = g.free ? 1 : g.items.length;
             const radii = g.free
               ? (corners?.get(it.id) ?? baseRadii(it))
-              : conn && n > 1
+              : conn && n > 1 && !it.shape
                 ? g.axis === "x"
                   ? {
                       tl: i === 0 ? conn.outer : conn.inner,
@@ -704,14 +770,28 @@ function Screen({
             const navKind = it.kind === "bottomNav" || it.kind === "navRail" || it.kind === "tabs";
             /* bars with the same destinations are one bar to the visitor: the choice follows them across screens */
             const navKey = navKind ? `nav:${it.kind}:${(it.tabs ?? []).map((t) => t.label).join("|")}` : "";
+            if (it.kind === "bottomNav" && it.barFolded !== undefined) {
+              const foldKey = `fold:${it.id}`;
+              shown = { ...shown, barFolded: values[foldKey] === undefined ? it.barFolded : values[foldKey] === 1 };
+            }
             if (navKind && values[navKey] !== undefined && values[navKey] >= 0) shown = { ...shown, selected: values[navKey] };
             /* a row whose selection the author never set shows the destination the visitor tapped to open this screen */
             else if (navKind && it.selected === undefined && values[`${navKey}:opened:${frame.id}`] !== undefined) shown = { ...shown, selected: values[`${navKey}:opened:${frame.id}`] };
+            /* a destination's own rules: fired by its tap, read back as its look */
+            const slotOf = (key: string) => it.slotStates?.[key];
+            const tabLook = (t: NavTab, i: number) => {
+              const list = slotOf(`tab:${i}`);
+              if (!list?.length) return t;
+              const st = resolveStates({ ...it, id: `${it.id}:tab:${i}`, states: list, label: t.label }, runtime.fired, runtime.now);
+              return { ...t, label: st.item.label, disabled: st.disabled, grown: st.grown };
+            };
+            if (it.slotStates && it.tabs?.length) shown = { ...shown, tabs: it.tabs.map(tabLook) };
             const tap =
               act || flips(it)
                 ? () => {
                     if (flips(it)) onFlip(it.id);
-                    if (act) onAction(act);
+                    if (it.states?.length) runtime.onFire(it.id);
+                    if (act) runAction(act);
                   }
                 : undefined;
             const slotActions = it.actions;
@@ -734,16 +814,37 @@ function Screen({
                            screen, that screen's bar shows the destination its author chose, or the
                            tapped one when the author chose none */
                         const a = slotActions?.[slot];
+                        if (slot === "barToggle") {
+                          onValue(`fold:${it.id}`, shown.barFolded ? 0 : 1);
+                          return;
+                        }
+                        if (slotOf(slot)?.length) runtime.onFire(`${it.id}:${slot}`);
                         if (navKind && slot.startsWith("tab:")) {
                           onValue(navKey, a ? -1 : Number(slot.slice(4)));
                           if (a) onValue(`${navKey}:opened:${a.to}`, Number(slot.slice(4)));
                         }
                         if (modalIds.has(it.id)) closeRails(animate);
-                        if (a) onAction(a);
+                        if (a) runAction(a);
                       }
                     : undefined
                 }
                 onValue={it.kind === "slider" ? (v) => onValue(it.id, v) : undefined}
+                navToggle={
+                  it.kind === "bottomNav" && it.barFolded !== undefined
+                    ? { right: 0, top: 0, bottom: 0, width: 44 }
+                    : it.kind === "navRail" && isWideRail(it)
+                      ? it.railFolded
+                        ? { left: 4, top: 4, width: 48, height: 48, borderRadius: 24 }
+                        : { left: railMetrics(it).headerLeft, top: RAIL_TOP, width: 48, height: 48, borderRadius: 24 }
+                      : undefined
+                }
+                onNavToggle={
+                  it.kind === "bottomNav" && it.barFolded !== undefined
+                    ? () => onValue(`fold:${it.id}`, shown.barFolded ? 0 : 1)
+                    : it.kind === "navRail" && isWideRail(it)
+                      ? () => changeRail(it.id, !!shown.railFolded, true)
+                      : undefined
+                }
                 onPick={it.kind === "select" ? (i) => onValue(it.id, i) : undefined}
                 menuOpen={menuId === it.id}
                 onMenu={it.kind === "select" ? (open) => setMenuId(open ? it.id : null) : undefined}
@@ -759,8 +860,20 @@ function Screen({
             );
           }))(g.free ? freeRadii(g, widths) : null)}
         </div>
-      ))}
+        );
+      })}
     </div>
+  );
+}
+
+/** one part rewritten wherever it sits in a group's tree */
+function patchTree(items: Item[], id: string, patch: Partial<Item>): Item[] {
+  return items.map((it) =>
+    it.id === id
+      ? { ...it, ...patch }
+      : it.children
+        ? { ...it, children: patchTree(it.children, id, patch) as typeof it.children }
+        : it,
   );
 }
 
@@ -793,6 +906,10 @@ export function Preview({
      cooldown is counting down */
   const [fired, setFired] = useState<Record<string, number>>({});
   const [now, setNow] = useState(() => Date.now());
+  /* the button the visitor touched last: it reads as the screen's current choice */
+  const [activeId, setActiveId] = useState<string | null>(null);
+  /* the in-page dialog this screen has open, if any */
+  const [openDialogId, setOpenDialogId] = useState<string | null>(null);
   const [peek, setPeek] = useState<Peek | null>(null);
   const stackRef = useRef(stack);
   stackRef.current = stack;
@@ -817,6 +934,8 @@ export function Preview({
     return () => window.clearInterval(timer);
   }, [fired]);
 
+  /* moving to another screen leaves the last screen's dialog behind */
+  useEffect(() => setOpenDialogId(null), [stack[stack.length - 1]?.id]);
   const top = stack[stack.length - 1];
   const current = frames.find((f) => f.id === top?.id) ?? frames[0];
   const peekFrame = peek ? frames.find((f) => f.id === peek.frameId) : undefined;
@@ -1075,7 +1194,8 @@ export function Preview({
     onFlip: flip,
     values,
     onValue: (id: string, v: number) => setValues((m) => ({ ...m, [id]: v })),
-    runtime: { fired, now, onFire: fire },
+    runtime: { fired, now, onFire: fire, activeId, onActivate: setActiveId },
+    dialog: { openId: openDialogId, onOpen: setOpenDialogId },
   };
 
   const barBtn: React.CSSProperties = {

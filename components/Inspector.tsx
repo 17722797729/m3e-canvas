@@ -18,6 +18,9 @@ import {
   Palette,
   SWIPE_DIRS,
   SwipeDir,
+  BUTTON_SHAPES,
+  ButtonShape,
+  SHAPED,
   TAPPABLE,
   TOGGLEABLE,
   TRANSITIONS,
@@ -38,6 +41,7 @@ import {
   defaultTabsFor,
   framePresetOf,
   CardAlign,
+  H,
   cardContentAlignOf,
   cardDefaultFillOf,
   cardFillOf,
@@ -53,6 +57,7 @@ import {
   isPhoneFrame,
   isWideRail,
   layerOf,
+  railWidth,
   onToken,
   toggleIcon,
   iconSlotsOf,
@@ -65,6 +70,7 @@ import {
   AlignKind,
 } from "@/lib/tokens";
 import { IconPicker } from "./IconPicker";
+import { Popover } from "./Menus";
 import { Icon } from "./M3Node";
 import { ButtonRun, CardLayoutPicker, CornerIcon, Field, IconBtn, ItemColorChips, Section, Segmented, SizePresets, Slider, TextTokenChips, TidyButton, TidyState, Toggle, TokenChips } from "./ui";
 import { AiWriteBtn } from "./AiPanel";
@@ -257,6 +263,69 @@ function readImage(file: File): Promise<string> {
     };
     img.src = url;
   });
+}
+
+/** The screen a tap opens: a button that names the choice, opening a searchable menu. */
+function FrameSelect({
+  frames,
+  value,
+  onChange,
+  p,
+}: {
+  frames: Frame[];
+  value: string | null;
+  onChange: (id: string | null) => void;
+  p: Palette;
+}) {
+  const lang = useLang();
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const current = frames.find((f) => f.id === value);
+  const label = value === BACK_TARGET ? t("back", lang) : current?.name || t("chooseScreen", lang);
+  const s2 = q.trim().toLowerCase();
+  const list = s2 ? frames.filter((f) => (f.name || "").toLowerCase().includes(s2)) : frames;
+  const pick = (id: string | null) => {
+    onChange(id);
+    setOpen(false);
+    setQ("");
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="m3-press"
+        style={{ height: 40, borderRadius: 20, border: `1px solid ${p.outline}`, background: "transparent", color: value ? p.onSurface : p.onSurfaceVariant, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, padding: "0 12px" }}
+      >
+        <span style={{ flex: 1, minWidth: 0, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+        <span style={{ display: "inline-flex", transform: open ? "rotate(90deg)" : "none", transition: "transform 160ms", color: p.onSurfaceVariant }}>
+          <Icon name="chevron_right" size={18} />
+        </span>
+      </button>
+      {open && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: 8, borderRadius: 14, background: p.surfaceContainer }}>
+          <Field value={q} onChange={setQ} placeholder={t("search", lang)} p={p} icon="search" height={40} />
+          <div className="no-scrollbar" style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 220, overflowY: "auto" }}>
+            <button type="button" onClick={() => pick(BACK_TARGET)} className="m3-press" style={{ height: 40, borderRadius: 12, border: "none", textAlign: "left", padding: "0 12px", background: value === BACK_TARGET ? p.secondaryContainer : "transparent", color: value === BACK_TARGET ? p.onSecondaryContainer : p.onSurface, fontSize: 13, cursor: "pointer" }}>
+              {t("back", lang)}
+            </button>
+            {list.map((f) => (
+              <button key={f.id} type="button" onClick={() => pick(f.id)} className="m3-press" style={{ height: 40, borderRadius: 12, border: "none", textAlign: "left", padding: "0 12px", background: f.id === value ? p.secondaryContainer : "transparent", color: f.id === value ? p.onSecondaryContainer : p.onSurface, fontSize: 13, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {f.name || t("screen", lang)}
+              </button>
+            ))}
+            {list.length === 0 && <div style={{ padding: 12, fontSize: 12, color: p.outline, textAlign: "center" }}>{t("searchOff", lang)}</div>}
+          </div>
+          {value && (
+            <button type="button" onClick={() => pick(null)} className="m3-press" style={{ height: 36, borderRadius: 12, border: "none", background: "transparent", color: p.onSurfaceVariant, fontSize: 12, cursor: "pointer" }}>
+              {t("clear", lang)}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function FrameChips({
@@ -642,6 +711,7 @@ export function Inspector({
   onContainerize,
   onAdopt,
   onUnlink,
+  onDialog,
   childCount = 0,
   inContainer = false,
 }: {
@@ -670,6 +740,8 @@ export function Inspector({
   onAdopt?: () => void;
   /** takes the selection back out of the container that holds it */
   onUnlink?: () => void;
+  /** makes, or finds, the dialog screen a tap pops over the page */
+  onDialog?: () => void;
   /** how many parts the selected container holds */
   childCount?: number;
   /** the selected part sits inside a container */
@@ -977,7 +1049,19 @@ export function Inspector({
 
       {spec.hasTabs && !editOn && (
         <Section id="tabs" icon={isSelect ? "list" : "view_column"} title={t(isSelect ? "options" : "tabs", lang)} p={p} onToggle={(open) => { if (!open && activeSlot?.key.startsWith("tab:")) setPickerOpen(false); }}>
-          {!growsFreely && (
+          {!growsFreely && (item.kind === "bottomNav" || item.kind === "navRail") ? (
+            /* a navigation bar or rail takes exactly as many destinations as it is asked for */
+            <Slider
+              icon="view_column"
+              title={t("tabs", lang)}
+              value={tabs.length}
+              min={1}
+              max={12}
+              step={1}
+              onChange={setTabCount}
+              p={p}
+            />
+          ) : !growsFreely ? (
             <Segmented
               options={(item.kind === "toolbar" ? [2, 3, 4, 5, 6] : [2, 3, 4, 5]).map((n) => ({ key: String(n), label: String(n) }))}
               value={String(tabs.length)}
@@ -985,7 +1069,7 @@ export function Inspector({
               p={p}
               height={36}
             />
-          )}
+          ) : null}
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
             {tabs.map((tab, i) => {
               const on = slotKey === `tab:${i}` && pickerOpen;
@@ -1124,42 +1208,7 @@ export function Inspector({
         </Section>
       )}
 
-      {/* a button can wear a picture of its own, drawn behind its words and icon */}
-      {item.kind === "button" && !editOn && (
-        <Section id="button-bg" icon="image" title={t("backgroundImage", lang)} p={p}>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*,.svg"
-            hidden
-            onChange={async (e) => {
-              const f = e.target.files?.[0];
-              e.target.value = "";
-              if (!f) return;
-              try {
-                onChange({ src: await readImage(f) });
-              } catch {}
-            }}
-          />
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <button
-              onClick={() => fileRef.current?.click()}
-              className="m3-press"
-              style={{ flex: 1, height: 44, borderRadius: 22, border: "none", background: p.primary, color: p.onPrimary, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }}
-            >
-              <Icon name="upload" size={20} />
-              {t("pickImage", lang)}
-            </button>
-            {item.src && <IconBtn icon="close" p={p} size={44} onClick={() => onChange({ src: undefined })} title={t("removeImage", lang)} />}
-          </div>
-          <div style={{ marginTop: 8 }}>
-            <UrlField key={item.id + ":bg"} value={item.src && /^https?:\/\//.test(item.src) ? item.src : ""} onChange={(src) => onChange({ src })} placeholder={t("imageUrl", lang)} p={p} />
-          </div>
-        </Section>
-      )}
-
-      {/* a picture fills an image or a card, but a button keeps its icon over it */}
-      {mainSlots.length > 0 && activeSlot && !(item.src && (item.kind === "image" || item.kind === "card")) && (
+      {mainSlots.length > 0 && activeSlot && !item.src && (
         <Section id="icon" icon="emoji_symbols" title={t("icon", lang)} p={p} onToggle={(open) => { if (!open && !activeSlot.key.startsWith("tab:")) setPickerOpen(false); }}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {mainSlots.map((s) =>
@@ -1223,6 +1272,53 @@ export function Inspector({
               />
             ))}
           </div>
+        </Section>
+      )}
+
+      {item.kind === "bottomNav" && !editOn && (
+        <Section id="bar-fold" icon="unfold_more" title={t("navToggle", lang)} p={p}>
+          <Toggle
+            on={item.barFolded !== undefined}
+            onChange={(on) => onChange({ barFolded: on ? false : undefined })}
+            p={p}
+            icon="chevron_left"
+            label={t("navToggleLabel", lang)}
+          />
+        </Section>
+      )}
+
+      {(item.kind === "bottomNav" || item.kind === "navRail") && !editOn && (
+        <Section id="nav-lines" icon="view_column" title={t("navPerRow", lang)} p={p}>
+          <Slider
+            icon="view_column"
+            title={t("navPerRow", lang)}
+            value={item.navPerRow ?? Math.max(1, (item.tabs ?? []).length)}
+            min={1}
+            max={12}
+            step={1}
+            onChange={(navPerRow) => onChange({ navPerRow })}
+            p={p}
+          />
+        </Section>
+      )}
+
+      {SHAPED.includes(item.kind) && !editOn && (
+        <Section id="button-shape" icon="category" title={t("buttonShape", lang)} p={p}>
+          <Segmented<ButtonShape>
+            options={BUTTON_SHAPES.map((sh) => ({ key: sh.key, icon: sh.icon, title: t(`shape_${sh.key}` as UIKey, lang) }))}
+            value={item.shape ?? "default"}
+            onChange={(shape) =>
+              onChange(
+                shape === "round"
+                  ? { shape, size: item.kind === "iconButton" ? 48 : item.kind === "fab" ? 56 : H }
+                  : shape === "square"
+                    ? { shape }
+                    : { shape: undefined, ...(item.kind === "button" || item.kind === "extendedFab" ? { size: undefined } : undefined) },
+              )
+            }
+            p={p}
+          />
+          <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant }}>{t("buttonShapeHint", lang)}</div>
         </Section>
       )}
 
@@ -1362,42 +1458,14 @@ export function Inspector({
       {item.kind === "navRail" && !editOn && (
         <Section id="rail" icon="side_navigation" title={t("railState", lang)} p={p}>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {!isWideRail(item) ? (
-              <>
-                <div style={{ fontSize: 12, color: p.onSurfaceVariant }}>{t("railLegacy", lang)}</div>
-                <button
-                  type="button"
-                  onClick={() => onChange({ railExpanded: false })}
-                  className="m3-press"
-                  style={{ height: 40, width: "100%", borderRadius: 20, border: `1px solid ${p.outline}`, background: "transparent", color: p.primary, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
-                >
-                  <Icon name="side_navigation" size={18} />
-                  {t("railUpgrade", lang)}
-                </button>
-              </>
-            ) : (
-              <>
-                <div role="group" aria-label={t("railState", lang)}>
-                  <Segmented
-                    options={[{ key: "collapsed", label: t("railCollapsed", lang) }, { key: "expanded", label: t("railExpanded", lang) }]}
-                    value={item.railExpanded ? "expanded" : "collapsed"}
-                    onChange={(v) => onChange({ railExpanded: v === "expanded" })}
-                    p={p}
-                  />
-                </div>
-                <div role="group" aria-label={t("railPresentation", lang)}>
-                  <div style={{ fontSize: 12, color: p.onSurfaceVariant, marginBottom: 6 }}>{t("railPresentation", lang)}</div>
-                  {railStandalone ? (
-                    <Segmented
-                      options={[{ key: "standard", label: t("railStandard", lang) }, { key: "modal", label: t("railModal", lang) }]}
-                      value={item.railModal ? "modal" : "standard"}
-                      onChange={(v) => onChange({ railExpanded: item.railExpanded ?? false, railModal: v === "modal" })}
-                      p={p}
-                    />
-                  ) : <div style={{ fontSize: 12, color: p.onSurfaceVariant }}>{t("railStandalone", lang)}</div>}
-                </div>
-              </>
-            )}
+            {/* one switch: on gives the rail its "V" / turned-around "V" button */}
+            <Toggle
+              on={isWideRail(item)}
+              onChange={(on) => onChange(on ? { railExpanded: true, railFolded: false } : { railExpanded: undefined, railFolded: undefined, railModal: undefined })}
+              p={p}
+              icon="unfold_more"
+              label={t("navToggleLabel", lang)}
+            />
           </div>
         </Section>
       )}
@@ -1428,7 +1496,8 @@ export function Inspector({
                         ? t("width", lang)
                         : t("size", lang)
                   }
-                  value={item.size ?? spec.defSize ?? spec.w}
+                  /* a rail's width comes from its own makeup until the author sets one */
+                  value={item.kind === "navRail" ? railWidth(item) : item.size ?? spec.defSize ?? spec.w}
                   min={spec.size.min}
                   max={widthMax(spec.size.max)}
                   step={spec.size.step}
@@ -1461,7 +1530,7 @@ export function Inspector({
                     )}
                     <SizePresets
                       values={[...new Set([...(frameSize.w !== PHONE_W && spec.size.icon === "width" && spec.size.presets.includes(CONTENT_W) ? [CONTENT_W] : []), ...spec.size.presets.map(mapWidthPreset)])].sort((a, b) => a - b)}
-                      value={item.size ?? spec.defSize ?? spec.w}
+                      value={item.kind === "navRail" ? railWidth(item) : item.size ?? spec.defSize ?? spec.w}
                       min={spec.size.min}
                       max={widthMax(spec.size.max)}
                       onChange={(size) => onChange({ size })}
@@ -1591,76 +1660,6 @@ export function Inspector({
         </Section>
       )}
 
-      {(TAPPABLE.includes(item.kind) || actionSlots.length > 0) && frames.length > 0 && !editOn && (
-        <Section id="action" icon="ads_click" title={t("tapTo", lang)} p={p}>
-          {actionSlots.length > 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {item.kind === "tabs" ? (
-                /* a tab row names its destinations in words and may have many: chips that wrap, not one long segment */
-                <div role="radiogroup" aria-label={t("tapTo", lang)} style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {actionSlots.map((s) => {
-                    const on = s.key === (actionSlot || actionSlots[0].key);
-                    const set = !!item.actions?.[s.key];
-                    return (
-                      <button
-                        key={s.key}
-                        onClick={() => setActionSlot(s.key)}
-                        title={s.label}
-                        role="radio"
-                        aria-checked={on}
-                        className="m3-press"
-                        style={{
-                          height: 32, padding: "0 12px", borderRadius: 8, maxWidth: "100%", cursor: "pointer", fontSize: 13, fontWeight: 600,
-                          border: `1px solid ${on ? "transparent" : p.outline}`,
-                          background: on ? p.primary : "transparent",
-                          color: on ? p.onPrimary : p.onSurfaceVariant,
-                          display: "inline-flex", alignItems: "center", gap: 6,
-                        }}
-                      >
-                        {set && <Icon name="ads_click" size={16} />}
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-              <Segmented<string>
-                options={actionSlots.map((s) => ({
-                  key: s.key,
-                  icon: s.value ?? undefined,
-                  label: s.value ? undefined : s.label,
-                  title: s.label,
-                  dot: !!item.actions?.[s.key],
-                }))}
-                value={actionSlot || actionSlots[0].key}
-                onChange={setActionSlot}
-                p={p}
-                height={40}
-              />
-              )}
-              {(() => {
-                const key = actionSlot || actionSlots[0].key;
-                return (
-                  <ActionEditor
-                    frames={frames}
-                    action={item.actions?.[key]}
-                    onChange={(a) => {
-                      const actions = { ...(item.actions ?? {}) };
-                      if (a) actions[key] = a;
-                      else delete actions[key];
-                      onChange({ actions: Object.keys(actions).length ? actions : undefined });
-                    }}
-                    p={p}
-                  />
-                );
-              })()}
-            </div>
-          ) : (
-            <ActionEditor frames={frames} action={item.action} onChange={(action) => onChange({ action })} p={p} />
-          )}
-        </Section>
-      )}
-
       {!editOn && (
       <Section id="note" icon="bolt" title={t("behavior", lang)} p={p}>
         <AiField
@@ -1678,7 +1677,17 @@ export function Inspector({
       {/* what the part does after it has been tapped: grey out, cool down, change or go */}
       {!editOn && (
         <Section id="transitions" icon="change_circle" title={t("transitions", lang)} p={p}>
-          <StateRules item={item} p={p} lang={lang} onChange={onChange} />
+          <StateRules
+            item={item}
+            p={p}
+            lang={lang}
+            onChange={onChange}
+            frames={frames}
+            onDialog={onDialog}
+            slots={actionSlots}
+            slot={actionSlot}
+            onSlot={setActionSlot}
+          />
         </Section>
       )}
     </div>
@@ -1686,14 +1695,103 @@ export function Inspector({
 }
 
 /** The state rules hung on one part: each says what a tap changes about the part itself. */
-function StateRules({ item, p, lang, onChange }: { item: Item; p: Palette; lang: Lang; onChange: (patch: Partial<Item>) => void }) {
-  const rules = item.states ?? [];
-  const patch = (id: string, next: Partial<ItemState>) => onChange({ states: rules.map((r) => (r.id === id ? { ...r, ...next } : r)) });
-  const remove = (id: string) => onChange({ states: rules.filter((r) => r.id !== id).length ? rules.filter((r) => r.id !== id) : undefined });
-  const add = () => onChange({ states: [...rules, { id: uid(), trigger: "tap", effect: "disable" }] });
+function StateRules({
+  item,
+  p,
+  lang,
+  onChange,
+  frames,
+  onDialog,
+  slots = [],
+  slot = "",
+  onSlot,
+}: {
+  item: Item;
+  p: Palette;
+  lang: Lang;
+  onChange: (patch: Partial<Item>) => void;
+  frames: Frame[];
+  /** makes, or finds, the dialog screen this part pops over the page */
+  onDialog?: () => void;
+  /** the destinations a bar offers; empty for a plain part */
+  slots?: { key: string; label: string; value: string | null }[];
+  /** the destination the rules below belong to */
+  slot?: string;
+  onSlot?: (key: string) => void;
+}) {
+  /* a bar's rules belong to one destination; a plain part keeps them on itself */
+  const target = slots.length > 0 ? slot || slots[0].key : "";
+  const perSlot = slots.length > 0;
+  const rules = perSlot ? item.slotStates?.[target] ?? [] : item.states ?? [];
+  const writeRules = (next: ItemState[]) => (perSlot ? onChange({ slotStates: { ...(item.slotStates ?? {}), [target]: next } }) : onChange({ states: next }));
+  const action = perSlot ? item.actions?.[target] : item.action;
+  const writeAction = (a: Action | undefined) =>
+    perSlot
+      ? onChange({ actions: { ...(item.actions ?? {}), [target]: a as Action } })
+      : onChange({ action: a });
+  const card: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 8, padding: 10, borderRadius: 14, background: p.surfaceContainerLow };
+  const patch = (id: string, next: Partial<ItemState>) => writeRules(rules.map((r) => (r.id === id ? { ...r, ...next } : r)));
+  const remove = (id: string) => writeRules(rules.filter((r) => r.id !== id));
+  const add = () => writeRules([...rules, { id: uid(), trigger: "tap", effect: "disable" }]);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {rules.length === 0 && <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant }}>{t("transitionsHint", lang)}</div>}
+      {/* a bar's destinations are buttons of their own: pick the one the rules below belong to */}
+      {slots.length > 1 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("tapTarget", lang)}</div>
+          <Segmented<string>
+            options={slots.map((s2) => ({ key: s2.key, icon: s2.value ?? undefined, label: s2.label, title: s2.label }))}
+            value={target}
+            onChange={(k) => onSlot?.(k)}
+            p={p}
+            height={36}
+          />
+        </div>
+      )}
+
+      {frames.length > 0 && (
+        <div style={card}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: 1, minWidth: 0 }}>{t("ruleJump", lang)}</span>
+            {action && <IconBtn icon="delete" p={p} danger title={t("removeRule", lang)} size={30} onClick={() => writeAction(undefined)} />}
+          </div>
+          <FrameSelect
+            frames={frames}
+            value={action?.to ?? null}
+            onChange={(to) => writeAction(to ? { to, transition: action?.transition ?? "slide" } : undefined)}
+            p={p}
+          />
+          {action && action.to !== BACK_TARGET && (
+            <TransitionPicker value={action.transition} onChange={(transition) => writeAction({ ...action, transition })} p={p} />
+          )}
+        </div>
+      )}
+
+      {/* a tap can pop a dialog screen of its own; one is made the first time and reused after */}
+      {onDialog && (
+        <div style={card}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Icon name="picture_in_picture_alt" size={18} color={p.onSurfaceVariant} />
+            <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: 1, minWidth: 0 }}>{t("ruleDialog", lang)}</span>
+            {action?.dialog && <IconBtn icon="delete" p={p} danger title={t("removeRule", lang)} size={30} onClick={() => writeAction(undefined)} />}
+          </div>
+          <button
+            onClick={onDialog}
+            className="m3-press"
+            style={{ height: 40, borderRadius: 20, border: "none", background: p.secondaryContainer, color: p.onSecondaryContainer, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+          >
+            <Icon name={action?.dialog ? "open_in_new" : "add"} size={20} />
+            {action?.dialog ? t("openBoundDialog", lang) : t("makeDialog", lang)}
+          </button>
+          <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>
+            {action?.dialog
+              ? `${t("dialogBound", lang)}${frames.find((f) => f.id === action?.to)?.name ?? ""}`
+              : t("dialogHint", lang)}
+          </div>
+        </div>
+      )}
+
+      {(rules.length === 0 || perSlot) && <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant }}>{t("transitionsHint", lang)}</div>}
       {rules.map((rule) => (
         <div key={rule.id} style={{ display: "flex", flexDirection: "column", gap: 8, padding: 10, borderRadius: 14, background: p.surfaceContainerLow }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

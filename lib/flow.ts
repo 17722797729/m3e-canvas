@@ -1,4 +1,4 @@
-import { BACK_TARGET, KIND_SPEC, actionsOf, frameRect, groupBounds, subtreeOf, type Doc, type Group, type Item, type ItemState, type StateEffect } from "./tokens";
+import { BACK_TARGET, KIND_SPEC, actionSlotsOf, actionsOf, frameRect, groupBounds, isWideRail, subtreeOf, type Doc, type Group, type Item, type ItemState, type StateEffect } from "./tokens";
 import { KIND_TEXT, type Lang } from "./i18n";
 
 /* the kind's own fallback noun, for a document written by a build that knows a
@@ -15,7 +15,7 @@ import { KIND_TEXT, type Lang } from "./i18n";
 export type FlowNodeKind = "screen" | "popup";
 
 export type FlowRule =
-  | { kind: "jump"; nodeId: string; itemId: string; itemLabel: string; toFrameId: string; description: string }
+  | { kind: "jump"; nodeId: string; itemId: string; itemLabel: string; toFrameId: string; description: string; dialog?: boolean }
   | { kind: "state"; itemId: string; itemLabel: string; description: string };
 
 export type FlowNode = {
@@ -66,6 +66,13 @@ export const FLOW_TEXT: Record<
     nodeSummary: (name: string, kind: string, detail: string) => string;
     edgeSummary: (from: string, to: string) => string;
     backLine: (name: string, items: string) => string;
+    /** the side rail's own collapse / expand button */
+    railToggle: (item: string) => string;
+    /** the navigation bar's own collapse / expand button */
+    barToggle: (item: string) => string;
+    /** a rule that opens a dialog screen of its own */
+    dialogOpen: (from: string, item: string, to: string) => string;
+    dialogLine: (from: string, item: string, to: string) => string;
     jump: (from: string, item: string, to: string) => string;
     jumpMarkdown: (from: string, item: string, to: string) => string;
     jumpLine: (from: string, item: string, to: string) => string;
@@ -92,15 +99,20 @@ export const FLOW_TEXT: Record<
     nodeSummary: (name, kind, detail) => `${name} は${kind}です。${detail}。`,
     edgeSummary: (from, to) => `${from} から ${to} への遷移。`,
     backLine: (name, items) => `${name} では「${items}」で前の画面に戻ります。`,
+    railToggle: (item) => `「${item}」の「V」でナビを上下に畳んで「^」に変わり、もう一度押すと開きます。`,
+    barToggle: (item) => `「${item}」の「<」でナビの中身を畳んで「>」だけになり、もう一度押すと元に戻ります。`,
     jump: (from, item, to) => `${from} の「${item}」→ ${to}`,
     jumpMarkdown: (from, item, to) => `${from} の「${item}」をタップすると ${to} に移動します。`,
     jumpLine: (from, item, to) => `- ${from} の「${item}」をタップすると ${to} に移動します。`,
+    dialogOpen: (from, item, to) => `${from} の「${item}」→ ${to}（ポップアップ）`,
+    dialogLine: (from, item, to) => `${from} の「${item}」をタップすると ${to} のポップアップが開きます。`,
     state: {
       disable: (item) => `「${item}」をタップすると、この部品は無効になります。`,
       cooldown: (item, _value, seconds) => `「${item}」をタップすると ${seconds} 秒間は灰色になり、カウントダウンが終わると元の見た目に戻ります。`,
       label: (item, value) => `「${item}」をタップすると、表示が「${value}」に変わります。`,
       color: (item, value) => `「${item}」をタップすると、色が ${value} に変わります。`,
       variant: (item, value) => `「${item}」をタップすると、見た目が「${value}」に変わります。`,
+      grow: (item) => `「${item}」をタップすると、この部品が大きくなります。`,
       hide: (item) => `「${item}」をタップすると、この部品は隠れます。`,
     },
   },
@@ -124,15 +136,20 @@ export const FLOW_TEXT: Record<
     nodeSummary: (name, kind, detail) => `${name} is a ${kind} with ${detail}.`,
     edgeSummary: (from, to) => `The transition from ${from} to ${to}.`,
     backLine: (name, items) => `On ${name}, "${items}" goes back to the previous screen.`,
+    railToggle: (item) => `The "V" on "${item}" folds the rail up and turns into "^", which opens it again.`,
+    barToggle: (item) => `On "${item}" the "<" folds the whole navigation away, leaving only ">", which brings it back.`,
     jump: (from, item, to) => `Tap "${item}" on ${from} → ${to}`,
     jumpMarkdown: (from, item, to) => `Tapping "${item}" on ${from} opens ${to}.`,
     jumpLine: (from, item, to) => `- Tapping "${item}" on ${from} opens ${to}.`,
+    dialogOpen: (from, item, to) => `${from} "${item}" → ${to} (dialog)`,
+    dialogLine: (from, item, to) => `Tapping "${item}" on ${from} opens the ${to} dialog.`,
     state: {
       disable: (item) => `After tapping "${item}" the part is disabled.`,
       cooldown: (item, _value, seconds) => `After tapping "${item}" the part is greyed for ${seconds} seconds, then goes back to how it looked.`,
       label: (item, value) => `After tapping "${item}" its text becomes "${value}".`,
       color: (item, value) => `After tapping "${item}" its colour becomes ${value}.`,
       variant: (item, value) => `After tapping "${item}" its style becomes ${value}.`,
+      grow: (item) => `After tapping "${item}" the part becomes larger.`,
       hide: (item) => `After tapping "${item}" the part is hidden.`,
     },
   },
@@ -156,15 +173,20 @@ export const FLOW_TEXT: Record<
     nodeSummary: (name, kind, detail) => `${name} 是一个${kind}，包含${detail}。`,
     edgeSummary: (from, to) => `从 ${from} 到 ${to} 的跳转。`,
     backLine: (name, items) => `${name} 的「${items}」会返回上一个页面。`,
+    railToggle: (item) => `点击「${item}」上的「V」把导航栏上下折叠并变成「^」，再点「^」即可展开。`,
+    barToggle: (item) => `点击「${item}」上的「<」收起整个导航内容只留下「>」，再点「>」即恢复原样。`,
     jump: (from, item, to) => `点击 ${from} 的「${item}」→ ${to}`,
     jumpMarkdown: (from, item, to) => `点击 ${from} 的「${item}」会跳转到 ${to}。`,
     jumpLine: (from, item, to) => `- 点击 ${from} 的「${item}」会跳转到 ${to}。`,
+    dialogOpen: (from, item, to) => `${from} 的「${item}」→ ${to}（弹框）`,
+    dialogLine: (from, item, to) => `点击 ${from} 的「${item}」弹出 ${to} 弹框。`,
     state: {
       disable: (item) => `点击「${item}」后，该组件变为不可用。`,
       cooldown: (item, _value, seconds) => `点击「${item}」后该组件置灰 ${seconds} 秒并显示倒计时，倒计时结束后恢复原样式。`,
       label: (item, value) => `点击「${item}」后，文字变为「${value}」。`,
       color: (item, value) => `点击「${item}」后，颜色变为 ${value}。`,
       variant: (item, value) => `点击「${item}」后，样式变为「${value}」。`,
+      grow: (item) => `点击「${item}」后，该组件会变大。`,
       hide: (item) => `点击「${item}」后，该组件隐藏。`,
     },
   },
@@ -188,15 +210,20 @@ export const FLOW_TEXT: Record<
     nodeSummary: (name, kind, detail) => `${name}은(는) ${kind}이며 ${detail}.`,
     edgeSummary: (from, to) => `${from}에서 ${to}(으)로 가는 전환입니다.`,
     backLine: (name, items) => `${name}의 "${items}"은(는) 이전 화면으로 돌아갑니다.`,
+    railToggle: (item) => `"${item}"의 "V"를 누르면 내비게이션이 위아래로 접히고 "^"로 바뀌며, 다시 누르면 펼쳐집니다.`,
+    barToggle: (item) => `"${item}"의 "<"를 누르면 내비게이션이 모두 접혀 ">"만 남고, 다시 누르면 원래대로 돌아옵니다.`,
     jump: (from, item, to) => `${from}의 "${item}" → ${to}`,
     jumpMarkdown: (from, item, to) => `${from}의 "${item}"을(를) 탭하면 ${to}(으)로 이동합니다.`,
     jumpLine: (from, item, to) => `- ${from}의 "${item}"을(를) 탭하면 ${to}(으)로 이동합니다.`,
+    dialogOpen: (from, item, to) => `${from}의 "${item}" → ${to}(팝업)`,
+    dialogLine: (from, item, to) => `${from}의 "${item}"을(를) 탭하면 ${to} 팝업이 열립니다.`,
     state: {
       disable: (item) => `"${item}"을(를) 탭하면 이 요소를 사용할 수 없습니다.`,
       cooldown: (item, _value, seconds) => `"${item}"을(를) 탭하면 ${seconds}초 동안 회색으로 바뀌고 카운트다운이 끝나면 원래 모양으로 돌아옵니다.`,
       label: (item, value) => `"${item}"을(를) 탭하면 문구가 "${value}"(으)로 바뀝니다.`,
       color: (item, value) => `"${item}"을(를) 탭하면 색이 ${value}(으)로 바뀝니다.`,
       variant: (item, value) => `"${item}"을(를) 탭하면 스타일이 ${value}(으)로 바뀝니다.`,
+      grow: (item) => `"${item}"을(를) 탭하면 이 요소가 커집니다.`,
       hide: (item) => `"${item}"을(를) 탭하면 이 요소가 숨겨집니다.`,
     },
   },
@@ -309,6 +336,14 @@ export function buildFlow(doc: Doc, lang: Lang): Flow {
   const frameIds = new Set(frames.map((f) => f.id));
   const nameOf = (id: string) => frameNameOf(frames.find((f) => f.id === id)?.name ?? "", lang);
 
+  /* A dialog lives on its own page as a hidden overlay, but the flow still reads it as a
+   * place of its own, so a button that pops one draws the same A → A弹框 line. */
+  const dialogs = new Map<string, string>();
+  for (const g of doc.groups) {
+    for (const it of itemsOf(g)) if (it.modal) dialogs.set(it.id, frameNameOf(it.label, lang));
+  }
+  const nodeName = (id: string) => dialogs.get(id) ?? nameOf(id);
+
   const rules = new Map<string, FlowRule[]>(frames.map((f) => [f.id, []]));
   const jumps = new Map<string, Set<string>>(frames.map((f) => [f.id, new Set<string>()]));
   const back = new Map<string, string[]>(frames.map((f) => [f.id, []]));
@@ -331,10 +366,38 @@ export function buildFlow(doc: Doc, lang: Lang): Flow {
           reacts = true;
           continue;
         }
-        if (!frameIds.has(action.to) || action.to === from) continue;
+        const isDialog = dialogs.has(action.to);
+        if ((!frameIds.has(action.to) && !isDialog) || action.to === from) continue;
         jumps.get(from)?.add(action.to);
-        rules.get(from)?.push({ kind: "jump", nodeId: from, itemId: it.id, itemLabel: hit, toFrameId: action.to, description: x.jumpMarkdown(nameOf(from), hit, nameOf(action.to)) });
+        rules.get(from)?.push({
+          kind: "jump",
+          nodeId: from,
+          itemId: it.id,
+          itemLabel: hit,
+          toFrameId: action.to,
+          dialog: action.dialog,
+          description: action.dialog ? x.dialogLine(nameOf(from), hit, nodeName(action.to)) : x.jumpMarkdown(nameOf(from), hit, nodeName(action.to)),
+        });
         reacts = true;
+      }
+      /* a bar's own collapse button belongs to the flow too: it is a state change */
+      if (it.kind === "navRail" && isWideRail(it)) {
+        rules.get(from)?.push({ kind: "state", itemId: it.id, itemLabel: label, description: x.railToggle(label) });
+        reacts = true;
+      }
+      if (it.kind === "bottomNav" && it.barFolded !== undefined) {
+        rules.get(from)?.push({ kind: "state", itemId: it.id, itemLabel: label, description: x.barToggle(label) });
+        reacts = true;
+      }
+      /* a bar's destinations carry rules of their own: they are named by their label */
+      for (const [slot, list] of Object.entries(it.slotStates ?? {})) {
+        const name = actionSlotsOf(it).find((s2) => s2.key === slot)?.label ?? slot;
+        for (const st of list) {
+          const description = stateText(st, `${label} · ${name}`, lang);
+          if (!description) continue;
+          rules.get(from)?.push({ kind: "state", itemId: it.id, itemLabel: `${label} · ${name}`, description });
+          reacts = true;
+        }
       }
       for (const st of it.states ?? []) {
         const description = stateText(st, label, lang);
@@ -363,6 +426,19 @@ export function buildFlow(doc: Doc, lang: Lang): Flow {
     };
   });
 
+  /* every dialog overlay is a place the flow can land on: a popup that belongs to its page */
+  for (const [id, label] of dialogs) {
+    if (nodes.some((n) => n.id === id)) continue;
+    nodes.push({
+      id,
+      kind: "popup",
+      label,
+      description: describeNode(label, true, 0, [], lang),
+      rules: [],
+      depth: depth.get(id) ?? 0,
+    });
+  }
+
   /* one edge per from→to pair, with every trigger of that pair merged in */
   const edges: FlowEdge[] = [];
   const at = new Map<string, number>();
@@ -377,7 +453,7 @@ export function buildFlow(doc: Doc, lang: Lang): Flow {
           id,
           from: r.nodeId,
           to: r.toFrameId,
-          label: x.jump(nameOf(r.nodeId), r.itemLabel, nameOf(r.toFrameId)),
+          label: r.dialog ? x.dialogOpen(nameOf(r.nodeId), r.itemLabel, nodeName(r.toFrameId)) : x.jump(nameOf(r.nodeId), r.itemLabel, nodeName(r.toFrameId)),
           description: r.description,
           triggers: [{ itemId: r.itemId, itemLabel: r.itemLabel }],
         });

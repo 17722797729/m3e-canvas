@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { DEFAULT_THEME, KIND_SPEC, LAYER_DEFAULT, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type ItemState, type PlacedItem } from "./tokens";
+import { BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type ItemState, type PlacedItem } from "./tokens";
 
 afterEach(() => setGlobalShape("rounded")); // restore the module default
 
@@ -133,6 +133,40 @@ describe("scrollable tab rows", () => {
 
 /* a document can carry a part this build has no spec for; geometry falling back to the
  * box keeps the editor drawing instead of failing on the first layout pass */
+describe("folding the navigation", () => {
+  it("shrinks a folded bar to its own arrow and a collapsed rail to its icons", () => {
+    const bar = { ...makeItem("bottomNav"), size: PHONE_W };
+    expect(sizeOf(bar, {}).w).toBe(PHONE_W);
+    expect(sizeOf(bar, {}).h).toBe(KIND_SPEC.bottomNav.h);
+    const folded = { ...bar, barFolded: true };
+    expect(sizeOf(folded, {})).toEqual({ w: BAR_FOLDED_W, h: BAR_FOLDED_H });
+    /* the author's own height is kept while the bar is open */
+    expect(sizeOf({ ...bar, size2: 120 }, {}).h).toBe(120);
+    /* a rail's width follows its expansion and whatever width the author set */
+    const rail = makeItem("navRail");
+    expect(sizeOf({ ...rail, railExpanded: true }, {}).w).toBe(RAIL_EXPANDED_W);
+    expect(sizeOf(rail, {}).w).toBe(RAIL_COLLAPSED_W);
+    expect(sizeOf({ ...rail, railExpanded: true, size: 140 }, {}).w).toBe(140);
+    /* and folded, the rail is the same small pill the navigation bar becomes */
+    expect(sizeOf({ ...rail, railFolded: true }, {})).toEqual({ w: BAR_FOLDED_W, h: BAR_FOLDED_H });
+  });
+});
+
+describe("a button's shape", () => {
+  it("is a pill by default, a circle when asked and a small square otherwise", () => {
+    const fresh = { ...makeItem("button"), size: 120 };
+    expect(baseRadii(fresh)).toEqual(uniformRadii(scaleR(KIND_SPEC.button.radius)));
+    expect(baseRadii({ ...fresh, shape: "round" })).toEqual(uniformRadii(H / 2));
+    expect(baseRadii({ ...fresh, shape: "square" })).toEqual(uniformRadii(scaleR(8)));
+    /* a FAB is round already, and keeps a true circle whatever the shape scale says */
+    setGlobalShape("square");
+    expect(baseRadii({ ...makeItem("fab"), shape: "round" }).tl).toBe(28);
+    setGlobalShape("rounded");
+    expect(baseRadii({ ...makeItem("iconButton"), shape: "square" }).tl).toBe(8);
+    expect(SHAPED).toEqual(["button", "iconButton", "fab", "extendedFab"]);
+  });
+});
+
 describe("a badge's size", () => {
   it("hugs its number by default and takes the size its author gives it", () => {
     const dot = { ...makeItem("badge"), label: "" };

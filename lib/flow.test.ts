@@ -205,6 +205,69 @@ describe("state rules", () => {
   });
 });
 
+describe("the navigation bar's fold button", () => {
+  it("joins the page's rules when the bar carries one", () => {
+    const folded = item({ id: "nav", kind: "bottomNav", barFolded: true, tabs: [{ icon: "swords", label: "Battle" }] });
+    const flow = buildFlow(doc(frames, [run("g", frames[0], [folded])]), "en");
+    const rule = nodeOf(flow, "home").rules.find((r) => r.kind === "state");
+    expect(rule?.description).toContain("<");
+    expect(rule?.description).toContain(">");
+    /* a bar without the button says nothing about folding */
+    const plain = item({ id: "nav2", kind: "bottomNav", tabs: [{ icon: "map", label: "Map" }] });
+    expect(buildFlow(doc(frames, [run("g2", frames[0], [plain])]), "en").nodes[0].rules).toEqual([]);
+  });
+});
+
+describe("the grow rule", () => {
+  it("leaves the part a size up once it has been tapped", () => {
+    const it2 = item({ id: "b", label: "Charge", states: [{ id: "s", trigger: "tap", effect: "grow" }] });
+    const flow = buildFlow(doc(frames, [run("g", frames[0], [it2])]), "en");
+    expect(nodeOf(flow, "home").rules[0].description).toContain("Charge");
+    /* and nothing changes before the tap */
+    expect(stateText({ id: "s", trigger: "tap", effect: "grow" }, "Charge", "zh")).toContain("变大");
+  });
+});
+
+describe("the rail toggle and dialogs", () => {
+  it("writes the rail's collapse button into the node's rules", () => {
+    const rail = item({ id: "rail", kind: "navRail", label: "Menu", railExpanded: false, tabs: [{ icon: "map", label: "Map" }] });
+    const flow = buildFlow(doc(frames, [run("g", frames[0], [rail])]), "en");
+    const rule = nodeOf(flow, "home").rules.find((r) => r.kind === "state");
+    expect(rule?.description).toContain("Menu");
+    expect(rule?.description).toContain("V");
+    for (const lang of ["ja", "zh", "ko"] as const) {
+      expect(buildFlow(doc(frames, [run("g", frames[0], [rail])]), lang).nodes[0].rules.some((r) => r.kind === "state")).toBe(true);
+    }
+  });
+
+  it("draws a dialog as an edge of its own, worded as a popup", () => {
+    const button = item({ id: "b", label: "Shop", action: { to: "popup", transition: "expand", dialog: true } });
+    const flow = buildFlow(doc(frames, [run("g", frames[0], [button])]), "en");
+    expect(flow.edges).toHaveLength(1);
+    expect(flow.edges[0]).toMatchObject({ from: "home", to: "popup" });
+    expect(flow.edges[0].label).toContain("dialog");
+    expect(flow.edges[0].description).toBe("Tapping \"Shop\" on Home opens the Dialog dialog.");
+    expect(nodeOf(flow, "popup").kind).toBe("popup");
+    expect(buildFlow(doc(frames, [run("g", frames[0], [button])]), "zh").edges[0].description).toContain("弹框");
+  });
+});
+
+describe("an in-page dialog", () => {
+  it("is a popup node of its own, with an edge from the page that pops it", () => {
+    const button = item({ id: "b", label: "Shop", action: { to: "dlg", transition: "expand", dialog: true } });
+    const panel: Item = { ...item({ id: "dlg", kind: "box", label: "弹框", modal: true }) };
+    const flow = buildFlow(doc(frames, [run("g", frames[0], [button]), run("d", frames[0], [panel])]), "en");
+    const node = flow.nodes.find((n) => n.id === "dlg");
+    expect(node).toMatchObject({ kind: "popup", label: "弹框" });
+    const edge = flow.edges.find((e) => e.to === "dlg");
+    expect(edge).toMatchObject({ from: "home" });
+    expect(edge?.description).toContain("弹框");
+    /* the page the dialog lives on still reads as a screen */
+    expect(flow.nodes.find((n) => n.id === "home")?.kind).toBe("screen");
+    expect(flowMarkdown(flow, "en")).toContain("弹框");
+  });
+});
+
 describe("flowMarkdown", () => {
   it("writes a title, a section per screen, its rules and the transition list", () => {
     const flow = buildFlow(

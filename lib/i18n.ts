@@ -33,7 +33,7 @@ export const SEED_TEXT: Record<Lang, { favorite: string; share: string; inbox: s
 export function translateDefaultText(value: string, kind: string, field: "label" | "supporting" | "tab", lang: Lang): string {
   for (const { key: from } of LANGS) {
     if (field === "tab") {
-      const labels = (l: Lang) => kind === "tabs" ? TAB_LABELS[l] : kind === "select" ? SELECT_OPTIONS[l] : (kind === "fabMenu" ? FAB_MENU_TABS[l] : NAV_TABS[l]).map((tab) => tab.label);
+      const labels = (l: Lang) => kind === "tabs" ? TAB_LABELS[l] : kind === "select" ? SELECT_OPTIONS[l] : (kind === "fabMenu" ? FAB_MENU_TABS[l] : kind === "navRail" ? GAME_NAV_TABS[l] : NAV_TABS[l]).map((tab) => tab.label);
       const index = labels(from).indexOf(value);
       if (index >= 0) return labels(lang)[index] ?? value;
     } else {
@@ -186,6 +186,26 @@ export const UI = {
   selectedOption: { ja: "初期値にする（もう一度押すと未選択）", en: "Make this the initial value (press again for none)", zh: "设为初始值（再按一次取消）" },
   changeIcon: { ja: "アイコンを変更", en: "Change icon", zh: "更改图标" },
   image: { ja: "画像", en: "Image", zh: "图片" },
+  navToggle: { ja: "收起/展开ボタン", en: "Collapse / expand button", zh: "收起/展开按钮" },
+  navToggleLabel: { ja: "ナビに「<」「>」ボタンを付ける", en: "Put the chevron button on the bar", zh: "在导航栏上加入「<」「>」按钮" },
+  navToggleHint: { ja: "タップするとナビの中身を畳み、「<」が「>」に変わります（レールは「V」→「^」）。", en: "Tapping it folds the whole navigation away and turns the chevron around (the rail folds V into ^).", zh: "点击后收起整个导航内容，「<」会变成「>」（侧边栏是「V」变成「^」）。" },
+  state_grow: { ja: "大きくする", en: "Grow", zh: "变大" },
+  buttonShape: { ja: "ボタンの形", en: "Button shape", zh: "按钮形态" },
+  buttonShapeHint: { ja: "「まる」にすると丸ボタンになります。", en: "Round turns the button into a circle.", zh: "选择“圆形”会把按钮变成圆形。" },
+  shape_default: { ja: "長方形", en: "Rectangle", zh: "长方形" },
+  shape_round: { ja: "まる", en: "Round", zh: "圆形" },
+  shape_square: { ja: "しかく", en: "Square", zh: "方形" },
+  chooseScreen: { ja: "画面を選ぶ", en: "Choose a screen", zh: "选择页面" },
+  searchOff: { ja: "見つかりません", en: "Nothing found", zh: "没有匹配项" },
+  navPerRow: { ja: "1行の最大数", en: "Per line", zh: "单行最大数量" },
+  tapTarget: { ja: "対象のボタン", en: "Which button", zh: "目标按钮" },
+  ruleJump: { ja: "タップで移動", en: "Tap to go to", zh: "点击后跳转" },
+  dialog: { ja: "弹框", en: "Dialog", zh: "弹框" },
+  ruleDialog: { ja: "タップでポップアップ", en: "Tap to open a dialog", zh: "点击后弹出弹框" },
+  makeDialog: { ja: "ポップアップを作る", en: "Make the dialog", zh: "新建弹框" },
+  openBoundDialog: { ja: "ポップアップを開く", en: "Open the dialog", zh: "打开已绑定弹框" },
+  dialogBound: { ja: "バインド済み：", en: "Bound to: ", zh: "已绑定：" },
+  dialogHint: { ja: "このページに無ければ作り、あれば同じものを使います。", en: "One is made for this page and button, and reused after that.", zh: "该页面该按钮若没有弹框就新建，有则直接复用。" },
   backgroundImage: { ja: "背景画像（SVG 可）", en: "Background image (SVG ok)", zh: "背景图（支持 SVG）" },
   pickImage: { ja: "画像を選ぶ", en: "Choose image", zh: "选择图片" },
   removeImage: { ja: "画像を外す", en: "Remove image", zh: "移除图片" },
@@ -496,7 +516,7 @@ export const KO: Record<UIKey, string> = {
   copied: "복사됨", saveImage: "이미지로 저장", saving: "저장 중…", previewFrom: "이 화면부터 미리보기",
   duplicate: "복제", duplicateKey: "복제 (Ctrl+D)", delete: "삭제 (Delete)", deleteSelection: "선택 항목 삭제",
   text: "텍스트", label: "레이블", bold: "굵게", action: "동작", supporting: "보조 텍스트", tabs: "항목", changeIcon: "아이콘 변경",
-  options: "옵션", addOption: "옵션 추가", removeOption: "이 옵션 삭제", addTab: "탭 추가", removeTab: "이 탭 삭제", selectedOption: "초깃값으로 설정(다시 누르면 선택 해제)", image: "이미지", backgroundImage: "배경 이미지(SVG 가능)", pickImage: "이미지 선택", removeImage: "이미지 제거", imageUrl: "이미지 URL", imageTop: "위쪽", imageLeading: "앞쪽", imageTrailing: "뒤쪽", cardLayout: "레이아웃", noImageLayout: "이미지 없음", textPosition: "텍스트 위치", textTop: "위", textMiddle: "가운데", textBottom: "아래", textColor: "텍스트 색상", autoColor: "자동", autoWidth: "글자 너비", icon: "아이콘", noIcon: "아이콘 없음", searchIcons: "아이콘 검색",
+  options: "옵션", addOption: "옵션 추가", removeOption: "이 옵션 삭제", addTab: "탭 추가", removeTab: "이 탭 삭제", selectedOption: "초깃값으로 설정(다시 누르면 선택 해제)", image: "이미지", navToggle: "접기/펼치기 버튼", navToggleLabel: "내비게이션에 \"<\" / \">\" 버튼 넣기", navToggleHint: "탭하면 내비게이션 내용이 모두 접히고 \"<\"가 \">\"로 바뀝니다(레일은 \"V\"→\"^\").", state_grow: "크게 만들기", buttonShape: "버튼 모양", buttonShapeHint: "'원형'을 고르면 버튼이 동그랗게 바뀝니다.", shape_default: "직사각형", shape_round: "원형", shape_square: "정사각형", chooseScreen: "화면 선택", searchOff: "검색 결과 없음", navPerRow: "한 줄 최대 개수", tapTarget: "대상 버튼", ruleJump: "탭하여 이동", dialog: "팝업", ruleDialog: "탭하면 팝업 열기", makeDialog: "팝업 만들기", openBoundDialog: "연결된 팝업 열기", dialogBound: "연결됨: ", dialogHint: "이 페이지와 버튼에 팝업이 없으면 만들고, 있으면 같은 것을 다시 씁니다.", backgroundImage: "배경 이미지(SVG 가능)", pickImage: "이미지 선택", removeImage: "이미지 제거", imageUrl: "이미지 URL", imageTop: "위쪽", imageLeading: "앞쪽", imageTrailing: "뒤쪽", cardLayout: "레이아웃", noImageLayout: "이미지 없음", textPosition: "텍스트 위치", textTop: "위", textMiddle: "가운데", textBottom: "아래", textColor: "텍스트 색상", autoColor: "자동", autoWidth: "글자 너비", icon: "아이콘", noIcon: "아이콘 없음", searchIcons: "아이콘 검색",
   style: "스타일", appearance: "모양과 순서", partColor: "이 부품의 색", layer: "레이어 순서", layerHint: "숫자가 클수록 앞에 그려집니다(기본 10)", state: "상태", transitions: "탭한 뒤의 변화", transitionsHint: "이 부품을 탭했을 때 일어나는 일을 추가하세요. 예: 한 번 누르면 회색으로.", onTap: "탭하면", addRule: "규칙 추가", removeRule: "규칙 삭제", cooldownSeconds: "쿨다운(초)", state_disable: "회색으로 만들고 반응하지 않기", state_cooldown: "회색으로 만들고 카운트다운", state_label: "글자 바꾸기", state_color: "색 바꾸기(사용자 지정 가능)", state_variant: "모양 바꾸기", state_hide: "숨기기", selected: "선택됨", handle: "핸들(하단 시트)", listSwitch: "끝에 스위치", on: "켜짐", container: "컨테이너", wavy: "물결 모양", determinate: "확정형",
   railState: "레일 표시", railCollapsed: "접힘", railExpanded: "펼침",
   railLegacy: "기존 레일 · 너비 80dp", railUpgrade: "Expressive로 전환 (96dp)",
@@ -757,6 +777,56 @@ export const NAV_TABS: Record<Lang, { icon: string; label: string }[]> = {
     { icon: "home", label: "홈" },
     { icon: "search", label: "검색" },
     { icon: "favorite", label: "저장됨" },
+    { icon: "settings", label: "설정" },
+  ],
+};
+
+/** The navigation a game screen offers: the functions a player looks for, with the
+ *  icons the game-UI language uses. The rail shows the whole set, the bottom bar the
+ *  first few, so both read as one game. */
+export const GAME_NAV_TABS: Record<Lang, { icon: string; label: string }[]> = {
+  ja: [
+    { icon: "swords", label: "バトル" },
+    { icon: "explore", label: "冒険" },
+    { icon: "backpack", label: "持ち物" },
+    { icon: "storefront", label: "ショップ" },
+    { icon: "assignment", label: "クエスト" },
+    { icon: "style", label: "カード" },
+    { icon: "groups", label: "パーティ" },
+    { icon: "workspace_premium", label: "実績" },
+    { icon: "settings", label: "設定" },
+  ],
+  en: [
+    { icon: "swords", label: "Battle" },
+    { icon: "explore", label: "Adventure" },
+    { icon: "backpack", label: "Inventory" },
+    { icon: "storefront", label: "Shop" },
+    { icon: "assignment", label: "Quests" },
+    { icon: "style", label: "Cards" },
+    { icon: "groups", label: "Party" },
+    { icon: "workspace_premium", label: "Achievements" },
+    { icon: "settings", label: "Settings" },
+  ],
+  zh: [
+    { icon: "swords", label: "战斗" },
+    { icon: "explore", label: "冒险" },
+    { icon: "backpack", label: "背包" },
+    { icon: "storefront", label: "商城" },
+    { icon: "assignment", label: "任务" },
+    { icon: "style", label: "卡牌" },
+    { icon: "groups", label: "队伍" },
+    { icon: "workspace_premium", label: "成就" },
+    { icon: "settings", label: "设置" },
+  ],
+  ko: [
+    { icon: "swords", label: "전투" },
+    { icon: "explore", label: "모험" },
+    { icon: "backpack", label: "가방" },
+    { icon: "storefront", label: "상점" },
+    { icon: "assignment", label: "퀘스트" },
+    { icon: "style", label: "카드" },
+    { icon: "groups", label: "파티" },
+    { icon: "workspace_premium", label: "업적" },
     { icon: "settings", label: "설정" },
   ],
 };
