@@ -1,4 +1,4 @@
-import { KIND_TEXT, Lang, SWIPE_TEXT, TRANSITION_TEXT, getLang } from "./i18n";
+import { KIND_TEXT, Lang, SWIPE_TEXT, TRANSITION_TEXT, getLang, overlayLevelText } from "./i18n";
 import { constrainModalRails } from "./rail";
 import {
   CONTENT_W,
@@ -27,10 +27,22 @@ import {
   groupBounds,
   isPhoneFrame,
   isWideRail,
+  isOverlayFrame,
+  overlayLevelOfFrame,
+  conditionText,
+  writeText,
+  lookItem,
+  START_LOOK,
+  type PartFlow,
+  type PartStep,
+  varInitial,
+  type Var,
   normalizeTheme,
   paletteOf,
   railWidth,
   progressThickness,
+  progressValue,
+  sizeOf,
   isScrollableTabs,
 } from "./tokens";
 
@@ -112,6 +124,15 @@ const viewSize = (it: Item, ratio: number) => {
   const w = it.size ?? CONTENT_W;
   return `${w}×${it.size2 ?? Math.round(w * ratio)}dp`;
 };
+
+/** How a box that scrolls is described: which way its content moves, and where it starts. */
+function scrollNote(it: Item, lang: Lang): string {
+  if (!it.scroll) return "";
+  const axis = { ja: { x: "左右", y: "上下", both: "上下左右" }, en: { x: "left and right", y: "up and down", both: "both ways" }, zh: { x: "左右", y: "上下", both: "上下左右" }, ko: { x: "좌우", y: "상하", both: "상하좌우" } }[lang][it.scroll];
+  const at = it.scrollPos ?? {};
+  const start = [at.y ? { ja: `上から ${at.y}dp`, en: `${at.y}dp down`, zh: `向下 ${at.y}dp`, ko: `위에서 ${at.y}dp` }[lang] : "", at.x ? { ja: `左から ${at.x}dp`, en: `${at.x}dp in`, zh: `向右 ${at.x}dp`, ko: `왼쪽에서 ${at.x}dp` }[lang] : ""].filter(Boolean);
+  return { ja: `、${axis}にスクロールする（内容は${start.length ? start.join("・") : "先頭"}から）`, en: `, scrolling ${axis} (content starts ${start.length ? start.join(", ") : "at the top"})`, zh: `，可${axis}滚动（内容从${start.length ? start.join("、") : "开头"}开始）`, ko: `, ${axis} 스크롤(내용은 ${start.length ? start.join(", ") : "처음"}부터)` }[lang];
+}
 
 /** which destination of a bar, rail or tab row is selected, in words */
 function selectedText(it: Item, lang: Lang): string {
@@ -196,7 +217,7 @@ function itemJa(it: Item): string {
     case "text":
       return `${it.bold ? "太字の" : ""}テキスト${q(it.label)}（${it.size ?? 28}sp）`;
     case "image":
-      return `${it.size ?? 200}dp 角の画像${imageSrc(it) ? `（${imageSrc(it)} の画像を表示）` : it.src ? "（指定の画像を表示）" : "プレースホルダー"}`;
+      return `${viewSize(it, 1)} の画像${imageSrc(it) ? `（${imageSrc(it)} の画像を表示）` : it.src ? "（指定の画像を表示）" : "プレースホルダー"}`;
     case "camera":
       return `${viewSize(it, 4 / 3)} のカメラプレビュー`;
     case "map":
@@ -204,11 +225,13 @@ function itemJa(it: Item): string {
     case "divider":
       return "区切り線";
     case "box":
-      return `${it.size ?? PHONE_W}×${it.size2 ?? 220}dp の${it.checked ? "ボトムシート（上部にドラッグハンドル。" : "ボックス（"}背景 ${it.fill ?? "surfaceContainerLow"}、${boxCorners(it, "ja")}）`;
+      return `${it.size ?? PHONE_W}×${it.size2 ?? 220}dp のボックス（背景 ${it.fill ?? "surfaceContainerLow"}、${boxCorners(it, "ja")}${scrollNote(it, "ja")}）`;
     case "loadingIndicator":
       return `M3 Expressive の形が変化するローディングインジケータ${it.contained ? "（コンテナ付き）" : ""}`;
     case "linearProgress":
       return `${it.wavy ? "波形の" : ""}リニアプログレス（${it.value === undefined ? "不確定" : `${it.value}%`}${progressThickness(it) !== 4 ? `、トラックの太さ ${progressThickness(it)}dp` : ""}）`;
+    case "progressBar":
+      return `${it.size ?? CONTENT_W}×${sizeOf(it, {}).h}dp のプログレスバー（${progressValue(it)}% まで塗る${hasText(it.label) ? `、バーの中に${q(it.label)}` : ""}）`;
     case "circularProgress":
       return `${it.wavy ? "波形の" : ""}サーキュラープログレス（${it.value === undefined ? "不確定" : `${it.value}%`}${progressThickness(it) !== 4 ? `、トラックの太さ ${progressThickness(it)}dp` : ""}）`;
     case "splitButton":
@@ -287,7 +310,7 @@ function itemEn(it: Item): string {
     case "text":
       return `${it.bold ? "bold " : ""}text ${q(it.label)} at ${it.size ?? 28}sp`;
     case "image":
-      return `a ${it.size ?? 200}dp square image${imageSrc(it) ? ` (load it from ${imageSrc(it)})` : it.src ? " (use the provided image)" : " placeholder"}`;
+      return `a ${viewSize(it, 1)} image${imageSrc(it) ? ` (load it from ${imageSrc(it)})` : it.src ? " (use the provided image)" : " placeholder"}`;
     case "camera":
       return `a ${viewSize(it, 4 / 3)} camera preview`;
     case "map":
@@ -295,11 +318,13 @@ function itemEn(it: Item): string {
     case "divider":
       return "a divider";
     case "box":
-      return `a ${it.size ?? PHONE_W}×${it.size2 ?? 220}dp ${it.checked ? "bottom sheet with a drag handle at the top" : "box"} (background ${it.fill ?? "surfaceContainerLow"}, ${boxCorners(it, "en")})`;
+      return `a ${it.size ?? PHONE_W}×${it.size2 ?? 220}dp box (background ${it.fill ?? "surfaceContainerLow"}, ${boxCorners(it, "en")}${scrollNote(it, "en")})`;
     case "loadingIndicator":
       return `the M3 Expressive shape-morphing loading indicator${it.contained ? " (contained)" : ""}`;
     case "linearProgress":
       return `a ${it.wavy ? "wavy " : ""}linear progress indicator (${it.value === undefined ? "indeterminate" : `${it.value}%`}${progressThickness(it) !== 4 ? `, ${progressThickness(it)}dp track thickness` : ""})`;
+    case "progressBar":
+      return `a ${it.size ?? CONTENT_W}×${sizeOf(it, {}).h}dp progress bar filled to ${progressValue(it)}%${hasText(it.label) ? `, with ${q(it.label)} written in the bar` : ""}`;
     case "circularProgress":
       return `a ${it.wavy ? "wavy " : ""}circular progress indicator (${it.value === undefined ? "indeterminate" : `${it.value}%`}${progressThickness(it) !== 4 ? `, ${progressThickness(it)}dp track thickness` : ""})`;
     case "splitButton":
@@ -378,7 +403,7 @@ function itemZh(it: Item): string {
     case "text":
       return `${it.bold ? "粗体" : ""}文本${q(it.label)}（${it.size ?? 28}sp）`;
     case "image":
-      return `${it.size ?? 200}dp 见方的图片${imageSrc(it) ? `（显示 ${imageSrc(it)} 的图片）` : it.src ? "（显示指定的图片）" : "占位符"}`;
+      return `${viewSize(it, 1)} 的图片${imageSrc(it) ? `（显示 ${imageSrc(it)} 的图片）` : it.src ? "（显示指定的图片）" : "占位符"}`;
     case "camera":
       return `${viewSize(it, 4 / 3)} 的相机预览`;
     case "map":
@@ -386,11 +411,13 @@ function itemZh(it: Item): string {
     case "divider":
       return "分割线";
     case "box":
-      return `${it.size ?? PHONE_W}×${it.size2 ?? 220}dp 的${it.checked ? "底部面板（顶部带拖动条，" : "容器框（"}背景 ${it.fill ?? "surfaceContainerLow"}，${boxCorners(it, "zh")}）`;
+      return `${it.size ?? PHONE_W}×${it.size2 ?? 220}dp 的容器框（背景 ${it.fill ?? "surfaceContainerLow"}，${boxCorners(it, "zh")}${scrollNote(it, "zh")}）`;
     case "loadingIndicator":
       return `M3 Expressive 形状变化的加载指示器${it.contained ? "（带容器）" : ""}`;
     case "linearProgress":
       return `${it.wavy ? "波浪形" : ""}线性进度条（${it.value === undefined ? "不确定进度" : `${it.value}%`}${progressThickness(it) !== 4 ? `，轨道粗细 ${progressThickness(it)}dp` : ""}）`;
+    case "progressBar":
+      return `${it.size ?? CONTENT_W}×${sizeOf(it, {}).h}dp 的进度条（填充到 ${progressValue(it)}%${hasText(it.label) ? `，条内写着${q(it.label)}` : ""}）`;
     case "circularProgress":
       return `${it.wavy ? "波浪形" : ""}圆形进度条（${it.value === undefined ? "不确定进度" : `${it.value}%`}${progressThickness(it) !== 4 ? `，轨道粗细 ${progressThickness(it)}dp` : ""}）`;
     case "splitButton":
@@ -453,13 +480,14 @@ function itemKo(it: Item): string {
     case "checkbox": return `${q(it.label)} 체크박스(초기 상태 ${it.checked ? "선택됨" : "선택 안 됨"})`;
     case "slider": return `슬라이더(초깃값 ${it.value ?? 40}%)`;
     case "text": return `${it.bold ? "굵은 " : ""}텍스트 ${q(it.label)}(${it.size ?? 28}sp)`;
-    case "image": return `${it.size ?? 200}dp 정사각형 이미지${imageSrc(it) ? `(${imageSrc(it)}의 이미지 표시)` : it.src ? "(지정한 이미지 표시)" : " 자리표시자"}`;
+    case "image": return `${viewSize(it, 1)} 이미지${imageSrc(it) ? `(${imageSrc(it)}의 이미지 표시)` : it.src ? "(지정한 이미지 표시)" : " 자리표시자"}`;
     case "camera": return `${viewSize(it, 4 / 3)} 카메라 미리보기`;
     case "map": return `${viewSize(it, 3 / 4)} 지도`;
     case "divider": return "구분선";
-    case "box": return `${it.size ?? PHONE_W}×${it.size2 ?? 220}dp ${it.checked ? "하단 시트(위쪽 드래그 핸들 포함)" : "상자"}(배경 ${it.fill ?? "surfaceContainerLow"}, ${boxCorners(it, "ko")})`;
+    case "box": return `${it.size ?? PHONE_W}×${it.size2 ?? 220}dp 상자(배경 ${it.fill ?? "surfaceContainerLow"}, ${boxCorners(it, "ko")}${scrollNote(it, "ko")})`;
     case "loadingIndicator": return `M3 Expressive 형태 변환 로딩 표시기${it.contained ? "(컨테이너 포함)" : ""}`;
     case "linearProgress": return `${it.wavy ? "물결 모양 " : ""}선형 진행 표시기(${it.value === undefined ? "불확정" : `${it.value}%`}${progressThickness(it) !== 4 ? `, 트랙 두께 ${progressThickness(it)}dp` : ""})`;
+    case "progressBar": return `${it.size ?? CONTENT_W}×${sizeOf(it, {}).h}dp 진행 표시줄(${progressValue(it)}%까지 채움${hasText(it.label) ? `, 막대 안에 ${q(it.label)}` : ""})`;
     case "circularProgress": return `${it.wavy ? "물결 모양 " : ""}원형 진행 표시기(${it.value === undefined ? "불확정" : `${it.value}%`}${progressThickness(it) !== 4 ? `, 트랙 두께 ${progressThickness(it)}dp` : ""})`;
     case "splitButton": return `${q(it.label)}${it.icon ? `(${it.icon} 아이콘 포함)` : ""} ${v} 분할 버튼(오른쪽에 아래쪽 화살표가 있는 메뉴 영역)`;
     case "fabMenu": {
@@ -556,7 +584,7 @@ function groupName(g: Group, lang: Lang): string {
   const noun = KIND_TEXT[lang][it.kind]?.noun ?? it.kind;
   const q = quote(lang);
   if (g.items.length > 1) return lang === "en" ? `the ${noun} group` : lang === "zh" ? `${noun}组` : lang === "ko" ? `${noun} 그룹` : `${noun}のグループ`;
-  if (it.kind === "box") return lang === "en" ? (it.checked ? "the bottom sheet" : "the box") : lang === "zh" ? (it.checked ? "底部面板" : "容器框") : lang === "ko" ? (it.checked ? "하단 시트" : "상자") : it.checked ? "ボトムシート" : "ボックス";
+  if (it.kind === "box") return lang === "en" ? "the box" : lang === "zh" ? "容器框" : lang === "ko" ? "상자" : "ボックス";
   if (hasText(it.label) && it.kind !== "text") return lang === "en" ? `the ${q(it.label)} ${noun}` : `${q(it.label)}${lang === "ko" ? " " : ""}${noun}`;
   return lang === "en" ? `the ${noun}` : noun;
 }
@@ -572,6 +600,16 @@ function actionText(a: Action, frames: Frame[], lang: Lang): string | null {
   if (!target) return null;
   const tr = TRANSITION_TEXT[lang][a.transition];
   const name = q(target.name || (lang === "en" ? "screen" : lang === "zh" ? "屏幕" : lang === "ko" ? "화면" : "画面"));
+  /* An overlay page is popped over this very screen rather than navigated to, and its level
+     decides how much of the screen it takes: the implementer has to build a layer, not a
+     route. */
+  if (isOverlayFrame(target)) {
+    const level = overlayLevelText(overlayLevelOfFrame(target), lang);
+    if (lang === "ja") return `${level}として${name}をこの画面の上に重ねて開く`;
+    if (lang === "zh") return `以${level}的形式在本屏幕上方弹出${name}`;
+    if (lang === "ko") return `이 화면 위에 ${level}(으)로 ${name}을(를) 겹쳐 연다`;
+    return `pops the ${name} over this screen as a ${level}`;
+  }
   if (lang === "ja") return `${name}画面へ${a.transition !== "none" ? `${tr}で` : ""}遷移する`;
   if (lang === "zh") return `${a.transition !== "none" ? `以${tr}的方式` : ""}跳转到${name}屏幕`;
   if (lang === "ko") return `${name} 화면으로${a.transition !== "none" ? ` ${tr} 전환하여` : ""} 이동한다`;
@@ -593,7 +631,7 @@ function slotName(it: Item, slot: string, lang: Lang): string {
   return `the ${icon ?? ""} icon button on the ${slot === "icon2" ? "right" : "left"}`;
 }
 
-function notes(g: Group, frames: Frame[], lang: Lang): string[] {
+function notes(g: Group, frames: Frame[], vars: Var[], lang: Lang): string[] {
   const out: string[] = [];
   const q = quote(lang);
   for (const it of g.items) {
@@ -642,6 +680,125 @@ function notes(g: Group, frames: Frame[], lang: Lang): string[] {
         else if (icon === null) changes.push("the icon disappears");
         if (variant) changes.push(`the style becomes ${vt[variant]}`);
         parts.push(`is a toggle button that flips on / off with every tap${changes.length ? ` (when on, ${changes.join(" and ")})` : ""}`);
+      }
+    }
+    /* Conditional taps: they read and write the variables, so each branch says what it is
+       for and what it costs — that is the whole point of the branch. */
+    for (const rule of it.rules ?? []) {
+      const when = (rule.when ?? []).map((c) => conditionText(c, vars)).join(lang === "en" ? " and " : "、");
+      const act = rule.do.kind === "goto"
+        ? actionText({ to: rule.do.to, transition: rule.do.transition }, frames, lang)
+        : rule.do.kind === "back"
+          ? actionText({ to: BACK_TARGET, transition: "none" }, frames, lang)
+          : rule.do.kind === "close"
+            ? { ja: "重ねた画面を閉じる", en: "closes the overlay", zh: "关闭叠加层", ko: "오버레이를 닫는다" }[lang]
+            : rule.do.kind === "look"
+              ? (() => {
+                  const look = rule.do;
+                  /* a look can be aimed at another part: say whose look it is */
+                  const who = (() => {
+                    const target = look.target;
+                    if (!target) return "";
+                    let named: Item | null = null;
+                    const walk = (list: Item[]) => {
+                      for (const x of list) {
+                        if (x.id === target) {
+                          named = x;
+                          return;
+                        }
+                        if (x.children) walk(x.children);
+                      }
+                    };
+                    walk(g.items);
+                    const found = named as Item | null;
+                    const label = found ? found.label.trim() || KIND_TEXT[lang][found.kind]?.noun || found.kind : "";
+                    return label
+                      ? { ja: `「${label}」は`, en: `"${label}" is`, zh: `「${label}」`, ko: `"${label}"은(는)` }[lang]
+                      : { ja: "別の部品は", en: `another part is`, zh: `另一个组件`, ko: `다른 부품은` }[lang];
+                  })();
+                  const bits = [
+                    look.label !== undefined && { ja: `表示は「${look.label}」`, en: `its label reads ${q(look.label)}`, zh: `文字变成「${look.label}」`, ko: `글자는 "${look.label}"` }[lang],
+                    look.icon !== undefined && { ja: `アイコンは ${look.icon}`, en: `its icon is ${look.icon}`, zh: `图标是 ${look.icon}`, ko: `아이콘은 ${look.icon}` }[lang],
+                    look.variant !== undefined && { ja: `スタイルは ${look.variant}`, en: `its style is ${look.variant}`, zh: `样式是 ${look.variant}`, ko: `스타일은 ${look.variant}` }[lang],
+                    look.color !== undefined && { ja: `色は ${look.color}`, en: `its colour is ${look.color}`, zh: `颜色是 ${look.color}`, ko: `색은 ${look.color}` }[lang],
+                  ].filter(Boolean);
+                  if (!bits.length) return who ? null : { ja: "見た目が変わる", en: "its look changes", zh: "外观改变", ko: "모양이 바뀐다" }[lang];
+                  return { ja: `${who}${bits.join("、")}の見た目になる`, en: `${who ? `${who} is` : "it is"} drawn with ${bits.join(", ")}`, zh: `${who ? `${who}` : ""}外观变成${bits.join("、")}`, ko: `${who}${bits.join(", ")} 모양이 된다` }[lang];
+                })()
+              : (() => {
+                  const v = vars.find((x) => x.id === (rule.do as Extract<typeof rule.do, { varId: string }>).varId);
+                  return v ? writeText(v, rule.do as Parameters<typeof writeText>[1]) : null;
+                })();
+      if (!act) continue;
+      /* a rule with a wait says when it happens, not what is tapped */
+      const head =
+        typeof rule.after === "number"
+          ? { ja: `この画面を表示してから ${rule.after} 秒後に`, en: `${rule.after}s after this screen appears, `, zh: `进入这个页面 ${rule.after} 秒后，`, ko: `이 화면이 뜨고 ${rule.after}초 뒤 ` }[lang]
+          : when
+            ? { ja: `${when}のときは`, en: `when ${when}, `, zh: `${when}时`, ko: `${when}이면 ` }[lang]
+            : "";
+      parts.push(`${head}${act}`);
+    }
+    /* The machine the part runs: one clause per step, so a reader can wire the same behaviour
+       without ever seeing the editor's flow. Steps leaving one look are read in order. */
+    const lookWord = (machine: PartFlow, id: string) => {
+      if (id === START_LOOK) return { ja: "最初の見た目", en: "the drawn look", zh: "起始外观", ko: "처음 모양" }[lang];
+      const look = machine.looks.find((l) => l.id === id);
+      if (!look) return { ja: "最初の見た目", en: "the drawn look", zh: "起始外观", ko: "처음 모양" }[lang];
+      return look.name?.trim() || lookItem(it, look).label.trim() || name;
+    };
+    const stepAction = (a: Exclude<PartStep["do"], undefined>[number]): string | null => {
+      if (a.kind === "look") {
+        const bits = [
+          a.label !== undefined && { ja: `文字は「${a.label}」`, en: `its words read ${q(a.label)}`, zh: `文字为「${a.label}」`, ko: `글자는 "${a.label}"` }[lang],
+          a.icon !== undefined && { ja: `アイコンは ${a.icon || "なし"}`, en: `its icon is ${a.icon || "gone"}`, zh: `图标为 ${a.icon || "无"}`, ko: `아이콘은 ${a.icon || "없음"}` }[lang],
+          a.variant !== undefined && { ja: `スタイルは ${a.variant}`, en: `its style is ${a.variant}`, zh: `样式为 ${a.variant}`, ko: `스타일은 ${a.variant}` }[lang],
+          a.color !== undefined && { ja: `色は ${a.color}`, en: `its colour is ${a.color}`, zh: `颜色为 ${a.color}`, ko: `색은 ${a.color}` }[lang],
+        ].filter(Boolean);
+        if (!bits.length) return null;
+        let who: Item | null = null;
+        const walk = (list: Item[]) => {
+          for (const x of list) {
+            if (x.id === a.target) {
+              who = x;
+              return;
+            }
+            if (x.children) walk(x.children);
+          }
+        };
+        if (a.target) walk(g.items);
+        const label = who ? (who as Item).label.trim() || KIND_TEXT[lang][(who as Item).kind]?.noun || (who as Item).kind : "";
+        const other = a.target ? (label ? { ja: `「${label}」の`, en: `${q(label)}'s `, zh: `「${label}」的`, ko: `"${label}"의 ` }[lang] : { ja: "別の部品の", en: "another part's ", zh: "另一个组件的", ko: "다른 부품의 " }[lang]) : "";
+        return { ja: `${other}${bits.join("、")}`, en: `${other}${bits.join(", ")}`, zh: `${other}${bits.join("、")}`, ko: `${other}${bits.join(", ")}` }[lang];
+      }
+      if (a.kind !== "set" && a.kind !== "add" && a.kind !== "toggle") return null;
+      const v = vars.find((x) => x.id === a.varId);
+      return v ? writeText(v, a) : null;
+    };
+    for (const machine of [...(it.flow ? [it.flow] : []), ...Object.values(it.slotFlows ?? {})]) {
+      for (const st of machine.steps) {
+        const to = lookWord(machine, st.to);
+        const look = machine.looks.find((l) => l.id === st.to);
+        const bits = [
+          look?.label !== undefined && { ja: `文字は「${look.label}」`, en: `its words read ${q(look.label)}`, zh: `文字为「${look.label}」`, ko: `글자는 "${look.label}"` }[lang],
+          look?.icon !== undefined && { ja: `アイコンは ${look.icon || "なし"}`, en: `its icon is ${look.icon || "gone"}`, zh: `图标为 ${look.icon || "无"}`, ko: `아이콘은 ${look.icon || "없음"}` }[lang],
+          look?.variant !== undefined && { ja: `スタイルは ${look.variant}`, en: `its style is ${look.variant}`, zh: `样式为 ${look.variant}`, ko: `스타일은 ${look.variant}` }[lang],
+          look?.color !== undefined && { ja: `色は ${look.color}`, en: `its colour is ${look.color}`, zh: `颜色为 ${look.color}`, ko: `색은 ${look.color}` }[lang],
+          !!look?.disabled && { ja: "無効", en: "disabled", zh: "置灰不可点", ko: "사용 불가" }[lang],
+          !!look?.hidden && { ja: "非表示", en: "hidden", zh: "隐藏", ko: "숨김" }[lang],
+        ].filter(Boolean);
+        const rest = (st.do ?? [])
+          .map(stepAction)
+          .filter(Boolean)
+          .join(lang === "en" ? ", " : "、");
+        const when = (st.when ?? []).map((c) => conditionText(c, vars)).join(lang === "en" ? " and " : "、");
+        /* what sets the step off: a tap, or a wait counted from entering the look it leaves */
+        const how =
+          st.trigger.kind === "after"
+            ? { ja: `${st.trigger.seconds} 秒後に`, en: `after ${st.trigger.seconds}s `, zh: `进入这个状态 ${st.trigger.seconds} 秒后`, ko: `${st.trigger.seconds}초 뒤에 ` }[lang]
+            : { ja: "タップすると", en: "on tap ", zh: "点击后", ko: "탭하면 " }[lang];
+        const said = { ja: `${how}${when ? `${when} のときは` : ""}${to}になり${bits.length ? `（${bits.join("、")}）` : ""}${rest ? `、${rest}` : ""}`, en: `${how}${when ? `when ${when}, ` : ""}it becomes ${to}${bits.length ? ` (${bits.join(", ")})` : ""}${rest ? `, and ${rest}` : ""}`, zh: `${how}${when ? `${when}时` : ""}变成${to}${bits.length ? `（${bits.join("、")}）` : ""}${rest ? `，并${rest}` : ""}`, ko: `${how}${when ? ` ${when}이면` : ""} ${to}이(가) 되고${bits.length ? ` (${bits.join(", ")})` : ""}${rest ? `, ${rest}` : ""}` }[lang];
+        parts.push(said);
       }
     }
     if (hasText(it.note)) parts.push(trimEnd(it.note!));
@@ -780,6 +937,34 @@ function rowText(row: LNode[], where: string, lang: Lang, within: Rect): string 
   return `${where}, in one row from left to right: ${descs.join(", ")} (keep them on the same line, vertically centered; never stack or wrap them${stretch}).`;
 }
 
+/** What a container holds, in its own words and in order. A tab row's children are alternatives
+ *  rather than layers, and the sentence says so: an implementer told to stack them would build one
+ *  screen with every page of the app showing at once. */
+function describeChildren(lines: string[], parent: Item, lang: Lang, depth: number): void {
+  const kids = parent.children ?? [];
+  if (kids.length === 0) return;
+  const pad = "  ".repeat(depth);
+  const isTabRow = parent.kind === "tabs" && (parent.tabs?.length ?? 0) > 0;
+  const lead = isTabRow
+    ? {
+        ja: "タブと同じ順に1つずつパネルを置きます（タブを切り替えるとそのパネルだけを表示し、他は隠す。位置はこの中での相対位置）:",
+        en: "One panel per tab, in the order of the tabs (switching a tab shows only that panel and hides the rest; positions are relative to the row):",
+        zh: "按标签顺序各放一个面板（切换标签时只显示该面板，其余隐藏；位置相对标签栏）：",
+        ko: "탭과 같은 순서로 탭마다 패널을 하나씩 둡니다(탭을 바꾸면 그 패널만 표시하고 나머지는 숨긴다. 위치는 이 안 기준):",
+      }[lang]
+    : {
+        ja: "この中に次の部品を重ねて配置します（ボックス側を背景にし、部品はその前面に載せる。位置はこの中での相対位置）:",
+        en: "Layered on top of it, in this order (the container is the background; positions are relative to it):",
+        zh: "内部叠放以下组件（以容器为背景，组件绘制在其前面，位置相对容器）：",
+        ko: "이 안에 다음 부품을 겹쳐 배치합니다(컨테이너를 배경으로 하고 부품은 그 앞에 배치하며, 위치는 이 안 기준):",
+      }[lang];
+  lines.push(`${pad}- ${lead}`);
+  for (const c of kids) {
+    lines.push(`${pad}  - ${itemText(c, lang)}`);
+    describeChildren(lines, c, lang, depth + 1);
+  }
+}
+
 function describeNodes(lines: string[], nodes: LNode[], within: Rect | null, widths: Record<string, number>, lang: Lang, depth: number, phone: boolean) {
   const rows = rowsOf(nodes);
   const pad = "  ".repeat(depth);
@@ -816,6 +1001,9 @@ function describeNodes(lines: string[], nodes: LNode[], within: Rect | null, wid
     }
     lines.push(`${pad}- ${line}`);
     for (const n of row) {
+      /* What each part in the row holds comes first: it belongs to the row, whether or not the tree
+         found anything nested under it */
+      for (const it of n.g.items) describeChildren(lines, it, lang, depth + 2);
       if (!n.children.length) continue;
       const name = groupName(n.g, lang);
       lines.push(
@@ -894,9 +1082,8 @@ function paletteLines(p: Palette): string[] {
 
 /* ---------- per-component style notes ---------- */
 
-/** How each kind should look; only the kinds on the canvas are written out.
- *  `boxSheet` is the box note used when at least one box has its handle on. */
-const STYLE_NOTES: Record<Lang, Partial<Record<Kind | "boxSheet", string>>> = {
+/** How each kind should look; only the kinds on the canvas are written out. */
+const STYLE_NOTES: Record<Lang, Partial<Record<Kind, string>>> = {
   ja: {
     button:
       "ボタン: 高さ 56dp のミディアムサイズで、角は完全な丸（ピル型）。塗りつぶしは primary、トーナルは secondaryContainer、アウトラインは outline の 1dp 枠。横に連結したボタングループは 3dp の隙間で並べ、隣り合う内側の角だけ 8dp に小さくし、外側の角は丸のままにする（M3 Expressive の Connected button group）。",
@@ -929,12 +1116,11 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind | "boxSheet", string>>> = {
     camera: "カメラプレビュー: 角丸 20dp。端末のカメラ映像をこの領域に表示し、権限が無い間は inverseSurface の暗い面にカメラアイコンを置く。",
     map: "地図: 角丸 20dp。地図 SDK のビューをこの領域に置き、読み込み中は surfaceContainerHighest に地図アイコンを置く。",
     divider: "区切り線: 1dp の outlineVariant、左右に 16dp の余白。",
-    box: "ボックス: 指定した背景色と角丸を持つ単なるコンテナ。中に重ねる部品の背景として使い、独自の挙動は付けない。",
-    boxSheet:
-      "ボックス / ボトムシート: 指定した背景色と角丸を持つコンテナ。ドラッグハンドル付きと書いたものだけはモーダルボトムシート（ModalBottomSheet）として下から出し、それ以外のボックスは単なる背景コンテナにする。",
+    box: "ボックス: 指定した背景色と角丸を持つ単なるコンテナ。中に重ねる部品の背景として使い、独自の挙動は付けない。スクロールが指定されたボックスは表示領域で、中身は指定方向に動く。はみ出した分は切り取り、細いスクロールバーを端に出す。",
     loadingIndicator:
       "ローディング表示: M3 Expressive の形が変化する LoadingIndicator（回転しながら多角形の間を変形するもの）を使う。コンテナ付きは secondaryContainer の円の中に置く。",
     linearProgress: "リニアプログレス: 指定された太さ（指定がなければ 4dp）で、端を丸くする。波形指定のときは M3 Expressive の wavy スタイルにする。トラックは secondaryContainer、進捗は primary。",
+    progressBar: "プログレスバー: 指定の幅と高さの細い棒。端は高さの半分で丸くする。トラック（未達部分）は指定がなければ透明で、背景色が指定されたときだけその色で塗る。進捗は primary。テキストがあるときはバーの中央に置き、塗り部分と未達部分でそれぞれ読める色にする。",
     circularProgress: "サーキュラープログレス: 指定された太さ（指定がなければ 4dp）で、端を丸くする。波形指定のときは M3 Expressive の wavy スタイルにする。",
     splitButton:
       "スプリットボタン: M3 Expressive の SplitButton。左のセグメントが主アクション、右の矢印セグメントがメニューを開く。2 つのセグメントは 2dp の隙間で並べ、外側の角は完全な丸、隣り合う内側の角は 8dp。メニューを開くと矢印が回転し、セグメントの角が丸くなる。",
@@ -978,12 +1164,11 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind | "boxSheet", string>>> = {
     camera: "Camera preview: 20dp corners. Show the device camera feed in this area; while permission is missing, show a camera icon on a dark inverseSurface pane.",
     map: "Map: 20dp corners. Place the map SDK view in this area; while it loads, show a map icon on surfaceContainerHighest.",
     divider: "Dividers: 1dp outlineVariant with 16dp horizontal insets.",
-    box: "Boxes: plain containers with the specified background token and corner radii. They are the background for whatever is layered on them and have no behavior of their own.",
-    boxSheet:
-      "Boxes / bottom sheets: containers with the specified background token and corner radii. Only the ones described with a drag handle are modal bottom sheets that slide up from the bottom; every other box is a plain background container.",
+    box: "Boxes: plain containers with the specified background token and corner radii. They are the background for whatever is layered on them and have no behavior of their own. A box set to scroll is a viewport: its contents move along the chosen axis, what overflows is clipped, and a slim scroll bar sits on that edge.",
     loadingIndicator:
       "Loading: use the M3 Expressive shape-morphing LoadingIndicator (the rotating polygon that morphs between shapes). The contained variant sits inside a secondaryContainer circle.",
     linearProgress: "Linear progress: use the stated track thickness (4dp unless stated) with round caps, and the M3 Expressive wavy style when specified. Track is secondaryContainer, progress is primary.",
+    progressBar: "Progress bars: the stated width and height, ends rounded to half the height. The track is transparent unless a background is given, and the filled part is primary. A caption sits centred in the bar, inked so it reads over both the filled and the empty part.",
     circularProgress: "Circular progress: use the stated track thickness (4dp unless stated) with round caps, and the M3 Expressive wavy style when specified.",
     splitButton:
       "Split button: the M3 Expressive SplitButton. The leading segment is the main action and the trailing arrow segment opens a menu. The two segments sit 2dp apart with fully rounded outer corners and 8dp inner corners; opening the menu rotates the arrow and rounds the segment.",
@@ -1026,10 +1211,10 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind | "boxSheet", string>>> = {
     camera: "相机预览：圆角 20dp。在此区域显示设备相机画面；未获得权限时，在 inverseSurface 的深色面板上显示相机图标。",
     map: "地图：圆角 20dp。在此区域放置地图 SDK 视图；加载期间在 surfaceContainerHighest 上显示地图图标。",
     divider: "分割线：1dp 的 outlineVariant，左右留 16dp 边距。",
-    box: "容器框：只是带指定背景色和圆角的容器，作为叠放在其上的组件的背景，本身没有任何行为。",
-    boxSheet: "容器框／底部面板：带指定背景色和圆角的容器。只有描述中带拖动条的才做成从底部滑出的模态底部面板（ModalBottomSheet），其余容器框只是普通的背景容器。",
+    box: "容器框：只是带指定背景色和圆角的容器，作为叠放在其上的组件的背景，本身没有任何行为。设为滚动的容器框就是一个视口：内容沿指定方向滑动，超出部分裁掉，该边缘显示一条细滚动条。",
     loadingIndicator: "加载指示：使用 M3 Expressive 形状变化的 LoadingIndicator（旋转并在多边形之间变形）。带容器的放在 secondaryContainer 的圆形中。",
     linearProgress: "线性进度条：使用指定的轨道粗细（未指定则为 4dp）和圆形端帽。指定波浪形时使用 M3 Expressive 的 wavy 样式。轨道为 secondaryContainer，进度为 primary。",
+    progressBar: "进度条：按指定的宽度和高度画细长条，两端圆角为高度的一半。未填充的轨道默认透明，只有指定了背景色才画出来；填充用 primary。有文字时居中放在条内，并保证文字在填充段与未填充段上都清晰可读。",
     circularProgress: "圆形进度条：使用指定的轨道粗细（未指定则为 4dp）和圆形端帽。指定波浪形时使用 M3 Expressive 的 wavy 样式。",
     splitButton:
       "拆分按钮：M3 Expressive 的 SplitButton。左段为主操作，右侧箭头段打开菜单。两段间距 2dp，外侧完全圆角，相邻内侧圆角 8dp。打开菜单时箭头旋转、段变为圆形。",
@@ -1065,10 +1250,10 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind | "boxSheet", string>>> = {
     camera: "카메라 미리보기: 모서리 20dp. 이 영역에 기기 카메라 화면을 표시하고, 권한이 없는 동안은 inverseSurface의 어두운 면 위에 카메라 아이콘을 둔다.",
     map: "지도: 모서리 20dp. 이 영역에 지도 SDK 뷰를 두고, 불러오는 동안은 surfaceContainerHighest 위에 지도 아이콘을 둔다.",
     divider: "구분선: 1dp outlineVariant, 좌우 여백 16dp.",
-    box: "상자: 지정된 배경 토큰과 모서리를 가진 단순 컨테이너. 겹쳐 놓은 부품의 배경으로 사용하며 자체 동작은 넣지 않는다.",
-    boxSheet: "상자/하단 시트: 지정된 배경과 모서리를 가진 컨테이너. 드래그 핸들이 명시된 것만 아래에서 올라오는 ModalBottomSheet로 만들고 나머지는 단순 배경 컨테이너로 둔다.",
+    box: "상자: 지정된 배경 토큰과 모서리를 가진 단순 컨테이너. 겹쳐 놓은 부품의 배경으로 사용하며 자체 동작은 넣지 않는다. 스크롤로 지정한 상자는 표시 영역이며, 내용이 지정한 방향으로 움직이고 넘치는 부분은 잘리며 그 가장자리에 얇은 스크롤 막대가 놓인다.",
     loadingIndicator: "로딩: 다각형이 회전하며 형태가 바뀌는 M3 Expressive LoadingIndicator를 사용한다. 컨테이너형은 secondaryContainer 원 안에 둔다.",
     linearProgress: "선형 진행 표시기: 지정된 트랙 두께(지정이 없으면 4dp)와 둥근 끝을 사용한다. 지정된 경우 M3 Expressive 물결 스타일을 사용하며 트랙은 secondaryContainer, 진행은 primary로 표시한다.",
+    progressBar: "진행 표시줄: 지정한 너비와 높이의 가느다란 막대. 끝은 높이의 절반만큼 둥글게 한다. 트랙은 배경색을 지정하지 않으면 투명하고, 지정한 경우에만 그 색으로 채운다. 채워진 부분은 primary. 텍스트가 있으면 막대 가운데에 놓고 채워진 부분과 빈 부분 모두에서 읽히도록 색을 정한다.",
     circularProgress: "원형 진행 표시기: 지정된 트랙 두께(지정이 없으면 4dp)와 둥근 끝을 사용한다. 지정된 경우 M3 Expressive 물결 스타일을 사용한다.",
     splitButton: "분할 버튼: M3 Expressive SplitButton. 왼쪽은 주 동작, 오른쪽 화살표 영역은 메뉴를 연다. 두 영역 간격 2dp, 바깥 모서리는 완전 둥글게, 안쪽은 8dp로 한다.",
     fabMenu: "FAB 메뉴: M3 Expressive FloatingActionButtonMenu. 닫혔을 때는 일반 FAB이고 탭하면 항목이 위로 차례로 나타나며 아이콘은 close로 바뀐다. 각 항목은 높이 56dp, 완전 둥근 모서리, 아이콘과 레이블을 포함한다.",
@@ -1285,9 +1470,14 @@ const PH = {
     screens: (names: string[]) => `画面は ${names.length} つあり、${names.join("、")}です。`,
     placement: (place: Place) => (place === "center" ? "本文の部品は画面の縦中央にまとめて配置します。" : place === "bottom" ? "本文の部品は画面の下側（ナビゲーションバーの上）に寄せて配置します。" : "本文の部品は画面の高さいっぱいに均等な間隔で配置します（1 行だけなら縦中央）。"),
     screenHead: (name: string, bg: string | undefined, has: boolean, size?: string) => `${name}画面${size || bg ? `（${[size, bg ? `背景は ${bg}` : ""].filter(Boolean).join("、")}）` : ""}${has ? "は上から順に次の通りです。重なっている部品はその旨を書いています。" : "はまだ空です。"}`,
+    overlayHead: (name: string, level: string, size?: string) => `${name} オーバーレイ（${level}として画面の上に重ねて開く${size ? `、${size}` : ""}）は上から順に次の通りです。`,
     loose: "画面の外に置かれている部品（共通パーツや参考）:",
     freeform: "画面を上から順に説明します。",
     hBehavior: "## 振る舞いと画面遷移",
+    hVars: "## 変数",
+    varHint: "タップをまたいで持ち越す値です。部品のテキストに {name} と書くとその値が表示され、上のルールはこの値を条件にしたり書き換えたりします。アプリ起動時は以下の初期値から始めます。",
+    varKind: { number: "数値", boolean: "オン / オフ", text: "テキスト" },
+    varLine: (name: string, kind: string, initial: string) => `- ${name}（${kind}、初期値 ${initial}）`,
     hStyle: "## 各部品のスタイル",
     styleIntro: "使っている部品ごとの目安です。数値は M3 Expressive の標準値なので、標準コンポーネントで実現できるものは標準に任せ、内容に合わせて調整して構いません。",
     hGeneral: "## 全体の指針",
@@ -1328,9 +1518,14 @@ const PH = {
     screens: (names: string[]) => `There are ${names.length} screens: ${names.join(", ")}.`,
     placement: (place: Place) => (place === "center" ? "The body parts sit together in the vertical center of the screen." : place === "bottom" ? "The body parts sit toward the bottom of the screen, above the navigation bar." : "The body parts are spread over the screen height with equal gaps (a single row sits in the vertical center)."),
     screenHead: (name: string, bg: string | undefined, has: boolean, size?: string) => `The ${name} screen${size || bg ? ` (${[size, bg ? `background ${bg}` : ""].filter(Boolean).join(", ")})` : ""}${has ? ", from top to bottom (overlapping parts are called out as such):" : " is still empty."}`,
+    overlayHead: (name: string, level: string, size?: string) => `The ${name} overlay (a ${level} popped over the screen${size ? `, ${size}` : ""}), from top to bottom:`,
     loose: "Parts placed outside the screens (shared parts or references):",
     freeform: "The screen, from top to bottom:",
     hBehavior: "## Behavior and navigation",
+    hVars: "## Variables",
+    varHint: "Values the app carries from one tap to the next. Writing {name} in a part's text shows the value, and the rules above test and write these. The app starts on the initial values below.",
+    varKind: { number: "number", boolean: "on / off", text: "text" },
+    varLine: (name: string, kind: string, initial: string) => `- ${name}: ${kind}, starting at ${initial}`,
     hStyle: "## Component styles",
     styleIntro: "Per-component guidance for the parts in use. The numbers are the M3 Expressive defaults: let the standard components handle whatever they already do, and adjust where the content calls for it.",
     hGeneral: "## General guidance",
@@ -1371,9 +1566,14 @@ const PH = {
     screens: (names: string[]) => `共有 ${names.length} 个屏幕：${names.join("、")}。`,
     placement: (place: Place) => (place === "center" ? "内容作为整体，在屏幕内容区域内纵向居中排列。" : place === "bottom" ? "内容区域中的组件靠屏幕底部（导航栏上方）放置。" : "各行内容在屏幕内容区域内纵向均匀分布（只有一行时纵向居中）。"),
     screenHead: (name: string, bg: string | undefined, has: boolean, size?: string) => `${name}屏幕${size || bg ? `（${[size, bg ? `背景为 ${bg}` : ""].filter(Boolean).join("，")}）` : ""}${has ? "从上到下依次如下（重叠的组件会特别说明）：" : "目前为空。"}`,
+    overlayHead: (name: string, level: string, size?: string) => `${name} 叠加层（作为${level}盖在屏幕上打开${size ? `，${size}` : ""}），从上到下依次如下：`,
     loose: "放在屏幕之外的组件（公共部件或参考）：",
     freeform: "从上到下说明屏幕内容：",
     hBehavior: "## 行为与屏幕跳转",
+    hVars: "## 变量",
+    varHint: "跨点击保持的值。在组件文本里写 {name} 就会显示这个值；上面的规则会以它为条件或改写它。应用启动时使用下面的初始值。",
+    varKind: { number: "数值", boolean: "开 / 关", text: "文本" },
+    varLine: (name: string, kind: string, initial: string) => `- ${name}（${kind}，初始值 ${initial}）`,
     hStyle: "## 各组件的样式",
     styleIntro: "以下是所用组件的参考。数值均为 M3 Expressive 的标准值，能用标准组件实现的就交给标准组件，并可根据内容适当调整。",
     hGeneral: "## 整体原则",
@@ -1399,9 +1599,14 @@ const PH = {
     screens: (names: string[]) => `화면은 ${names.length}개이며 ${names.join(", ")}입니다.`,
     placement: (place: Place) => (place === "center" ? "본문 부품은 화면 세로 가운데에 모아 배치한다." : place === "bottom" ? "본문 부품은 화면 아래쪽(내비게이션 바 위)에 붙여 배치한다." : "본문 부품은 화면 높이에 걸쳐 같은 간격으로 배치한다(한 줄뿐이면 세로 가운데)."),
     screenHead: (name: string, bg: string | undefined, has: boolean, size?: string) => `${name} 화면${size || bg ? `(${[size, bg ? `배경 ${bg}` : ""].filter(Boolean).join(", ")})` : ""}. ${has ? "위에서부터 다음과 같습니다. 겹친 부품은 별도로 표시합니다." : "아직 비어 있습니다."}`,
+    overlayHead: (name: string, level: string, size?: string) => `${name} 오버레이(${level}(으)로 화면 위에 겹쳐 엽니다${size ? `, ${size}` : ""}). 위에서부터 다음과 같습니다.`,
     loose: "화면 밖에 놓인 부품(공통 부품 또는 참고):",
     freeform: "화면을 위에서부터 설명합니다.",
     hBehavior: "## 동작 및 화면 전환",
+    hVars: "## 변수",
+    varHint: "탭을 넘어 유지되는 값입니다. 부품 텍스트에 {name}을 쓰면 그 값이 표시되고, 위의 규칙이 이 값을 조건으로 삼거나 바꿉니다. 앱은 아래 초기값에서 시작합니다.",
+    varKind: { number: "숫자", boolean: "켜기/끄기", text: "텍스트" },
+    varLine: (name: string, kind: string, initial: string) => `- ${name}(${kind}, 초기값 ${initial})`,
     hStyle: "## 부품별 스타일",
     styleIntro: "사용된 부품별 지침입니다. 수치는 M3 Expressive 기본값이며 표준 컴포넌트가 제공하는 동작은 그대로 사용하고 내용에 맞게 조정할 수 있습니다.",
     hGeneral: "## 전체 지침",
@@ -1436,20 +1641,18 @@ export function buildPrompt(doc: Doc, widths: Record<string, number>, onlyFrameI
   }
 
   const kindsUsed: Kind[] = [];
-  let sheet = false;
   let wideRail = false;
   let legacyRail = false;
   for (const g of groups)
     for (const it of g.items) {
       if (!kindsUsed.includes(it.kind)) kindsUsed.push(it.kind);
-      if (it.kind === "box" && it.checked) sheet = true;
       if (it.kind === "navRail") {
         if (isWideRail(it)) wideRail = true;
         else legacyRail = true;
       }
     }
   const styleNotes = kindsUsed
-    .map((k) => (k === "navRail" && wideRail ? `${legacyRail ? `${STYLE_NOTES[lang].navRail} ` : ""}${WIDE_RAIL_STYLE[lang]}` : k === "box" && sheet ? STYLE_NOTES[lang].boxSheet : (platform === "web" && STYLE_NOTES_WEB[lang][k]) || STYLE_NOTES[lang][k]))
+    .map((k) => (k === "navRail" && wideRail ? `${legacyRail ? `${STYLE_NOTES[lang].navRail} ` : ""}${WIDE_RAIL_STYLE[lang]}` : (platform === "web" && STYLE_NOTES_WEB[lang][k]) || STYLE_NOTES[lang][k]))
     .filter((s): s is string => !!s);
 
   const title = only ? ph.titleOnly(q(only.name || ph.screen)) : doc.title.trim() || ph.titleAll(frames.length);
@@ -1487,7 +1690,13 @@ export function buildPrompt(doc: Doc, widths: Record<string, number>, onlyFrameI
       const gs = byFrame.get(f.id) ?? [];
       if (i > 0 || frames.length > 1) lines.push("");
       if (hasText(f.note)) lines.push(lang === "ja" || lang === "zh" ? `${trimEnd(f.note!)}。` : `${trimEnd(f.note!)}.`);
-      lines.push(ph.screenHead(q(f.name || ph.screen), f.bg && f.bg !== "surface" ? f.bg : undefined, gs.length > 0, sizeLabel(f, viewport, lang)));
+      /* an overlay page is not somewhere the visitor lands: it is popped over a screen, and
+         the level it carries is what tells the implementer how heavy that layer is */
+      lines.push(
+        isOverlayFrame(f)
+          ? ph.overlayHead(q(f.name || ph.screen), overlayLevelText(overlayLevelOfFrame(f), lang), sizeLabel(f, viewport, lang))
+          : ph.screenHead(q(f.name || ph.screen), f.bg && f.bg !== "surface" ? f.bg : undefined, gs.length > 0, sizeLabel(f, viewport, lang)),
+      );
       if (gs.length > 0 && f.place && f.place !== "top") lines.push(ph.placement(f.place));
       describeScreen(lines, gs, frameRect(f), widths, lang);
     });
@@ -1501,7 +1710,17 @@ export function buildPrompt(doc: Doc, widths: Record<string, number>, onlyFrameI
     describeScreen(lines, groups, null, widths, lang);
   }
 
-  const behavior = [...groups.flatMap((g) => notes(g, allFrames, lang)), ...frames.flatMap((f) => swipeNotes(f, allFrames, lang))];
+  /* The values the app has to carry between taps. Stated before the interactions, because the
+     rules above only read as intended once the reader knows what they test. */
+  const vars = doc.vars ?? [];
+  if (vars.length) {
+    lines.push("");
+    lines.push(ph.hVars);
+    lines.push(ph.varHint);
+    for (const v of vars) lines.push(ph.varLine(v.name, ph.varKind[v.kind], String(varInitial(v))));
+  }
+
+  const behavior = [...groups.flatMap((g) => notes(g, allFrames, vars, lang)), ...frames.flatMap((f) => swipeNotes(f, allFrames, lang))];
   if (behavior.length) {
     lines.push("");
     lines.push(ph.hBehavior);

@@ -215,8 +215,10 @@ describe("carryFrame", () => {
     const phone: Frame = { id: "p", name: "P", x: 0, y: 0 };
     const r = group("r", 0, 0, [navRail("nr", 3)]);
     const res = carryFrame([r], desk, phone, [desk, phone], widths);
-    const hasBar = res.groups.some((g) => g.items[0].kind === "bottomNav");
-    expect(hasBar).toBe(true);
+    const bar = res.groups.flatMap((g) => g.items).find((it) => it.kind === "bottomNav");
+    expect(bar).toBeDefined();
+    /* the rail's header was its fold button, so the bar it becomes keeps one */
+    expect(bar!.barFolded).toBe(false);
   });
 });
 

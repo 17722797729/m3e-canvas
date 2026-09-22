@@ -1,10 +1,11 @@
 "use client";
 
 import { ReactNode, createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Frame, Group, Item, KIND_SPEC, LAYER_DEFAULT, Palette, byLayer, explodeGroup, isPhoneFrame, layerOf } from "@/lib/tokens";
+import { Frame, Group, Item, KIND_SPEC, VAR_KINDS, Palette, byLayer, explodeGroup, findItemIn, isOverlayFrame, isPhoneFrame, layerOf, overlayLevelOfFrame, pageTintOf, parentOf, subtreeOf, tabIndexOf, takesText, varInitial, type Var } from "@/lib/tokens";
 import { contrastRatio } from "@/lib/color";
+import { splitByPage } from "@/lib/pages";
 import { Icon } from "./M3Node";
-import { Lang, KIND_TEXT, t, useLang } from "@/lib/i18n";
+import { Lang, KIND_TEXT, overlayLevelText, t, useLang } from "@/lib/i18n";
 
 /* Rows never animate their size: opening a row only adds rows under it, so
  * nothing stretches. Only the drag itself moves.
@@ -20,7 +21,10 @@ import { Lang, KIND_TEXT, t, useLang } from "@/lib/i18n";
 function nameOf(it: Item, lang: Lang) {
   const spec = KIND_SPEC[it.kind] ?? KIND_SPEC.box;
   const noun = KIND_TEXT[lang][it.kind]?.noun ?? spec.label;
-  return it.label.trim() || (it.kind === "iconButton" || it.kind === "fab" ? (it.icon ?? noun) : noun);
+  /* An unnamed part is named by its kind, in the language the author is working in: its icon is a
+   * material symbol name, which reads as stray English in the middle of a Japanese or Chinese list.
+   * The row shows the glyph itself, so nothing is lost. */
+  return it.label.trim() || noun;
 }
 
 function runLabel(g: Group, lang: Lang) {
@@ -31,21 +35,17 @@ function runLabel(g: Group, lang: Lang) {
   return g.free ? `${t("group", lang)} × ${g.items.length}` : g.items.length > 1 ? `${noun} × ${g.items.length}` : nameOf(first, lang);
 }
 
-/** the level a part draws at, shown only when the author moved it off the default */
-const badgeOf = (it: Item) => {
-  const z = layerOf(it);
-  return z === LAYER_DEFAULT ? undefined : String(z);
-};
-
 /** One level's order and the way it wants a new one, plus the running drag. */
 type LevelInfo = { values: string[]; onReorder: (next: string[]) => void };
 type Dnd = {
   levels: Map<string, LevelInfo>;
   level: string;
   dragging: string | null;
+  /** the kind of the part being dragged: a text is taken by anything that shows text */
+  carrying: string | null;
   begin: (e: React.PointerEvent, value: string, part: string, holds: boolean) => void;
 };
-const DndCtx = createContext<Dnd>({ levels: new Map(), level: "", dragging: null, begin: () => {} });
+const DndCtx = createContext<Dnd>({ levels: new Map(), level: "", dragging: null, carrying: null, begin: () => {} });
 
 function Row({
   id,
@@ -57,16 +57,21 @@ function Row({
   onSelect,
   open,
   onToggle,
-  locked,
-  onLock,
   onDragging,
   badge,
+  badgeTitle,
+  tint,
   plain,
   onNest,
+  onRename,
+  onMagnify,
+  magnified,
   holds,
+  takesText,
   hover,
   onFree,
   inContainer,
+  onTabSelect,
   children,
 }: {
   id: string;
@@ -79,38 +84,55 @@ function Row({
   /** set when the row can open to show what it holds */
   open?: boolean;
   onToggle?: () => void;
-  /** the group's lock, so the row shows which state it is in */
-  locked?: boolean;
-  /** flips the group's lock; set only on a whole group's row */
-  onLock?: () => void;
   onDragging: (dragging: boolean, id?: string) => void;
   /** the part's own layer, when it is not the default */
   badge?: string;
+  /** what the badge says on hover: a level badge is not a layer number */
+  badgeTitle?: string;
+  /** a page that stands apart from the screens is tinted, the same way it is on the canvas */
+  tint?: { bg: string; ink: string } | null;
   /** a row that is not reorderable (a page, or a part inside a container) */
   plain?: boolean;
   /** asks to put this row's part inside a container on the same screen */
   onNest?: () => void;
+  /** writes the name the author typed over this row's own */
+  onRename?: (name: string) => void;
+  /** takes the canvas up close to this row's part, and back again */
+  onMagnify?: () => void;
+  /** this row's part is the one the canvas is up close to */
+  magnified?: boolean;
   /** takes this row's part out of its container */
   onFree?: () => void;
   /** this row is a container's own child */
   inContainer?: boolean;
   /** this row's part can hold others (a container, or a bar with buttons) */
   holds?: boolean;
+  /** this row's part writes text of its own, so a dragged text belongs inside it */
+  takesText?: boolean;
   /** a drag is hovering this row: it lights up, and a holder opens to receive */
   hover?: boolean;
+  /** switches a tab row to one of its destinations */
+  onTabSelect?: (itemId: string, index: number) => void;
   children?: ReactNode;
 }) {
   const lang = useLang();
   /* the row's own background decides what its icons and label can be seen in: a custom
      scheme can put a dark surface under a light one, and icons must still read */
-  const bg = hover ? (holds ? p.tertiaryContainer : p.surfaceContainerHigh) : on ? p.secondaryContainer : depth === 0 ? p.surfaceContainerLow : p.surface;
-  const ink = (want: string) => (contrastRatio(want, bg) >= 3 ? want : contrastRatio(p.onSurface, bg) >= contrastRatio(p.onSurfaceVariant, bg) ? p.onSurface : p.onSurfaceVariant);
   const dnd = useContext(DndCtx);
+  const lang0 = useLang();
+  /* the name being typed over this row's own, when the author double-clicked it */
+  const [typing, setTyping] = useState<string | null>(null);
+  /* A row can take a part two ways: as a container takes anything, or — only while a text is being
+     dragged — as a part that writes text, which takes the text into itself. */
+  const canTake = holds || (dnd.carrying === "text" && !!takesText);
+  const resting = tint ? tint.bg : depth === 0 ? p.surfaceContainerLow : p.surface;
+  const bg = hover ? (canTake ? p.tertiaryContainer : p.surfaceContainerHigh) : on ? p.secondaryContainer : resting;
+  const ink = (want: string) => (contrastRatio(want, bg) >= 3 ? want : contrastRatio(p.onSurface, bg) >= contrastRatio(p.onSurfaceVariant, bg) ? p.onSurface : p.onSurfaceVariant);
   const draggable = !plain;
   const h = depth === 0 ? 40 : 36;
   const body = (
     <div
-      {...(draggable ? { "data-value": id, "data-level": dnd.level, "data-part": id, "data-holds": holds ? "1" : undefined } : { "data-part": id, "data-holds": holds ? "1" : undefined })}
+      {...(draggable ? { "data-value": id, "data-level": dnd.level, "data-part": id, "data-holds": holds ? "1" : undefined, "data-takes-text": takesText ? "1" : undefined } : { "data-part": id, "data-holds": holds ? "1" : undefined, "data-takes-text": takesText ? "1" : undefined })}
       style={{
         display: "flex",
         alignItems: "center",
@@ -119,10 +141,10 @@ function Row({
         padding: "0 6px 0 2px",
         marginLeft: depth * 14,
         borderRadius: depth === 0 ? 14 : 12,
-        background: hover ? (holds ? p.tertiaryContainer : p.surfaceContainerHigh) : on ? p.secondaryContainer : depth === 0 ? p.surfaceContainerLow : p.surface,
-        color: hover ? (holds ? p.onTertiaryContainer : p.onSurface) : on ? p.onSecondaryContainer : ink(p.onSurface),
-        outline: hover && holds ? `2px solid ${p.primary}` : undefined,
-        outlineOffset: hover && holds ? 1 : undefined,
+        background: hover ? (canTake ? p.tertiaryContainer : p.surfaceContainerHigh) : on ? p.secondaryContainer : depth === 0 ? p.surfaceContainerLow : p.surface,
+        color: hover ? (canTake ? p.onTertiaryContainer : p.onSurface) : on ? p.onSecondaryContainer : tint ? tint.ink : ink(p.onSurface),
+        outline: hover && canTake ? `2px solid ${p.primary}` : undefined,
+        outlineOffset: hover && canTake ? 1 : undefined,
         opacity: dnd.dragging === id ? 0.45 : 1,
         userSelect: "none",
         touchAction: draggable ? "none" : undefined,
@@ -140,9 +162,29 @@ function Row({
           <Icon name="drag_indicator" size={18} />
         </span>
       )}
+      {typing !== null ? (
+        <input
+          autoFocus
+          value={typing}
+          onChange={(e) => setTyping(e.target.value)}
+          onPointerDown={(e) => e.stopPropagation()}
+          onBlur={() => {
+            onRename?.(typing.trim());
+            setTyping(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            else if (e.key === "Escape") setTyping(null);
+          }}
+          aria-label={t("rename", lang0)}
+          style={{ flex: 1, minWidth: 0, height: 26, marginLeft: -4, padding: "0 6px", borderRadius: 8, border: `1px solid ${p.primary}`, background: p.surface, color: p.onSurface, fontSize: 12, fontWeight: 500, outline: "none" }}
+        />
+      ) : (
       <button
         onPointerDown={draggable ? (e) => dnd.begin(e, id, id, !!holds) : undefined}
         onClick={(e) => onSelect(e.shiftKey)}
+        onDoubleClick={onRename ? () => setTyping(label) : undefined}
+        title={onRename ? t("renameHint", lang0) : undefined}
         style={{
           flex: 1,
           minWidth: 0,
@@ -162,13 +204,14 @@ function Row({
         <span style={{ fontSize: 12, fontWeight: depth === 0 ? 600 : 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
         {badge && (
           <span
-            title={t("layer", lang)}
+            title={badgeTitle ?? t("layer", lang)}
             style={{ marginLeft: "auto", flex: "0 0 auto", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 8, background: on ? p.onSecondaryContainer : p.surfaceContainerHigh, color: on ? p.secondaryContainer : p.onSurfaceVariant }}
           >
             {badge}
           </span>
         )}
       </button>
+      )}
       {inContainer && onFree && (
         <button
           onClick={(e) => {
@@ -183,16 +226,19 @@ function Row({
           <Icon name="move_up" size={18} />
         </button>
       )}
-      {onLock && (
+      {onMagnify && (
         <button
-          onClick={onLock}
-          title={t(locked ? "unlock" : "lock", lang)}
-          aria-label={t(locked ? "unlock" : "lock", lang)}
-          aria-pressed={!!locked}
+          onClick={(e) => {
+            e.stopPropagation();
+            onMagnify();
+          }}
+          title={t(magnified ? "magnifyOff" : "magnify", lang)}
+          aria-label={t(magnified ? "magnifyOff" : "magnify", lang)}
+          aria-pressed={!!magnified}
           className="m3-press"
-          style={{ width: 28, height: 28, borderRadius: 14, border: "none", background: "transparent", color: locked ? (on ? p.onSecondaryContainer : ink(p.primary)) : ink(p.outline), cursor: "pointer", padding: 0, display: "grid", placeItems: "center", flex: "0 0 auto" }}
+          style={{ width: 28, height: 28, borderRadius: 14, border: "none", background: "transparent", color: magnified ? (on ? p.onSecondaryContainer : ink(p.primary)) : ink(p.outline), cursor: "pointer", padding: 0, display: "grid", placeItems: "center", flex: "0 0 auto" }}
         >
-          <Icon name={locked ? "lock" : "lock_open"} size={20} fill={locked} />
+          <Icon name={magnified ? "zoom_out" : "zoom_in"} size={18} />
         </button>
       )}
       {onToggle && (
@@ -242,12 +288,15 @@ function PartRow({
   openIds,
   toggle,
   reorderable = false,
-  locked,
-  onLock,
   onNest,
+  onRename,
+  onMagnify,
+  magnifiedId,
   hoverId,
   onFree,
   inContainer,
+  onTabSelect,
+  onTabRename,
 }: {
   it: Item;
   p: Palette;
@@ -258,24 +307,38 @@ function PartRow({
   openIds: Set<string>;
   toggle: (id: string) => void;
   reorderable?: boolean;
-  /** the lock of the group the part stands for, when it is shown in the group's place */
-  locked?: boolean;
-  onLock?: () => void;
   /** asks to put this part inside one of the screen's containers */
   onNest?: (it: Item) => void;
+  /** writes a name the author typed over this part's own in the list */
+  onRename?: (itemId: string, name: string) => void;
+  /** takes the canvas up close to this part */
+  onMagnify?: (itemId: string) => void;
+  /** the part the canvas is up close to */
+  magnifiedId?: string | null;
   /** takes this part out of its container */
   onFree?: (itemId: string) => void;
   /** the row a drag is hovering */
   hoverId?: string | null;
   /** this part is a container's own child, so it offers the way out */
   inContainer?: boolean;
+  /** switches a tab row to one of its own rows, the way picking its panel does */
+  onTabSelect?: (itemId: string, index: number) => void;
+  /** writes the words an author typed over one of this part's destinations */
+  onTabRename?: (itemId: string, index: number, name: string) => void;
 }) {
   const lang = useLang();
   const kids = [...(it.children ?? [])].sort(byLayer).reverse();
   /* a bar's destinations are buttons of their own: they belong under it in the tree */
-  const slots = (it.tabs ?? []).map((t, i) => ({ key: `tab:${i}`, icon: t.icon, label: t.label }));
-  /* anything with room inside can take a dropped part */
-  const holds = it.kind === "box" || slots.length > 0 || (it.children?.length ?? 0) > 0;
+  const slots = (it.tabs ?? []).map((t, i) => ({ key: `tab:${i}`, at: i, icon: t.icon, label: t.label, place: i + 1 }));
+  /* a destination the author gave no words — a toolbar's icons, say — is named by its place in the
+     bar, in the language they are working in: the key it is known by here would read as noise */
+  const nounOf = KIND_TEXT[lang][it.kind]?.noun ?? (KIND_SPEC[it.kind] ?? KIND_SPEC.box).label;
+  const slotName = (sl: { label: string; place: number }) => sl.label.trim() || `${nounOf} ${sl.place}`;
+  /* What can take a dropped part: a container, and a tab row — which receives into the panel of the
+     tab in front. A bar can *open* to its destinations, but those are its own buttons, not room for a
+     part, so it must not light up as a place to drop one. */
+  const holds = it.kind === "box" || it.kind === "tabs";
+  const takesTextRow = !holds && takesText(it);
   const open = (kids.length > 0 || slots.length > 0) && openIds.has(it.id);
   return (
     <Row
@@ -285,31 +348,39 @@ function PartRow({
       plain={!reorderable}
       icon={<Icon name={(KIND_SPEC[it.kind] ?? KIND_SPEC.box).paletteIcon} size={16} />}
       label={nameOf(it, lang)}
-      badge={badgeOf(it)}
       on={sel.has(it.id)}
       onSelect={(add) => onSelect([it.id], add)}
       open={kids.length || slots.length ? open : undefined}
       onToggle={kids.length || slots.length ? () => toggle(it.id) : undefined}
       onDragging={onDragging}
-      locked={locked}
-      onLock={onLock}
       onNest={onNest ? () => onNest(it) : undefined}
       onFree={onFree ? () => onFree(it.id) : undefined}
       inContainer={inContainer}
       holds={holds}
+      takesText={takesTextRow}
+      onRename={onRename ? (name) => onRename(it.id, name) : undefined}
+      /* every part can be brought up close, the small ones most of all */
+      onMagnify={onMagnify ? () => onMagnify(it.id) : undefined}
+      magnified={magnifiedId === it.id}
       hover={hoverId === it.id}
+      onTabSelect={onTabSelect}
     >
       {kids.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {kids.map((c) => (
-            <PartRow key={c.id} it={c} p={p} depth={depth + 1} sel={sel} onSelect={onSelect} onDragging={onDragging} openIds={openIds} toggle={toggle} hoverId={hoverId} onFree={onFree} inContainer />
+            <PartRow key={c.id} it={c} p={p} depth={depth + 1} sel={sel} onSelect={onSelect} onDragging={onDragging} openIds={openIds} toggle={toggle} hoverId={hoverId} onFree={onFree} onRename={onRename} inContainer onMagnify={onMagnify} magnifiedId={magnifiedId} onTabSelect={onTabSelect} onTabRename={onTabRename} />
           ))}
         </div>
       )}
       {/* the bar's own buttons, each with the icon and words it shows on the canvas */}
       {slots.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          {slots.map((sl) => (
+          {slots.map((sl) => {
+            /* a destination of a tab row is the tab itself: the row in front is marked, and picking
+               another switches the row to it, exactly as picking its panel does */
+            const isTabSlot = it.kind === "tabs" && sl.key.startsWith("tab:");
+            const tabIndex = isTabSlot ? Number(sl.key.slice(4)) : -1;
+            return (
             <Row
               key={sl.key}
               id={`${it.id}:${sl.key}`}
@@ -317,12 +388,18 @@ function PartRow({
               depth={depth + 1}
               plain
               icon={<Icon name={sl.icon || "radio_button_unchecked"} size={16} />}
-              label={sl.label.trim() || sl.key}
-              on={false}
-              onSelect={() => onSelect([it.id], false)}
+              label={slotName(sl)}
+              /* a tab's own row switches to it: the row and the panel under it are the same choice */
+              on={isTabSlot ? tabIndexOf(it) === tabIndex : false}
+              onRename={onTabRename ? (name) => onTabRename(it.id, sl.at, name) : undefined}
+              onSelect={() => {
+                if (isTabSlot) onTabSelect?.(it.id, tabIndex);
+                onSelect([it.id], false);
+              }}
               onDragging={onDragging}
             />
-          ))}
+            );
+          })}
         </div>
       )}
     </Row>
@@ -341,8 +418,12 @@ function RunParts({
   openIds,
   toggle,
   onNest,
+  onRename,
+  onMagnify,
+  magnifiedId,
   hoverId,
   onFree,
+  onTabRename,
 }: {
   run: Group;
   p: Palette;
@@ -357,12 +438,20 @@ function RunParts({
   onNest?: (it: Item) => void;
   hoverId?: string | null;
   onFree?: (itemId: string) => void;
+  /** writes a name the author typed over one of these parts' own */
+  onRename?: (itemId: string, name: string) => void;
+  /** takes the canvas up close to one of these parts */
+  onMagnify?: (itemId: string) => void;
+  /** the part the canvas is up close to */
+  magnifiedId?: string | null;
+  /** writes the words an author typed over one of these parts' destinations */
+  onTabRename?: (itemId: string, index: number, name: string) => void;
 }) {
   const ids = run.items.map((it) => it.id);
   return (
     <Level levelKey={`parts:${run.id}`} values={ids} onReorder={onReorder}>
       {run.items.map((it) => (
-        <PartRow key={it.id} it={it} p={p} depth={depth} sel={sel} onSelect={onSelect} onDragging={onDragging} openIds={openIds} toggle={toggle} reorderable onNest={onNest} hoverId={hoverId} onFree={onFree} />
+        <PartRow key={it.id} it={it} p={p} depth={depth} sel={sel} onSelect={onSelect} onDragging={onDragging} openIds={openIds} toggle={toggle} reorderable onNest={onNest} onRename={onRename} onMagnify={onMagnify} magnifiedId={magnifiedId} hoverId={hoverId} onFree={onFree} onTabRename={onTabRename} />
       ))}
     </Level>
   );
@@ -381,12 +470,20 @@ export function LayersPanel({
   selectedIds,
   onSelect,
   onReorder,
-  onToggleLock,
   onReorderItems,
   onDragging,
   onNest,
   onDropPart,
   onFreePart,
+  onRename,
+  onGroupRename,
+  onFrameRename,
+  onTabRename,
+  onMagnify,
+  magnifiedId,
+  onTabSelect,
+  vars = [],
+  onVar,
 }: {
   p: Palette;
   frames: Frame[];
@@ -402,18 +499,34 @@ export function LayersPanel({
   onSelect: (itemIds: string[], add: boolean) => void;
   /** new order for the open page, top layer first */
   onReorder: (topFirst: string[]) => void;
-  /** flips a group's lock from its row's lock icon */
-  onToggleLock: (groupId: string) => void;
   /** a group's parts in a new order: back to front for a free group, reading order for a run */
   onReorderItems: (groupId: string, ids: string[]) => void;
   /** a drag on any level starting or ending, so the page can record one undo step for the whole drag */
   onDragging: (dragging: boolean) => void;
-  /** a part was dropped onto another one: make it a child when the drop asks for it */
-  onDropPart?: (itemId: string, targetId: string) => void;
+  /** parts were dropped onto a container: make them its children when the drop asks for it */
+  onDropPart?: (itemIds: string[], targetId: string) => void;
   /** asks to put one part inside a container on the same screen */
   onNest?: (it: Item) => void;
   /** takes one part out of the container that holds it */
   onFreePart?: (itemId: string) => void;
+  /** writes a name the author typed over a part's own in the list */
+  onRename?: (itemId: string, name: string) => void;
+  /** writes the name an author typed over a whole group's row: the run or the hand-made group */
+  onGroupRename?: (groupId: string, name: string) => void;
+  /** writes the name an author typed over a screen's row */
+  onFrameRename?: (frameId: string, name: string) => void;
+  /** writes the words an author typed over one destination of a bar, rail or tab row */
+  onTabRename?: (itemId: string, index: number, name: string) => void;
+  /** takes the canvas up close to a part */
+  onMagnify?: (itemId: string) => void;
+  /** the part the canvas is up close to */
+  magnifiedId?: string | null;
+  /** switches a tab row to one of its own rows, the way picking its panel does */
+  onTabSelect?: (itemId: string, index: number) => void;
+  /** every variable in the document: the ones a page owns are listed under it */
+  vars?: Var[];
+  /** takes the author to a variable in the variables panel */
+  onVar?: (varId: string) => void;
 }) {
   const lang = useLang();
   const sel = new Set(selectedIds);
@@ -438,28 +551,66 @@ export function LayersPanel({
       else next.add(id);
       return next;
     });
+  /* The mirror of clicking a row: a part picked on the canvas has to be findable in the list,
+     so its containers open and its row scrolls in — only as far as it must, and only for a
+     single selection, since a multi-selection has no one row to show. */
+  const lastRevealed = useRef<string | null>(null);
+  useEffect(() => {
+    const id = selectedIds.length === 1 ? selectedIds[0] : null;
+    if (!id || id === lastRevealed.current) return;
+    lastRevealed.current = id;
+    const chain: string[] = [];
+    for (let p = parentOf(groups, id); p; p = parentOf(groups, p.id)) chain.push(p.id);
+    if (chain.length) setOpenIds((cur) => (chain.every((c) => cur.has(c)) ? cur : new Set([...cur, ...chain])));
+    /* the row only exists once those containers have rendered */
+    requestAnimationFrame(() => {
+      const el = [...document.querySelectorAll<HTMLElement>("[data-part]")].find((x) => x.dataset.part === id);
+      el?.scrollIntoView({ block: "nearest" });
+    });
+  }, [selectedIds, groups]);
   /* The drag is ours: rows never move while it runs, so a row you aim at stays put. The
    * places the rows stood when the drag began decide both the highlight and the drop. */
   const levels = useRef(new Map<string, LevelInfo>()).current;
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [draggingRow, setDraggingRow] = useState<string | null>(null);
+  /* the kind of the part being carried: a text is taken by parts that write text of their own */
+  const [carryingKind, setCarryingKind] = useState<string | null>(null);
+  /** whether a drag is already running, so a double-click cannot start a second one */
+  const dragOn = useRef(false);
   const openTimer = useRef<number | null>(null);
+  /** What a dragged row stands for: the part itself, or every part of the run it stands for. */
+  const droppedIds = (value: string): string[] => {
+    const g = groups.find((x) => x.id === value);
+    if (g) return g.items.map((it) => it.id);
+    return findItemIn(groups.flatMap((x) => x.items), value) ? [value] : [];
+  };
   const begin = (e: React.PointerEvent, value: string, part: string, holds: boolean) => {
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
-    const rows = [...document.querySelectorAll<HTMLElement>("[data-value]")].map((el) => ({
+    /* Every row is somewhere a drag can land — a panel inside a tab row is a container like any
+       other — while only a reorderable row can be picked up. */
+    const rows = [...document.querySelectorAll<HTMLElement>("[data-part]")].map((el) => ({
       value: el.dataset.value ?? "",
       part: el.dataset.part ?? "",
       level: el.dataset.level ?? "",
       holds: el.dataset.holds === "1",
+      takesText: el.dataset.takesText === "1",
       top: el.getBoundingClientRect().top,
       bottom: el.getBoundingClientRect().bottom,
     }));
-    const mine = rows.find((r) => r.value === value);
+    const mine = rows.find((r) => r.part === part);
     if (!mine) return;
-    const overAt = (y: number) => rows.find((r) => y >= r.top && y <= r.bottom && r.value !== value) ?? null;
+    /* one drag at a time: a double-click on a row starts it twice, and the second pair of window
+       listeners would fire a phantom reorder on some later click */
+    if (dragOn.current) return;
+    dragOn.current = true;
+    const overAt = (y: number) => rows.find((r) => y >= r.top && y <= r.bottom && r.part !== part) ?? null;
+    /* what the drag carries: a lone part, or every part of a run it stands for */
+    const carried = droppedIds(part).map((id) => findItemIn(groups.flatMap((x) => x.items), id)).filter((it): it is Item => !!it);
+    const text = carried.length > 0 && carried.every((it) => it.kind === "text");
     setDraggingRow(value);
+    setCarryingKind(text ? "text" : (carried[0]?.kind ?? null));
     onDragging(true);
     const move = (ev: PointerEvent) => {
       const over = overAt(ev.clientY);
@@ -476,16 +627,24 @@ export function LayersPanel({
     const up = (ev: PointerEvent) => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      dragOn.current = false;
       if (openTimer.current) window.clearTimeout(openTimer.current);
       openTimer.current = null;
       setHoverId(null);
       setDraggingRow(null);
+      setCarryingKind(null);
       const over = overAt(ev.clientY);
       if (!over) return;
-      /* onto something that can hold it: that is the parent / child gesture */
-      if (over.holds && over.part && over.part !== part && !holds) {
-        onDropPart?.(part, over.part);
-        return;
+      /* Onto something that can hold it: that is the parent / child gesture. What is dropped is
+         whatever the row stands for — a lone part, or every part of a run — so a container can be
+         dropped into another one and take its own contents with it. */
+      /* a part that writes text takes a dragged text into itself, the way a container takes anything */
+      if ((over.holds || (text && over.takesText)) && over.part && over.part !== part) {
+        const dropped = droppedIds(part);
+        if (dropped.length) {
+          onDropPart?.(dropped, over.part);
+          return;
+        }
       }
       /* anywhere else it is the ordinary reorder, inside the row's own level */
       const info = levels.get(mine.level);
@@ -500,17 +659,10 @@ export function LayersPanel({
     window.addEventListener("pointerup", up);
   };
 
-  const groupsOf = useMemo(() => {
-    const map = new Map<string, Group[]>();
-    for (const g of groups) {
-      const id = frameIdOf(g.id);
-      if (!id) continue;
-      const list = map.get(id);
-      if (list) list.push(g);
-      else map.set(id, [g]);
-    }
-    return map;
-  }, [groups, frameIdOf]);
+  /* the two lists: one per page, and the parts no page owns */
+  const { byPage: groupsOf, loose } = useMemo(() => splitByPage(groups, frameIdOf), [groups, frameIdOf]);
+  const [looseOpen, setLooseOpen] = useState(true);
+  const [sharedOpen, setSharedOpen] = useState(true);
 
   /** the runs hidden in a free group, front first, and the flat back-to-front list they make */
   const freeRuns = (g: Group) => [...explodeGroup(g, widths)].reverse();
@@ -518,7 +670,7 @@ export function LayersPanel({
 
   const groupBody = (g: Group, depth: number) => {
     if (!g.free) {
-      return <RunParts run={g} p={p} depth={depth} sel={sel} onSelect={onSelect} onReorder={(order) => onReorderItems(g.id, order)} onDragging={onDragging} openIds={openIds} toggle={toggle} onNest={onNest} hoverId={hoverId} onFree={onFreePart} />;
+      return <RunParts run={g} p={p} depth={depth} sel={sel} onSelect={onSelect} onReorder={(order) => onReorderItems(g.id, order)} onDragging={onDragging} openIds={openIds} toggle={toggle} onNest={onNest} onRename={onRename} onMagnify={onMagnify} magnifiedId={magnifiedId} hoverId={hoverId} onFree={onFreePart} onTabRename={onTabRename} />;
     }
     const runs = freeRuns(g);
     /* the key a run is known by in this level: a run of one is the part itself, so the
@@ -535,7 +687,7 @@ export function LayersPanel({
              same name twice and hide what the part holds */
           if (!many) {
             return (
-              <PartRow key={r.items[0].id} it={r.items[0]} p={p} depth={depth} sel={sel} onSelect={onSelect} onDragging={onDragging} openIds={openIds} toggle={toggle} reorderable />
+              <PartRow key={r.items[0].id} it={r.items[0]} p={p} depth={depth} sel={sel} onSelect={onSelect} onDragging={onDragging} openIds={openIds} toggle={toggle} reorderable onRename={onRename} onMagnify={onMagnify} magnifiedId={magnifiedId} onTabSelect={onTabSelect} onTabRename={onTabRename} />
             );
           }
           const open = openIds.has(r.id);
@@ -551,6 +703,7 @@ export function LayersPanel({
               onSelect={(add) => onSelect(r.items.map((it) => it.id), add)}
               open={open}
               onToggle={() => toggle(r.id)}
+              onRename={onGroupRename ? (name) => onGroupRename(r.id, name) : undefined}
               onDragging={onDragging}
             >
               <RunParts
@@ -562,6 +715,9 @@ export function LayersPanel({
                 onDragging={onDragging}
                 openIds={openIds}
                 toggle={toggle}
+                onRename={onRename}
+                onMagnify={onMagnify}
+                magnifiedId={magnifiedId}
                 hoverId={hoverId}
                 onReorder={(order) => {
                   /* the run's members take each other's places in the list; every other part keeps its own */
@@ -580,21 +736,15 @@ export function LayersPanel({
     );
   };
 
-  /** the layers of one page, top first; only the page in play is reorderable */
-  const pageBody = (f: Frame) => {
-    const list = groupsOf.get(f.id) ?? [];
-    if (list.length === 0) {
-      return (
-        <div style={{ padding: "10px 12px 14px", color: p.outline, fontSize: 12 }}>
-          <Icon name="layers_clear" size={24} />
-          <div style={{ marginTop: 4 }}>{t("noLayers", lang)}</div>
-        </div>
-      );
-    }
+  /**
+   * One list of layers, top first. The canvas draws every group in the document, so the panel
+   * has to list every group too: a row that is missing is a part the author cannot select,
+   * rename or delete from here at all. Only the page in play is reorderable — another
+   * page's rows, and the parts that belong to no page, are plain (a Reorder.Item without a
+   * Reorder.Group around it is an error).
+   */
+  const groupRows = (list: Group[], levelKey: string | null) => {
     const topFirst = [...list].reverse();
-    /* only the open page is reorderable: another page's rows are plain, since a
-     * Reorder.Item without a Reorder.Group around it is an error */
-    const reorderable = f.id === frameId;
     /* A group of one part is that part: showing both would repeat the same name twice
      * and make the author open a row to reach what it already says. The row the drag
      * sees is the part's own id in that case, so the level's values match the rows. */
@@ -616,12 +766,15 @@ export function LayersPanel({
             onDragging={onDragging}
             openIds={openIds}
             toggle={toggle}
-            reorderable={reorderable}
-            locked={g.locked}
-            onLock={() => onToggleLock(g.id)}
+            reorderable={!!levelKey}
             onNest={onNest}
+            onRename={onRename}
+            onMagnify={onMagnify}
+            magnifiedId={magnifiedId}
             hoverId={hoverId}
             onFree={onFreePart}
+            onTabSelect={onTabSelect}
+            onTabRename={onTabRename}
           />
         );
       }
@@ -632,34 +785,99 @@ export function LayersPanel({
           id={g.id}
           p={p}
           depth={1}
-          plain={!reorderable}
+          plain={!levelKey}
           icon={g.free ? <Icon name="group_work" size={18} /> : g.items.slice(0, 3).map((it, k) => <Icon key={k} name={(KIND_SPEC[it.kind] ?? KIND_SPEC.box).paletteIcon} size={18} />)}
           label={runLabel(g, lang)}
           on={g.items.some((it) => sel.has(it.id))}
           onSelect={(add) => onSelect(g.items.map((it) => it.id), add)}
           open={open}
           onToggle={() => toggle(g.id)}
-          locked={g.locked}
-          onLock={() => onToggleLock(g.id)}
+          onRename={onGroupRename ? (name) => onGroupRename(g.id, name) : undefined}
           onDragging={onDragging}
         >
           {groupBody(g, 2)}
         </Row>
       );
     });
-    if (!reorderable) return <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{rows}</div>;
+    if (!levelKey) return <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{rows}</div>;
     return (
-      <Level levelKey={`page:${f.id}`} values={topFirst.map(keyOf)} onReorder={reorderPage}>
+      <Level levelKey={levelKey} values={topFirst.map(keyOf)} onReorder={reorderPage}>
         {rows}
       </Level>
     );
   };
 
+  /** the layers of one page, top first */
+  /** A page's own variables, above its layers: they are the page's state, and with a few dozen of
+   *  them in a document this is what keeps them findable. Clicking one opens it in the panel. */
+  const varRows = (mine: Var[]) => {
+    if (!mine.length) return null;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {mine.map((v) => {
+          const kind = VAR_KINDS.find((k) => k.key === v.kind);
+          return (
+            <button
+              key={v.id}
+              type="button"
+              data-var={v.id}
+              onClick={() => onVar?.(v.id)}
+              title={t("variables", lang)}
+              className="m3-press"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                height: 32,
+                marginLeft: 14,
+                padding: "0 8px",
+                borderRadius: 10,
+                border: "none",
+                background: "transparent",
+                color: p.onSurfaceVariant,
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              <Icon name={kind?.icon ?? "data_object"} size={16} />
+              <span style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.name}</span>
+              <span style={{ marginLeft: "auto", flex: "0 0 auto", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 8, background: p.surfaceContainerHigh, color: p.onSurfaceVariant, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {String(varInitial(v))}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const pageBody = (f: Frame) => {
+    const list = groupsOf.get(f.id) ?? [];
+    const vars_ = varRows(vars.filter((v) => v.pageId === f.id));
+    if (list.length === 0) {
+      return (
+        <>
+          {vars_}
+          <div style={{ padding: "10px 12px 14px", color: p.outline, fontSize: 12 }}>
+            <Icon name="layers_clear" size={24} />
+            <div style={{ marginTop: 4 }}>{t("noLayers", lang)}</div>
+          </div>
+        </>
+      );
+    }
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {vars_}
+        {groupRows(list, f.id === frameId ? `page:${f.id}` : null)}
+      </div>
+    );
+  };
+
   return (
-    <DndCtx.Provider value={{ levels, level: "", dragging: draggingRow, begin }}>
+    <DndCtx.Provider value={{ levels, level: "", dragging: draggingRow, carrying: carryingKind, begin }}>
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <div className="no-scrollbar" style={{ flex: 1, overflowY: "auto", padding: "8px 10px 12px" }}>
-        {frames.length === 0 ? (
+        {frames.length === 0 && loose.length === 0 ? (
           <div style={{ padding: 24, textAlign: "center", color: p.outline, fontSize: 12 }}>
             <Icon name="layers_clear" size={32} />
             <div style={{ marginTop: 8 }}>{t("noLayers", lang)}</div>
@@ -667,24 +885,90 @@ export function LayersPanel({
         ) : (
           /* the pages read as a list: open one to see the parts it holds */
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {frames.map((f) => (
+            {frames.map((f) => {
+              /* an overlay page shows its level where a part would show its layer, so the
+                 page list says at a glance which pages pop over the others */
+              const overlay = isOverlayFrame(f);
+              return (
+                <Row
+                  key={f.id}
+                  id={`page:${f.id}`}
+                  p={p}
+                  depth={0}
+                  plain
+                  icon={<Icon name={overlay ? "picture_in_picture_alt" : isPhoneFrame(f) ? "smartphone" : "desktop_windows"} size={18} />}
+                  label={f.name || t("screen", lang)}
+                  badge={overlay ? overlayLevelText(overlayLevelOfFrame(f), lang) : undefined}
+                  badgeTitle={t("overlayLevel", lang)}
+                  tint={pageTintOf(f, p)}
+                  on={f.id === frameId}
+                  /* picking a page makes it the page in play, so its layers open with it; the
+                     chevron is what closes it again */
+                  onSelect={() => {
+                    setOpenFrames((cur) => new Set(cur).add(f.id));
+                    onFrame(f.id);
+                  }}
+                  open={openFrames.has(f.id) ? true : undefined}
+                  onToggle={() => toggleFrame(f.id)}
+                  onRename={onFrameRename ? (name) => onFrameRename(f.id, name) : undefined}
+                  onDragging={onDragging}
+                >
+                  {openFrames.has(f.id) && pageBody(f)}
+                </Row>
+              );
+            })}
+            {/* Variables no page owns: shared by all of them, and listed here for the same reason
+                the parts off the screens are — otherwise there would be no row to reach them by */}
+            {vars.some((v) => !v.pageId) && (
               <Row
-                key={f.id}
-                id={`page:${f.id}`}
+                id="page:vars"
                 p={p}
                 depth={0}
                 plain
-                icon={<Icon name={isPhoneFrame(f) ? "smartphone" : "desktop_windows"} size={18} />}
-                label={f.name || t("screen", lang)}
-                on={f.id === frameId}
-                onSelect={() => onFrame(f.id)}
-                open={openFrames.has(f.id) ? true : undefined}
-                onToggle={() => toggleFrame(f.id)}
+                icon={<Icon name="public" size={18} />}
+                label={t("varsAllPages", lang)}
+                badge={String(vars.filter((v) => !v.pageId).length)}
+                badgeTitle={t("variables", lang)}
+                on={false}
+                onSelect={() => onVar?.(vars.find((v) => !v.pageId)!.id)}
+                open={sharedOpen}
+                onToggle={() => setSharedOpen((v) => !v)}
                 onDragging={onDragging}
               >
-                {openFrames.has(f.id) && pageBody(f)}
+                {sharedOpen && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {varRows(vars.filter((v) => !v.pageId))}
+                  </div>
+                )}
               </Row>
-            ))}
+            )}
+            {/* Parts the canvas draws but no page owns — dragged off a screen, or left behind by
+                one that was resized. They are listed here because otherwise they would have no row
+                at all, so there would be no way to select, move or delete them again. */}
+            {loose.length > 0 && (
+              <Row
+                id="page:loose"
+                p={p}
+                depth={0}
+                plain
+                icon={<Icon name="open_with" size={18} />}
+                label={t("offScreens", lang)}
+                badge={String(loose.reduce((n, g) => n + g.items.length, 0))}
+                badgeTitle={t("offScreens", lang)}
+                on={loose.some((g) => g.items.some((it) => sel.has(it.id)))}
+                onSelect={(add) => onSelect(loose.flatMap((g) => g.items.flatMap(subtreeOf).map((it) => it.id)), add)}
+                open={looseOpen}
+                onToggle={() => setLooseOpen((v) => !v)}
+                onDragging={onDragging}
+              >
+                {looseOpen && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <div style={{ padding: "2px 12px 4px", fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("offScreensHint", lang)}</div>
+                    {groupRows(loose, null)}
+                  </div>
+                )}
+              </Row>
+            )}
           </div>
         )}
       </div>

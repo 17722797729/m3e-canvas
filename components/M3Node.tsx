@@ -2,13 +2,15 @@
 
 import { motion, useReducedMotion } from "motion/react";
 import {
+  badgeSurface,
+  buttonScale,
   FAB_MENU_GAP,
+  R_INNER,
   FAB_MENU_ITEM_H,
   H,
   Item,
   Kind,
   MEASURED,
-  NAV_BAR_H,
   Palette,
   Radii,
   STATUS_BAR_H,
@@ -27,6 +29,8 @@ import {
   layerOf,
   onToken,
   paletteForItem,
+  connectedButton,
+  runCorners,
   scaleR,
   sizeOf,
   strokeOf,
@@ -34,15 +38,25 @@ import {
   variantStyle,
   SETTLE_MS,
   progressThickness,
-  RAIL_TOP,
-  RAIL_W,
-  RAIL_ITEM_H,
-  RAIL_GAP,
+  progressTrack,
+  scrollOffset,
+  scrollRange,
+  progressValue,
   BAR_FOLDED_W,
   isWideRail,
+  NAV_ICON,
+  NAV_INDICATOR,
+  NAV_INDICATOR_R,
+  NAV_LABEL_FONT,
+  navLabelInk,
+  navPerLine,
   navRows,
+  railCell,
   railMetrics,
   isScrollableTabs,
+  tabIndexOf,
+  tabStyleOf,
+  TAB_ROW_H,
   tabScrollOffset,
   SCROLL_TAB_W,
 } from "@/lib/tokens";
@@ -96,6 +110,7 @@ const ellipsis = {
 const NO_BOX: Kind[] = [
   "circularProgress",
   "linearProgress",
+  "progressBar",
   "loadingIndicator",
   "switch",
   "checkbox",
@@ -113,7 +128,10 @@ export function ButtonContent({ item }: { item: Item }) {
   const w = useWeight();
   const hasIcon = !!item.icon;
   const hasLabel = item.label.trim().length > 0;
-  const padX = hasLabel ? (hasIcon ? 22 : 26) : 16;
+  /* A button the author made taller or shorter keeps its proportions: the words, the icon and the
+     padding are the medium button's, scaled with its own height — M3's small / medium / large. */
+  const scale = buttonScale(item);
+  const padX = (hasLabel ? (hasIcon ? 22 : 26) : 16) * scale;
   return (
     <span
       style={{
@@ -122,17 +140,18 @@ export function ButtonContent({ item }: { item: Item }) {
         justifyContent: "center",
         width: item.size ? "100%" : undefined,
         boxSizing: "border-box",
-        gap: hasIcon && hasLabel ? 8 : 0,
-        paddingLeft: padX,
-        paddingRight: padX,
-        height: H,
-        fontSize: 16,
+        gap: hasIcon && hasLabel ? Math.round(8 * scale) : 0,
+        paddingLeft: Math.round(padX),
+        paddingRight: Math.round(padX),
+        /* the box's own height, which the author can set */
+        height: "100%",
+        fontSize: Math.round(16 * scale),
         fontWeight: w(500, 700),
         letterSpacing: 0.1,
         whiteSpace: "nowrap",
       }}
     >
-      {hasIcon && <Icon name={item.icon!} size={24} fill={item.variant === "filled"} />}
+      {hasIcon && <Icon name={item.icon!} size={Math.round(24 * scale)} fill={item.variant === "filled"} />}
       {hasLabel && <span>{item.label}</span>}
     </span>
   );
@@ -361,35 +380,42 @@ function RadioContent({ item, p }: { item: Item; p: Palette }) {
 }
 
 /** A badge: a 6dp dot when it has no text, a 16dp pill with the count otherwise. */
-function BadgeContent({ item, p }: { item: Item; p: Palette }) {
+export function BadgeContent({ item, p }: { item: Item; p: Palette }) {
   const text = item.label.trim();
   /* a badge the author sized fills the box it was given; otherwise it hugs its number
      (a dot when it is empty) */
   const own = item.size !== undefined;
   const h = item.size2 ?? (text ? 16 : 6);
   const w = own ? "100%" : text ? undefined : 6;
+  /* the number shrinks and grows with the badge, so a short one is not spilling out of its pill */
+  const pad = Math.max(2, Math.round(h / 4));
   return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: w,
-        minWidth: own || !text ? undefined : 16,
-        height: h,
-        padding: text && !own ? "0 4px" : 0,
-        borderRadius: h / 2,
-        boxSizing: "border-box",
-        background: p.error,
-        color: p.onError,
-        fontSize: own ? Math.max(9, Math.min(20, Math.round(h * 0.7))) : 11,
-        fontWeight: 500,
-        lineHeight: 1,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {text}
-    </span>
+    /* Centred in the box, whichever way the author sized it: the pill is drawn as tall as they
+       asked, from the middle out — a top-anchored pill looked like the badge was shrinking from
+       the bottom only. */
+    <div style={{ display: "grid", placeItems: "center", height: "100%", boxSizing: "border-box" }}>
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: w,
+          minWidth: own || !text ? undefined : Math.max(6, h),
+          height: h,
+          padding: text && !own ? `0 ${pad}px` : 0,
+          borderRadius: h / 2,
+          boxSizing: "border-box",
+          /* the pill is the badge: its colour and its border live here (see badgeSurface) */
+          ...badgeSurface(item, p),
+          fontSize: Math.max(8, Math.min(20, Math.round(h * 0.7))),
+          fontWeight: 500,
+          lineHeight: 1,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {text}
+      </span>
+    </div>
   );
 }
 
@@ -419,6 +445,66 @@ export function MeasuredContent({ item, p }: { item: Item; p: Palette }) {
   }
 }
 
+/** How thick a scroll bar is drawn, and how short its thumb may get. */
+const SCROLL_BAR = 4;
+const SCROLL_THUMB_MIN = 24;
+
+/**
+ * A container's children where the container scrolls: moved by the offset its content is at, with a
+ * slim bar on the axis that has room to move so the design itself says the content goes on. The box
+ * around it clips, so what has been scrolled past is simply not drawn — in the canvas, in the export
+ * and in the preview alike, which is what keeps the three showing the same thing.
+ */
+function ScrollLayer({
+  item,
+  p,
+  widths,
+  scroll,
+  children,
+}: {
+  item: Item;
+  p: Palette;
+  widths: Record<string, number>;
+  /** what the visitor has moved the content to; the offset the author designed when absent */
+  scroll?: { x?: number; y?: number };
+  children?: React.ReactNode;
+}) {
+  if (!children) return null;
+  if (!item.scroll) return <>{children}</>;
+  const size = sizeOf(item, widths);
+  const range = scrollRange(item, widths);
+  const at = scrollOffset(item, widths, scroll);
+  const bar = (axis: "x" | "y") => {
+    const max = axis === "y" ? range.y : range.x;
+    if (max <= 0) return null;
+    const view = axis === "y" ? size.h : size.w;
+    const track = view;
+    const thumb = Math.max(SCROLL_THUMB_MIN, Math.round((view / (view + max)) * track));
+    const pos = Math.round(((axis === "y" ? at.y : at.x) / max) * (track - thumb));
+    return (
+      <div
+        key={axis}
+        data-scrollbar={axis}
+        style={{
+          position: "absolute",
+          pointerEvents: "none",
+          borderRadius: SCROLL_BAR / 2,
+          background: p.outline,
+          opacity: 0.6,
+          ...(axis === "y" ? { right: 3, top: pos, width: SCROLL_BAR, height: thumb } : { bottom: 3, left: pos, height: SCROLL_BAR, width: thumb }),
+        }}
+      />
+    );
+  };
+  return (
+    <>
+      <div style={{ position: "absolute", inset: 0, transform: `translate(${-at.x}px, ${-at.y}px)` }}>{children}</div>
+      {bar("y")}
+      {bar("x")}
+    </>
+  );
+}
+
 function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: number }) {
   const lang = useLang();
   const w = useWeight();
@@ -428,22 +514,8 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
   if (MEASURED.includes(item.kind)) return <MeasuredContent item={item} p={p} />;
 
   switch (item.kind) {
-    case "box":
-      return item.checked ? (
-        <div style={{ display: "flex", justifyContent: "center", paddingTop: 16 }}>
-          <div
-            style={{
-              width: 32,
-              height: 4,
-              borderRadius: 2,
-              background: onToken(item.fill ?? "surfaceContainerLow", p),
-              opacity: 0.4,
-            }}
-          />
-        </div>
-      ) : null;
-
     case "iconButton": {
+      /* one shape, one icon in it: no words under it, whatever the document still carries */
       const s = item.size ?? 48;
       return (
         <div style={{ display: "grid", placeItems: "center", height: "100%" }}>
@@ -929,30 +1001,31 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
       if (wide) return (
         <div style={{ position: "relative", height: "100%" }}>
           {/* the rail folds up and down: "V" folds everything away, the turned-around "V" opens it */}
-          <div className="m3-rail-geometry" style={{ position: "absolute", left: Math.round(((item.railFolded ? BAR_FOLDED_W : rail.width) - 48) / 2), top: item.railFolded ? 4 : 12, width: 48, height: 48, display: "grid", placeItems: "center", color: p.onSurfaceVariant }}>
+          <div className="m3-rail-geometry" style={{ position: "absolute", left: Math.round(rail.headerLeft), top: rail.headerTop, width: 48, height: 48, display: "grid", placeItems: "center", color: p.onSurfaceVariant }}>
             <Icon name={item.railFolded || !expanded ? "expand_less" : "expand_more"} size={24} />
           </div>
           {!item.railFolded &&
             tabs.map((tab, i) => {
               const on = i === Math.min(item.selected ?? 0, Math.max(0, tabs.length - 1));
-              /* every position is read off the rail's own width, and the icon always sits
-                 above its label, so a rail the author widened stays centred and readable */
-              const inner = rail.width - rail.inset * 2;
-              const pillW = expanded ? inner : Math.min(inner, 56);
-              /* past the author's per-line limit the destinations start another column */
-              const per = perColumn(tabs.length, item.navPerRow);
-              const col = Math.floor(i / per);
-              const row = i % per;
+              /* every position is read off the rail's own width, and the icon always sits above
+                 its label; past the author's per-line limit the destinations start another column.
+                 The cell comes from the same helper the preview's hit areas use, so what answers a
+                 tap is what is drawn. */
+              const cell = railCell(item, tabs.length, i);
+              const pillW = expanded ? cell.width : Math.min(cell.width, 56);
+              /* a rail squeezed for height keeps its icons: the pill shrinks to the cell and the
+                 words go, rather than the column running out of the bottom */
+              const tight = cell.height < rail.itemHeight;
               return (
                 <div
                   key={i}
                   className="m3-rail-geometry"
                   style={{
                     position: "absolute",
-                    left: rail.inset + col * rail.width,
-                    top: rail.top + row * (rail.itemHeight + rail.gap),
-                    width: inner,
-                    height: rail.itemHeight,
+                    left: cell.left,
+                    top: cell.top,
+                    width: cell.width,
+                    height: cell.height,
                     display: "flex",
                     flexDirection: "column",
                     alignItems: "center",
@@ -963,9 +1036,9 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
                   <div
                     className="m3-rail-geometry"
                     style={{
-                      width: pillW,
-                      height: 32,
-                      borderRadius: 16,
+                      width: Math.min(NAV_INDICATOR, pillW, cell.height),
+                      height: Math.min(NAV_INDICATOR, cell.height),
+                      borderRadius: scaleR(NAV_INDICATOR_R),
                       display: "grid",
                       placeItems: "center",
                       background: on ? p.secondaryContainer : "transparent",
@@ -976,13 +1049,15 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
                       transform: tab.grown ? "scale(1.15)" : undefined,
                     }}
                   >
-                    {tab.icon && <Icon name={tab.icon} size={24} fill={on} />}
+                    {tab.icon && <Icon name={tab.icon} size={NAV_ICON} fill={on} />}
                   </div>
-                  {tab.label.trim() && (
+                  {tab.label.trim() && !tight && (
                     <span
                       className="m3-rail-geometry"
-                      /* the pill is secondaryContainer, so its label reads on that, whatever the scheme */
-                      style={{ width: inner, textAlign: "center", fontSize: expanded ? 12 : 11, lineHeight: "16px", fontWeight: on ? w(600, 700) : w(400, 500), color: on ? p.onSecondaryContainer : p.onSurfaceVariant, ...ellipsis }}
+                      /* The label sits on the rail itself, below the pill, so it takes the ink the
+                         rail's own background reads in — the pill's ink belongs to the icon inside
+                         it, and using it here painted white words on a white rail. */
+                      style={{ width: cell.width, textAlign: "center", fontSize: expanded ? NAV_LABEL_FONT + 1 : NAV_LABEL_FONT, lineHeight: "16px", fontWeight: on ? w(600, 700) : w(400, 500), color: p[navLabelInk(on)], ...ellipsis }}
                     >
                       {tab.label}
                     </span>
@@ -993,42 +1068,33 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
         </div>
       );
       return (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "row",
-            alignItems: "flex-start",
-            justifyContent: "center",
-            gap: RAIL_GAP,
-            height: "100%",
-            padding: `${RAIL_TOP}px 0`,
-            boxSizing: "border-box",
-            position: "relative",
-          }}
-        >
-          {chunks(tabs, perRow(tabs.length, item.navPerRow)).map((column, c) => (
-          <div key={c} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: RAIL_GAP }}>
-          {column.map(({ tab: t, index: i }) => {
+        /* the 80dp rail lays its columns out from the same cells the preview's hit areas use */
+        <div style={{ position: "relative", height: "100%" }}>
+          {tabs.map((t, i) => {
             const on = i === Math.min(item.selected ?? 0, Math.max(0, tabs.length - 1));
             const withLabel = t.label.trim().length > 0;
+            const cell = railCell(item, tabs.length, i);
             return (
               <div
                 key={i}
                 style={{
+                  position: "absolute",
+                  left: cell.left,
+                  top: cell.top,
                   display: "flex",
                   flexDirection: "column",
                   alignItems: "center",
+                  justifyContent: "center",
                   gap: 4,
-                  width: RAIL_W - 12,
-                  height: RAIL_ITEM_H,
-                  flex: "0 0 auto",
+                  width: cell.width,
+                  height: cell.height,
                 }}
               >
                 <div
                   style={{
-                    width: 56,
-                    height: 32,
-                    borderRadius: scaleR(16),
+                    width: Math.min(NAV_INDICATOR, cell.width),
+                    height: Math.min(NAV_INDICATOR, cell.height),
+                    borderRadius: scaleR(NAV_INDICATOR_R),
                     display: "grid",
                     placeItems: "center",
                     background: on ? p.secondaryContainer : "transparent",
@@ -1040,14 +1106,14 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
                     transform: t.grown ? "scale(1.15)" : undefined,
                   }}
                 >
-                  {t.icon && <Icon name={t.icon} size={22} fill={on} />}
+                  {t.icon && <Icon name={t.icon} size={NAV_ICON} fill={on} />}
                 </div>
                 {withLabel && (
                   <span
                     style={{
-                      fontSize: 11,
+                      fontSize: NAV_LABEL_FONT,
                       fontWeight: on ? w(600, 700) : w(400, 500),
-                      color: on ? p.onSurface : p.onSurfaceVariant,
+                      color: p[navLabelInk(on)],
                       maxWidth: "100%",
                       ...ellipsis,
                     }}
@@ -1058,8 +1124,6 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
               </div>
             );
           })}
-          </div>
-          ))}
         </div>
       );
     }
@@ -1079,10 +1143,13 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
             /* Folded, the one thing left is its button, at the trailing edge. On one line the
              * destinations spread out; once they wrap, a short last row is pushed right so its
              * columns line up with the full rows above it. */
-            justifyContent: folded || Math.ceil(tabs.length / perRow(tabs.length, item.navPerRow)) > 1 ? "flex-end" : "space-around",
+            justifyContent: folded || navRows(tabs.length, item.navPerRow) > 1 ? "flex-end" : "space-around",
             height: "100%",
-            /* the collapse button owns the trailing strip, so no destination sits under it */
-            padding: `0 ${hasToggle ? 44 : 4}px ${folded ? 0 : NAV_BAR_H}px 4px`,
+            /* The collapse button owns the trailing strip, so no destination sits under it.
+             * The destinations centre in the whole bar rather than in the 80dp above the
+             * gesture strip (see sizeOf): centring them higher left a hem at the bottom that
+             * read as a mistake. They are short enough to stay clear of the strip anyway. */
+            padding: `0 ${hasToggle ? 44 : 4}px 0 4px`,
             boxSizing: "border-box",
             position: "relative",
           }}
@@ -1100,15 +1167,15 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
                   flexDirection: "column",
                   alignItems: "center",
                   gap: 4,
-                  flex: `0 0 ${100 / perRow(tabs.length, item.navPerRow)}%`,
+                  flex: `0 0 ${100 / navPerLine(tabs.length, item.navPerRow)}%`,
                   minWidth: 0,
                 }}
               >
                 <div
                   style={{
-                    width: 56,
-                    height: 32,
-                    borderRadius: scaleR(16),
+                    width: NAV_INDICATOR,
+                    height: NAV_INDICATOR,
+                    borderRadius: scaleR(NAV_INDICATOR_R),
                     display: "grid",
                     placeItems: "center",
                     background: on ? p.secondaryContainer : "transparent",
@@ -1116,14 +1183,14 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
                     transition: "background 160ms, color 160ms",
                   }}
                 >
-                  {t.icon && <Icon name={t.icon} size={22} fill={on} />}
+                  {t.icon && <Icon name={t.icon} size={NAV_ICON} fill={on} />}
                 </div>
                 {withLabel && !folded && (
                   <span
                     style={{
-                      fontSize: 11,
+                      fontSize: NAV_LABEL_FONT,
                       fontWeight: on ? w(600, 700) : w(400, 500),
-                      color: on ? p.onSurface : p.onSurfaceVariant,
+                      color: p[navLabelInk(on)],
                       maxWidth: "100%",
                       ...ellipsis,
                     }}
@@ -1135,7 +1202,10 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
             );
           })}
           {hasToggle && (
-            <div style={{ position: "absolute", right: folded ? 4 : 0, top: 0, bottom: folded ? 0 : NAV_BAR_H, width: 44, display: "grid", placeItems: "center", color: p.onSurfaceVariant }}>
+            <div style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 44, display: "grid", placeItems: "center", color: p.onSurfaceVariant }}>
+              {/* The bar's own fold button. Its chevrons point along the bar — the way its
+                  destinations run — the same way the rail's point along the rail: "◀" says the
+                  destinations are out to the left, "▶" that they are folded away and come back. */}
               <Icon name={folded ? "chevron_right" : "chevron_left"} size={20} />
             </div>
           )}
@@ -1168,6 +1238,33 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
           />
         </div>
       );
+
+    case "progressBar": {
+      const h = sizeOf(item, {}).h;
+      const value = progressValue(item);
+      const track = progressTrack(item, p);
+      const words = item.label.trim();
+      const font = Math.max(9, Math.min(28, Math.round(h * 0.58)));
+      /* A bar can be as slim as 4dp, so its words cannot simply sit inside it: they are centred on
+         the bar, and the copy over the filled part is clipped to it. The two halves are inked
+         against the colour each one lies on, so the words read wherever the fill's edge lands. */
+      const line = (color: string) => (
+        <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", padding: "0 6px", boxSizing: "border-box", fontSize: font, fontWeight: 700, lineHeight: 1.1, ...ellipsis }}>{words}</span>
+      );
+      return (
+        <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", borderRadius: Math.round(h / 2), background: track.color }}>
+          <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${value}%`, background: p.primary }} />
+          {words && <span style={{ color: track.ink }}>{line(track.ink)}</span>}
+          {/* the same words again, clipped to the fill: the inner line is as wide as the whole bar,
+              so the two copies sit on exactly the same letters */}
+          {words && value > 0 && (
+            <span aria-hidden style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${value}%`, overflow: "hidden", color: p.onPrimary }}>
+              <span style={{ position: "absolute", left: 0, top: 0, width: `${10000 / value}%`, height: "100%" }}>{line(p.onPrimary)}</span>
+            </span>
+          )}
+        </div>
+      );
+    }
 
     case "fabMenu": {
       const tabs = item.tabs ?? [];
@@ -1248,10 +1345,53 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
       const tabs = item.tabs ?? [];
       const scroll = isScrollableTabs(item);
       const offset = tabScroll ?? tabScrollOffset(item, sizeOf(item, {}).w);
+      const sel = tabIndexOf(item);
+      /* Buttons, the way most games switch a page: the tab in front is a filled chip and the rest are
+         outlined. The row is the same height either way, so the panels under it start in the same place. */
+      if (tabStyleOf(item) === "buttons") {
+        const outer = scaleR((TAB_ROW_H - 16) / 2);
+        return (
+          <div style={{ display: "flex", alignItems: "center", height: TAB_ROW_H, padding: "0 8px", position: "relative", overflow: "hidden", boxSizing: "border-box" }}>
+            {tabs.map((tab, i) => {
+              const on = i === sel;
+              /* The buttons sit flush against one another, the way a connected group does: only the
+                 two ends of the row are rounded off, neighbours share one 1px edge, and the tab in
+                 front keeps its place in the row rather than floating in a gap. */
+              const c = connectedButton(i, tabs.length, outer, scaleR(R_INNER));
+              return (
+                <div
+                  key={i}
+                  style={{
+                    flex: scroll ? "none" : 1,
+                    width: scroll ? SCROLL_TAB_W : undefined,
+                    marginLeft: scroll && i === 0 ? -offset : c.margin || undefined,
+                    minWidth: 0,
+                    height: TAB_ROW_H - 16,
+                    borderRadius: `${c.radii.tl}px ${c.radii.tr}px ${c.radii.br}px ${c.radii.bl}px`,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
+                    padding: "0 12px",
+                    boxSizing: "border-box",
+                    background: on ? p.secondaryContainer : "transparent",
+                    color: on ? p.onSecondaryContainer : p.onSurfaceVariant,
+                    border: on ? "none" : `1px solid ${p.outlineVariant}`,
+                  }}
+                >
+                  {tab.icon && <Icon name={tab.icon} size={18} fill={on} />}
+                  <span style={{ fontSize: 14, fontWeight: on ? w(600, 700) : w(400, 500), maxWidth: "100%", ...ellipsis }}>{tab.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        );
+      }
+      /* the underline row sits at the top of the box: the rest of the box is the panel area */
       return (
-        <div style={{ display: "flex", alignItems: "stretch", height: "100%", position: "relative", overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "stretch", height: TAB_ROW_H, position: "relative", overflow: "hidden" }}>
           {tabs.map((tab, i) => {
-            const on = i === Math.min(item.selected ?? 0, Math.max(0, tabs.length - 1));
+            const on = i === sel;
             return (
               <div
                 key={i}
@@ -1424,6 +1564,10 @@ export function M3Node({
   onPointerDown,
   tabScroll,
   overlay,
+  style,
+  scroll,
+  onWheel,
+  onClickCapture,
 }: {
   item: Item;
   palette: Palette;
@@ -1440,6 +1584,14 @@ export function M3Node({
   tabScroll?: number;
   /** a container's children, drawn inside its box (their offsets are the container's own) */
   overlay?: React.ReactNode;
+  /** what the editor adds to the wrapper: an invisible run member still takes its space */
+  style?: React.CSSProperties;
+  /** a scrolling container's live offset in the preview; the authored one is drawn when absent */
+  scroll?: { x?: number; y?: number };
+  /** the preview turns a wheel over a scrolling container into movement */
+  onWheel?: React.WheelEventHandler<HTMLDivElement>;
+  /** the preview swallows the click that ends a scroll drag, so it does not also tap a child */
+  onClickCapture?: React.MouseEventHandler<HTMLDivElement>;
 }) {
   const reducedMotion = useReducedMotion();
   const instantRail = reducedMotion && item.kind === "navRail" && isWideRail(item);
@@ -1457,6 +1609,8 @@ export function M3Node({
       data-kind={item.kind}
       data-wide-rail={item.kind === "navRail" && isWideRail(item) ? "true" : undefined}
       onPointerDown={onPointerDown}
+      onWheel={onWheel}
+      onClickCapture={onClickCapture}
       initial={false}
       animate={{
         borderTopLeftRadius: r.tl,
@@ -1491,32 +1645,24 @@ export function M3Node({
         userSelect: "none",
         touchAction: "none",
         boxSizing: "border-box",
-        boxShadow: [strokeOf(item, ep), shadowOf(item)].filter((v) => v && v !== "none").join(", ") || "none",
+        /* a badge rings its own pill, so the box behind it draws no ring of its own */
+        boxShadow: [item.kind === "badge" ? null : strokeOf(item, ep), shadowOf(item)].filter((v) => v && v !== "none").join(", ") || "none",
         outline: selected ? `2px solid ${palette.primary}` : "2px solid transparent",
         outlineOffset: 3,
         /* a part that changes width with its screen eases the way the screen does */
         transition: measured ? "outline-color 120ms" : `outline-color 120ms, width ${SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1)`,
         flex: "0 0 auto",
+        /* what the editor adds to the wrapper: the place a folded navigation part sits in, say */
+        ...style,
       }}
     >
       <Body item={item} p={ep} tabScroll={tabScroll} />
-      {overlay}
+      <ScrollLayer item={item} p={ep} widths={widths} scroll={scroll}>
+        {overlay}
+      </ScrollLayer>
     </motion.div>
   );
 }
-
-/** splits destinations into columns of at most `per`, the plain rail's own wrapping */
-function chunks<T>(list: T[], per: number): { tab: T; index: number }[][] {
-  const out: { tab: T; index: number }[][] = [];
-  for (let i = 0; i < list.length; i += per) out.push(list.slice(i, i + per).map((tab, k) => ({ tab, index: i + k })));
-  return out;
-}
-
-/** how many destinations share one line of a bar (and one column of a rail) */
-function perRow(count: number, per: number | undefined) {
-  return per && per > 0 ? Math.min(count || 1, per) : count || 1;
-}
-const perColumn = perRow;
 
 /** Plain (non-animated) rendering of a part; used where frames must be deterministic. */
 export function M3Static({
@@ -1550,7 +1696,8 @@ export function M3Static({
         position: "relative",
         zIndex: layerOf(item),
         boxSizing: "border-box",
-        boxShadow: [strokeOf(item, ep), shadowOf(item)].filter((v) => v && v !== "none").join(", ") || "none",
+        /* a badge rings its own pill, so the box behind it draws no ring of its own */
+        boxShadow: [item.kind === "badge" ? null : strokeOf(item, ep), shadowOf(item)].filter((v) => v && v !== "none").join(", ") || "none",
         borderTopLeftRadius: r.tl,
         borderTopRightRadius: r.tr,
         borderBottomLeftRadius: r.bl,
@@ -1560,7 +1707,9 @@ export function M3Static({
       }}
     >
       <Body item={item} p={ep} />
-      {overlay}
+      <ScrollLayer item={item} p={ep} widths={{}}>
+        {overlay}
+      </ScrollLayer>
     </div>
   );
 }

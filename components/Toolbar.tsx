@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { FrameMode, Palette, Place } from "@/lib/tokens";
-import { IconBtn, Segmented, TidyButton, TidyState } from "./ui";
+import { FrameMode, Palette } from "@/lib/tokens";
+import { IconBtn, Segmented } from "./ui";
 import { ShareButton } from "./ShareMenu";
 import { Icon } from "./M3Node";
 import { Popover } from "./Menus";
@@ -80,10 +80,6 @@ export function Toolbar({
   onPrompt,
   onSettings,
   onLangSheet,
-  tidy,
-  onTidy,
-  place,
-  onPlace,
   note,
   onSaveProject,
   onOpenProject,
@@ -117,12 +113,7 @@ export function Toolbar({
   onSettings?: () => void;
   /** phone: open the language sheet instead of the menu */
   onLangSheet?: () => void;
-  /** the tidy button for the screen being worked on; absent when no screen is in play */
-  tidy?: TidyState;
-  onTidy?: () => void;
-  place?: Place;
-  onPlace?: (place: Place) => void;
-  /** a short message shown beside the tidy button for a moment */
+  /** a short message shown under the header for a moment */
   note?: { text: string; icon: string } | null;
   onSaveProject?: () => void;
   onOpenProject?: () => void;
@@ -255,11 +246,6 @@ export function Toolbar({
           alignItems: "center",
         }}
       >
-        {tidy && onTidy && (
-          <Pill p={p}>
-            <TidyButton state={tidy} onClick={onTidy} p={p} pill place={place} onPlace={onPlace} />
-          </Pill>
-        )}
         <Pill p={p}>
           <IconBtn
             icon="remove"

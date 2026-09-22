@@ -13,6 +13,7 @@ import { toPng } from "html-to-image";
 import { buildPrompt, effectivePrompt } from "@/lib/prompt";
 import {
   Action,
+  actionPatchFor,
   actionsOf,
   Axis,
   BACK_TARGET,
@@ -39,7 +40,31 @@ import {
   framePresetOf,
   frameRadius,
   frameRect,
+  childAt,
+  childDragFree,
+  pruneParts,
+  childDragRoom,
+  findItemIn,
+  foldMargins,
+  selectedAncestor,
+  foldPlace,
+  keepPanelSlots,
+  needsTabPanels,
+  panelSlotFor,
+  refillPanels,
+  restorePanel,
+  slotsOf,
+  tabIndexOf,
+  tabPanelId,
+  takesText,
+  tabPanelsPatch,
+  liftAbove,
   frameSizeOf,
+  DEFAULT_OVERLAY_LEVEL,
+  isOverlayFrame,
+  isOverlayItem,
+  overlayLevelOf,
+  overlayLevelOfFrame,
   carryItemSize,
   defaultPlatformOf,
   GAP,
@@ -51,8 +76,9 @@ import {
   KIND_SPEC,
   PlacedItem,
   CustomPart,
+  Var,
   compositeInstance,
-  scaleChildren,
+  resizedChildren,
   byLayer,
   copySubtree,
   itemsOf,
@@ -74,6 +100,7 @@ import {
   NAV_BAR_H,
   Palette,
   paletteOf,
+  pageTintOf,
   PHONE_H,
   PHONE_MARGIN,
   PHONE_W,
@@ -93,12 +120,17 @@ import {
   isWideRail,
   LAYER_DEFAULT,
   childShown,
+  childDrawn,
   railMetrics,
   RAIL_TOP,
+  VARS_ALL,
+  migrateFlows,
 } from "@/lib/tokens";
 import { Icon, M3Node, M3Static, MeasuredContent } from "@/components/M3Node";
 import { LayersPanel } from "@/components/Layers";
-import { FrameInspector, FrameSizePicker, Inspector } from "@/components/Inspector";
+import { AuditPanel } from "@/components/Audit";
+import { VarsPanel } from "@/components/Vars";
+import { FrameInspector, FrameSizePicker, Inspector, type DialogChoice } from "@/components/Inspector";
 import { Preview } from "@/components/Preview";
 import { Logo } from "@/components/Logo";
 import { PartsPalette } from "@/components/PartsPalette";
@@ -107,11 +139,14 @@ import { PromptPanel } from "@/components/PromptPanel";
 import { Mode, Toolbar } from "@/components/Toolbar";
 import { LangMenu } from "@/components/Menus";
 import { AiActionKey, AiPanel, aiErrorText } from "@/components/AiPanel";
-import { Field, TidyState } from "@/components/ui";
+import { Field } from "@/components/ui";
 import { AiSettings, DEFAULT_AI, hasKey, isSecureUrl, loadAiSettings, proposeBehavior, proposeDescription, pushHistory, saveAiSettings } from "@/lib/ai";
 import { barSlotOf, bodyRect, carryFrame, pullInto, tidyFrame } from "@/lib/tidy";
 import { constrainModalRails, modalRailOf, updateRail } from "@/lib/rail";
 import { isProject, readableGroups, readProject, saveProject } from "@/lib/project";
+import { audit, type AuditIssue } from "@/lib/audit";
+import { magnifyView, revealPadding, revealView, type CanvasView } from "@/lib/view";
+import { existingDialogs, holdersOf } from "@/lib/pages";
 import { hasShareHash, readShareHash } from "@/lib/share";
 import { LoadingIndicator } from "@/components/Loading";
 import { draftDesign } from "@/lib/ai";
@@ -120,8 +155,8 @@ import { ColorPanel } from "@/components/ColorPanel";
 import { MotionPanel, ShapePanel, TypePanel } from "@/components/ThemePanel";
 import { ThemeContext, ensureFontLoaded, ensureLangFontLoaded } from "@/lib/theme";
 import { BottomSheet, MobileActionBar, MobileInspector, MobileLang, MobileSettings } from "@/components/Mobile";
-import { ConfirmDialog, IconBtn, Segmented } from "@/components/ui";
-import { Lang, LangContext, SEED_TEXT, getLang, setGlobalLang, t, translateDefaultFrameName, translateDefaultText } from "@/lib/i18n";
+import { ConfirmDialog, FoldButton, IconBtn, Segmented } from "@/components/ui";
+import { KIND_TEXT, Lang, LangContext, SEED_TEXT, adoptDoc, getLang, overlayLevelText, setGlobalLang, t, translateDoc } from "@/lib/i18n";
 
 /** the screens while a model drafts: primary, tertiary and primary container, drifting */
 const DRAFT_GRADIENT = (p: Palette) => `linear-gradient(120deg, ${p.primaryContainer}, ${p.tertiaryContainer}, ${p.primary}, ${p.secondaryContainer}, ${p.primaryContainer})`;
@@ -179,6 +214,8 @@ type DragState = {
   fromPalette: boolean;
   overBin: boolean;
   snap: Snap | null;
+  /** the container under the pointer: dropping there makes the part its child */
+  over?: string | null;
   settling: boolean;
 };
 
@@ -204,7 +241,7 @@ type Gesture =
     }
   | { kind: "group"; id: string; sx: number; sy: number; gx: number; gy: number; moved: boolean; overBin: boolean; guide?: Guide | null }
   /** a part being moved inside the container that holds it, in the container's own coordinates */
-  | { kind: "child"; groupId: string; parentId: string; id: string; sx: number; sy: number; ox: number; oy: number; moved: boolean };
+  | { kind: "child"; groupId: string; parentId: string; id: string; sx: number; sy: number; ox: number; oy: number; moved: boolean; free?: boolean; over?: string | null };
 
 /** everything in a document apart from its screens and parts */
 type DocMeta = Omit<Doc, "groups" | "frames">;
@@ -217,32 +254,17 @@ const SIZE_TRANSITION = `width ${SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1), height
 /** the breathing room a new container leaves around the parts it takes in */
 const CONTAINER_PAD = 16;
 
-function translateSnapshot(snap: Snapshot, lang: Lang): Snapshot {
-  /* a part inside a container carries its own default words too */
-  const tr = (item: Item): Item => ({
-    ...item,
-    label: translateDefaultText(item.label, item.kind, "label", lang),
-    ...(item.supporting !== undefined && { supporting: translateDefaultText(item.supporting, item.kind, "supporting", lang) }),
-    ...(item.tabs && { tabs: item.tabs.map((tab) => ({ ...tab, label: translateDefaultText(tab.label, item.kind, "tab", lang) })) }),
-    ...(item.children && { children: item.children.map(tr) as PlacedItem[] }),
-  });
-  return {
-    groups: snap.groups.map((group) => ({ ...group, items: group.items.map(tr) })),
-    frames: snap.frames.map((frame) => ({ ...frame, name: translateDefaultFrameName(frame.name, lang) })),
-  };
+/** A document, or one undo step of it, in the language the author is working in: the defaults it
+ *  was drawn with are carried over, everything they typed is left alone. */
+const translateSnapshot = (snap: Snapshot, lang: Lang): Snapshot => translateDoc(snap, lang);
+
+/** How a set of parts is named in the nesting question: one part by its own name, several by count. */
+function describeItems(items: Item[], lang: Lang): string {
+  const one = (it: Item) => it.label.trim() || (KIND_SPEC[it.kind] ?? KIND_SPEC.box).label;
+  return items.length === 1 ? one(items[0]) : t("nestMany", lang).replace("{n}", String(items.length));
 }
 
 const SEED_FRAMES: Frame[] = [{ id: "seedF1", name: "Home", x: 0, y: 0 }];
-
-/** one part anywhere in a group's tree, containers searched depth first */
-function findItemIn(items: Item[], id: string): Item | null {
-  for (const it of items) {
-    if (it.id === id) return it;
-    const found = it.children ? findItemIn(it.children, id) : null;
-    if (found) return found;
-  }
-  return null;
-}
 
 /** the tree with one part rewritten wherever it sits; a container's children also carry
  *  the offsets that place them inside it */
@@ -256,17 +278,8 @@ function patchItemIn(items: Item[], id: string, patch: Partial<Item> & { x?: num
   );
 }
 
-/** the tree without the parts `gone` names, and without a container that loses them all */function pruneItems(items: Item[], gone: Set<string>): Item[] {
-  const out: Item[] = [];
-  for (const it of items) {
-    if (gone.has(it.id)) continue;
-    if (it.children) {
-      const children = pruneItems(it.children, gone);
-      out.push(children.length ? { ...it, children: children as PlacedItem[] } : { ...it, children: undefined });
-    } else out.push(it);
-  }
-  return out;
-}
+/** the tree without the parts `gone` names (see pruneParts) */
+const pruneItems = (items: Item[], gone: Set<string>): Item[] => pruneParts(items, gone).items;
 
 /** Documents saved before the bars grew their system insets have the navigation
  *  bar flush with the old 80dp bottom; keep it on the bottom edge. */
@@ -283,9 +296,6 @@ function migrateGroups(groups: Group[], frames: Frame[]): Group[] {
 }
 
 /** Seed ids are deterministic so server and client render the same markup. */
-/* shown when an edit is refused because the group is locked */
-const lockedGroupMsg = () => t("lockedGroup", getLang());
-
 const seed = (lang: Lang = getLang()): Group[] => {
   const text = SEED_TEXT[lang];
   let n = 0;
@@ -379,11 +389,13 @@ function ThinkingRing({ p, frame }: { p: Palette; frame: Frame }) {
   );
 }
 
-type LeftTab = "parts" | "layers" | "color" | "shape" | "type" | "motion" | "ai";
-/** the left rail: parts and layers, then the four theme axes of the whole design */
-const LEFT_TABS: { key: LeftTab; icon: string; title: "parts" | "layers" | "colors" | "shape" | "typography" | "motion" | "ai" }[] = [
+type LeftTab = "parts" | "layers" | "audit" | "vars" | "color" | "shape" | "type" | "motion" | "ai";
+/** the left rail: what the document is made of, what is wrong with it, then its four theme axes */
+const LEFT_TABS: { key: LeftTab; icon: string; title: "parts" | "layers" | "audit" | "variables" | "colors" | "shape" | "typography" | "motion" | "ai" }[] = [
   { key: "parts", icon: "add_box", title: "parts" },
   { key: "layers", icon: "layers", title: "layers" },
+  { key: "audit", icon: "fact_check", title: "audit" },
+  { key: "vars", icon: "data_object", title: "variables" },
   { key: "color", icon: "palette", title: "colors" },
   { key: "shape", icon: "rounded_corner", title: "shape" },
   { key: "type", icon: "text_fields", title: "typography" },
@@ -414,14 +426,6 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     initialLangRef.current = next;
     setLang(next);
     const translated = translateSnapshot({ groups: groupsRef.current, frames: framesRef.current }, next);
-    const tidy = tidyRef.current;
-    if (tidy) {
-      tidyRef.current = tidy.after === groupsRef.current ? {
-        ...tidy,
-        before: translateSnapshot({ groups: tidy.before, frames: framesRef.current }, next).groups,
-        after: translated.groups,
-      } : null;
-    }
     setGroups(translated.groups);
     setFrames(translated.frames);
     pastRef.current = pastRef.current.map((snap) => translateSnapshot(snap, next));
@@ -471,6 +475,10 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const [rightOpen, setRightOpen] = useState(true);
   const [leftW, setLeftW] = useState(RAIL_W + 268);
   const [leftTab, setLeftTab] = useState<LeftTab>("parts");
+  /* What the variables panel shows: everything to begin with, so a variable is never hidden
+     behind a page filter the author has forgotten about. From there it can be narrowed to the
+     shared ones or to a single page. */
+  const [varsScope, setVarsScope] = useState<string>(VARS_ALL);
   /** pointer over the collapsed rail: the logo becomes the open button */
   const [railHover, setRailHover] = useState(false);
   /** the screen whose layers are listed when nothing on a screen is selected */
@@ -480,6 +488,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const [favorites, setFavorites] = useState<Kind[]>([]);
   /** the author's own composite parts, offered by the palette beside the kinds */
   const [customParts, setCustomParts] = useState<CustomPart[]>([]);
+  /** the values the prototype carries between taps: coins, stamina, what has been claimed */
+  const [vars, setVars] = useState<Var[]>([]);
   /** the dialog that composes a new composite part */
   const [composeOpen, setComposeOpen] = useState(false);
   /** the saved composite the dialog is changing, if any */
@@ -494,14 +504,12 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const [widths, setWidths] = useState<Record<string, number>>({});
   const [resizing, setResizing] = useState<"left" | "right" | null>(null);
   const [, bumpHistory] = useState(0);
-  /* ---------- tidy and ai ---------- */
-  /** the groups before and after the last tidy; "undo" is offered only while the after-state is still current */
-  const tidyRef = useRef<{ frameId: string; before: Group[]; after: Group[] } | null>(null);
+  /* ---------- ai ---------- */
   const [aiSettings, setAiSettings] = useState<AiSettings>(DEFAULT_AI);
   const [aiBusy, setAiBusy] = useState(false);
   /** the screen the model is working on, which wears the animated ring meanwhile */
   const [aiFrameId, setAiFrameId] = useState<string | null>(null);
-  /** the "applied" confirmation beside the tidy button */
+  /** a short confirmation under the header, e.g. that the model's words were applied */
   const [aiNote, setAiNote] = useState<{ text: string; icon: string } | null>(null);
   const projectFileRef = useRef<HTMLInputElement>(null);
   const aiNoteTimer = useRef<number | null>(null);
@@ -570,10 +578,10 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
 
   /** consecutive edits of the same field collapse into one undo step */
   const snapshotFor = useCallback(
-    (key: string) => {
+    (key: string, withMeta = false) => {
       const now = Date.now();
       const last = lastPatchRef.current;
-      if (last.key !== key || now - last.at > 800) snapshot();
+      if (last.key !== key || now - last.at > 800) snapshot(withMeta);
       lastPatchRef.current = { key, at: now };
     },
     [snapshot],
@@ -683,8 +691,18 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
      * a document with no parts at all is the author's own "clear all" and is restored. */
     const ours = !readable || readable.length > 0 || (raw?.length ?? 0) === 0;
     const frames = Array.isArray(doc.frames) ? doc.frames : framesRef.current;
-    if (ours && readable) setGroups(migrateGroups(readable, frames));
-    if (ours && Array.isArray(doc.frames)) setFrames(doc.frames);
+    /* A document's default words — a bar's destinations, a button's label — were written in the
+       language it was drawn in. Reading them back in the author's own keeps an older or shared file
+       from showing stray English in the tree and on the canvas; a name the author typed is never one
+       of the defaults, so it stays exactly as written. */
+    if (ours && readable) {
+      /* the state rules an older document was written with are read back as flows here, so the
+         editor, the canvas and the preview only ever see machines */
+      const owned = adoptDoc({ groups: migrateFlows(migrateGroups(readable, frames)), frames }, lang);
+      setGroups(owned.groups);
+      /* a screen's own name is a default too, but only the document's own frames are read back */
+      if (Array.isArray(doc.frames)) setFrames(owned.frames);
+    }
     if (typeof doc.paletteKey === "string" && doc.paletteKey) setPaletteKey(doc.paletteKey);
     else if (reset) setPaletteKey("purple");
     /* normalize once so a scheme saved before the secondary role gets it and keeps it on re-save */
@@ -704,6 +722,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     else if (reset) setPlatform(null);
     if (Array.isArray(doc.customParts)) setCustomParts(doc.customParts);
     else if (reset) setCustomParts([]);
+    if (Array.isArray(doc.vars)) setVars(doc.vars);
+    else if (reset) setVars([]);
   };
 
   useEffect(() => {
@@ -832,12 +852,11 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   useEffect(() => {
     if (!loadedRef.current || editAccess !== "editable") return;
     try {
-      localStorage.setItem(
-        DOC_KEY,
-        JSON.stringify({ groups, frames, paletteKey, frame, title, brief, promptEdit, platform: platform ?? undefined, customPalette: customPalette ?? undefined, dynamicColor, theme, customParts: customParts.length ? customParts : undefined }),
-      );
+      /* The very document the prompt and the export read, so a field added there — the variables,
+         say — cannot be left out of the saved file by a second list that has to be kept in step. */
+      localStorage.setItem(DOC_KEY, JSON.stringify(docRef.current));
     } catch {}
-  }, [editAccess, groups, frames, paletteKey, frame, title, brief, promptEdit, platform, customPalette, dynamicColor, theme, customParts]);
+  }, [editAccess, groups, frames, paletteKey, frame, title, brief, promptEdit, platform, customPalette, dynamicColor, theme, customParts, vars]);
 
   useEffect(() => {
     if (!loadedRef.current) return;
@@ -1090,8 +1109,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       let best: Snap | null = null;
       let bestD = 1;
       for (const g of groupsRef.current) {
-        /* a locked run is finished: nothing joins it, so it never moves to make room */
-        if (g.free || g.locked || g.axis !== spec.axis || !g.items[0] || !canJoin(g.items[0], item))
+        if (g.free || g.axis !== spec.axis || !g.items[0] || !canJoin(g.items[0], item))
           continue;
         for (let k = 0; k <= g.items.length; k++) {
           const r = restPos(g, k, sz);
@@ -1203,48 +1221,33 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     setGesture(g);
   };
 
-  const onItemPointerDown = (
-    e: React.PointerEvent,
-    g: Group,
-    index: number,
-    item: Item,
-  ) => {
-    if (e.button === 1 || modeRef.current === "hand" || spaceRef.current) {
-      e.preventDefault();
-      e.stopPropagation();
-      startPan(e.clientX, e.clientY);
-      return;
-    }
-    if (e.button !== 0) return;
-    e.preventDefault();
-    e.stopPropagation();
+  /**
+   * Starts dragging one part of a group, from a point on the screen. The pointer handlers below and
+   * a control sitting on the part (a navigation's fold button, which hands a press that travels
+   * over) both come through here.
+   */
+  const dragItemFrom = (clientX: number, clientY: number, shift: boolean, g: Group, index: number, item: Item) => {
     flushPending();
     if (g.free) {
-      setSelectedIds((cur) => (e.shiftKey ? [...cur.filter((x) => !g.items.some((it) => it.id === x)), ...g.items.map((it) => it.id)] : g.items.map((it) => it.id)));
+      setSelectedIds((cur) => (shift ? [...cur.filter((x) => !g.items.some((it) => it.id === x)), ...g.items.map((it) => it.id)] : g.items.map((it) => it.id)));
       setSelectedFrameId(null);
       setSelectedLinkId(null);
       setRightTab("edit");
-      /* a locked group stays selectable, but dragging it does nothing */
-      if (g.locked) return;
-      const gg: Gesture = { kind: "group", id: g.id, sx: e.clientX, sy: e.clientY, gx: g.x, gy: g.y, moved: false, overBin: false };
+      const gg: Gesture = { kind: "group", id: g.id, sx: clientX, sy: clientY, gx: g.x, gy: g.y, moved: false, overBin: false };
       gestureRef.current = gg;
       setGesture(gg);
       return;
     }
-    const pt = toWorld(e.clientX, e.clientY);
+    const pt = toWorld(clientX, clientY);
     const off = prefixOf(g, index);
     const left = g.axis === "x" ? g.x + off : g.x;
     const top = g.axis === "x" ? g.y : g.y + off;
     sx.jump(left);
     sy.jump(top);
-    setSelectedIds((cur) =>
-      e.shiftKey ? [...cur.filter((x) => x !== item.id), item.id] : [item.id],
-    );
+    setSelectedIds((cur) => (shift ? [...cur.filter((x) => x !== item.id), item.id] : [item.id]));
     setSelectedFrameId(null);
     setSelectedLinkId(null);
     setRightTab("edit");
-    /* a locked group's part stays selectable, but dragging it does nothing */
-    if (g.locked) return;
     setPressedId(item.id);
     const d: DragState = {
       item,
@@ -1263,6 +1266,24 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     };
     dragRef.current = d;
     setDrag({ ...d });
+  };
+
+  const onItemPointerDown = (
+    e: React.PointerEvent,
+    g: Group,
+    index: number,
+    item: Item,
+  ) => {
+    if (e.button === 1 || modeRef.current === "hand" || spaceRef.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      startPan(e.clientX, e.clientY);
+      return;
+    }
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragItemFrom(e.clientX, e.clientY, e.shiftKey, g, index, item);
   };
 
   /** starts carrying a fresh part from the palette (a kind, or a whole composite) */
@@ -1298,7 +1319,14 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     setDrag({ ...d });
   };
 
-  const onPartPointerDown = (e: React.PointerEvent, kind: Kind) => startPartDrag(e, makeItem(kind));
+  /** A part as it arrives from the palette. A tab row brings its panels: one per tab, so switching
+   *  tabs has somewhere to switch to without the author building them first. */
+  const bornPart = (kind: Kind): Item => {
+    const it = makeItem(kind);
+    const patch = tabPanelsPatch(it);
+    return patch ? { ...it, ...patch } : it;
+  };
+  const onPartPointerDown = (e: React.PointerEvent, kind: Kind) => startPartDrag(e, bornPart(kind));
 
   /** a composite drops as one container holding the parts it was composed of */
   const onCompositePointerDown = (e: React.PointerEvent, part: CustomPart) => startPartDrag(e, compositeInstance(part, uid));
@@ -1331,6 +1359,10 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
         d.active = true;
         d.snap = null;
         const id = d.item.id;
+        /* The press may have been a while ago — a fold button's press waits to see whether it
+           travels — so the part is picked up as it stands now, not as it was when pressed. */
+        const fresh = groupsRef.current.map((g) => findItemIn(g.items, id)).find(Boolean);
+        if (fresh) d.item = fresh;
         snapshot();
         setGroups((prev) => {
           const out: Group[] = [];
@@ -1363,12 +1395,15 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
 
       /* a part being added from the palette has nothing to delete yet; dropping it back there just cancels */
       d.overBin = !d.fromPalette && inBin(e.clientX);
+      /* the container the pointer is over: dropping there puts the part inside it, which is the one
+         gesture that says "this belongs in that" */
+      d.over = d.overBin || ctrlHeld ? null : holderAt(pt.x, pt.y, d.item);
       d.snap =
-        d.overBin || ctrlHeld
+        d.over || d.overBin || ctrlHeld
           ? null
           : findSnap(d.item, pt.x - d.offX, pt.y - d.offY);
       d.guide =
-        d.overBin || d.snap || ctrlHeld
+        d.over || d.overBin || d.snap || ctrlHeld
           ? null
           : findGuide(d.item, pt.x - d.offX, pt.y - d.offY);
       setDrag({ ...d });
@@ -1393,6 +1428,19 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
         setSelectedIds((cur) => cur.filter((x) => x !== item.id));
         setDrag(null);
         return;
+      }
+
+      /* dropped onto a container: it becomes that container's child, landing where the finger left it */
+      if (!loose && d.over) {
+        const next = putIn(groupsRef.current, [{ item, at: { l: d.px - d.offX, t: d.py - d.offY } }], d.over);
+        if (next) {
+          /* a part dragged in from the palette has no step of its own yet */
+          if (d.fromPalette) snapshot();
+          setGroups(next);
+          setSelectedIds([item.id]);
+          setDrag(null);
+          return;
+        }
       }
 
       if (!loose && d.snap) {
@@ -1693,17 +1741,24 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           snapshot();
         }
         /* the part stays inside the container that holds it: long enough to stay on
-           screen, and never past the box's own edges */
+           screen, and never past the box's own edges — a free child may sit past them */
         const gr = groupsRef.current.find((x) => x.id === g.groupId);
         if (!gr) return;
         const parent = findItemIn(gr.items, g.parentId);
         const kid = findItemIn(gr.items, g.id) as PlacedItem | null;
         if (!parent || !kid) return;
-        const box = sizeOf(parent, widthsRef.current);
-        const sz = sizeOf(kid, widthsRef.current);
-        const nx = Math.round(Math.min(Math.max(0, box.w - sz.w), Math.max(0, g.ox + dx)));
-        const ny = Math.round(Math.min(Math.max(0, box.h - sz.h), Math.max(0, g.oy + dy)));
+        /* Dragging is how an author says "this belongs in that": over another container the child is
+           offered as its child, and follows the finger so the drop lands where they point. Over the
+           container it already sits in it simply slides. */
+        const pt = toWorld(e.clientX, e.clientY);
+        const next = holderAt(pt.x, pt.y, kid);
+        g.over = next && next !== g.parentId ? next : null;
+        const room = childDragRoom(parent, kid, widthsRef.current, !!g.free || !!g.over);
+        const f = foldPlace(kid, widthsRef.current);
+        const nx = Math.round(Math.min(room.w, Math.max(0, g.ox + dx))) - f.dx;
+        const ny = Math.round(Math.min(room.h, Math.max(0, g.oy + dy))) - f.dy;
         setGroups((gs) => gs.map((x) => (x.id === g.groupId ? { ...x, items: patchItemIn(x.items, g.id, { x: nx, y: ny }) } : x)));
+        setGesture({ ...g });
         return;
       }
       if (g.kind === "frame") {
@@ -1763,6 +1818,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
         setGroups((gs) => gs.filter((x) => x.id !== g.id));
         setSelectedIds([]);
       }
+      /* a child let go over another container moves into it, wherever it sat before */
+      if (g?.kind === "child" && g.moved && g.over) nestInto([g.id], g.over);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -1831,24 +1888,16 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const patchSelected = (patch: Partial<Item>) => {
     if (!primaryId) return;
     const id = primaryId;
-    /* a rail state change resizes it too, so it counts as a resize for the lock */
+    /* a rail state change resizes the part too, so its run has to make room for it */
     const resizes = "size" in patch || "size2" in patch || "railExpanded" in patch || "railModal" in patch;
-    /* a resize would reflow and move the locked group; other edits leave its layout alone */
-    if (resizes && groupsRef.current.some((g) => g.locked && g.items.some((it) => it.id === id))) {
-      showToast(lockedGroupMsg());
-      return;
-    }
     snapshotFor(id + ":" + Object.keys(patch).join(","));
     /* a container that changes size carries its contents with it, in proportion; a part
-     * anywhere in the tree — a container's child included — takes the patch */
+     * anywhere in the tree — a container's child included — takes the patch. A tab row's
+     * panels, the ones the patch brings in included, take the room left under the row. */
     const owner = groupsRef.current.find((g) => !!findItemIn(g.items, id));
     const before = owner ? findItemIn(owner.items, id) : null;
-    let shaped = patch;
-    if (before?.children?.length && ("size" in patch || "size2" in patch)) {
-      const was = sizeOf(before, widthsRef.current);
-      const now = sizeOf({ ...before, ...patch }, widthsRef.current);
-      shaped = { ...patch, children: scaleChildren(before.children, now.w / Math.max(1, was.w), now.h / Math.max(1, was.h)) };
-    }
+    const kids = before ? resizedChildren(before, patch, widthsRef.current) : undefined;
+    const shaped = kids ? { ...patch, children: kids } : patch;
     setGroups((prev) =>
       "railExpanded" in patch || "railModal" in patch ? updateRail(prev, framesRef.current, widthsRef.current, id, patch) : prev.map((g) => {
         const idx = g.items.findIndex((it) => it.id === id);
@@ -1885,25 +1934,126 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     [snapshotFor],
   );
 
+  /** Writes the name an author typed over a run's or a hand-made group's row. A group with no name
+   *  is named after its parts, so an emptied name falls back to that rather than reading blank. */
+  const renameGroup = useCallback(
+    (id: string, name: string) => {
+      snapshotFor(`group:${id}:name`);
+      setGroups((prev) => prev.map((g) => (g.id === id ? { ...g, name: name.trim() || undefined } : g)));
+    },
+    [snapshotFor],
+  );
+
+  /** Writes the name an author typed over a screen's row. */
+  const renameFrame = useCallback(
+    (id: string, name: string) => {
+      snapshotFor(`frame:${id}:name`);
+      setFrames((prev) => prev.map((f) => (f.id === id ? { ...f, name } : f)));
+    },
+    [snapshotFor],
+  );
+
+  /** Writes the words an author typed over one destination of a bar, rail or tab row. The panels of
+   *  a tab row keep their places, since a panel is known by the place its tab stands in. */
+  const renameTab = useCallback(
+    (id: string, index: number, name: string) => {
+      const it = findItemIn(groupsRef.current.flatMap((g) => g.items), id);
+      if (!it?.tabs?.[index]) return;
+      patchItemById(id, { tabs: it.tabs.map((tab, i) => (i === index ? { ...tab, label: name } : tab)) });
+    },
+    [patchItemById],
+  );
+
+  /**
+   * Folds or opens a navigation part's own button. Nothing moves in the document: a folded part is
+   * *drawn* at the corner its button sits in (see layoutOf / foldShift), so the pill stays under the
+   * button and opening it again puts the destinations back exactly where they were.
+   */
+  const setNavFold = useCallback(
+    (it: Item, folded: boolean) => {
+      patchItemById(it.id, it.kind === "bottomNav" ? { barFolded: folded } : { railFolded: folded, railExpanded: !folded });
+    },
+    [patchItemById],
+  );
+
+  /** Picking a panel in the layers brings its tab to the front: a panel that is not in front is not
+   *  drawn, so selecting one has to show it, or the author would be editing something invisible. */
+  /** Brings a tab row to one of its tabs. Undoable, but coalesced: switching tabs while working is
+   *  one step, not one per click. */
+  const switchTab = useCallback(
+    (itemId: string, index: number) => {
+      const it = findItemIn(groupsRef.current.flatMap((g) => g.items), itemId);
+      if (!it || it.kind !== "tabs" || tabIndexOf(it) === index) return;
+      snapshotFor("tabsel:" + itemId);
+      setGroups((gs) => gs.map((g) => ({ ...g, items: patchItemIn(g.items, itemId, { selected: index }) })));
+    },
+    [snapshotFor],
+  );
+
+  const showPanelOf = useCallback(
+    (ids: string[]) => {
+      for (const id of ids) {
+        const parent = parentOf(groupsRef.current, id);
+        if (parent?.kind !== "tabs") continue;
+        const index = (parent.children ?? []).findIndex((c) => c.id === id);
+        if (index >= 0) switchTab(parent.id, index);
+      }
+    },
+    [switchTab],
+  );
+
+  /** The innermost container the point is inside: a panel inside a tab row wins over the row itself.
+   *  What is being dragged, and anything it carries, is never a target. */
+  const holderAt = useCallback(
+    (x: number, y: number, dragged: Item): string | null => {
+      const skip = new Set(subtreeOf(dragged).map((it) => it.id));
+      const items = groupsRef.current.flatMap((g) => g.items);
+      const hits: { r: { l: number; t: number; r: number; b: number }; it: Item }[] = [];
+      for (const r of itemRects()) {
+        if (skip.has(r.id) || x < r.l || x > r.r || y < r.t || y > r.b) continue;
+        const it = findItemIn(items, r.id);
+        /* containers take anything; a part that writes text of its own takes a dragged text, so a
+           caption can be dropped straight onto the button it belongs to */
+        const takes = it && (it.kind === "box" || it.kind === "tabs" || (dragged.kind === "text" && takesText(it)));
+        if (it && takes) hits.push({ r, it });
+      }
+      return hits.sort((a, b) => (a.r.r - a.r.l) * (a.r.b - a.r.t) - (b.r.r - b.r.l) * (b.r.b - b.r.t))[0]?.it.id ?? null;
+    },
+    [itemRects],
+  );
+
   const deleteSelected = useCallback(() => {
     if (selectedIds.length === 0) return;
     const ids = new Set(selectedIds);
-    /* deleting a container takes everything inside it along */
-    for (const g of groupsRef.current) for (const it of g.items) {
-      if (ids.has(it.id)) for (const sub of subtreeOf(it)) ids.add(sub.id);
+    /* deleting a container takes everything inside it along, however deep the container sits */
+    for (const id of selectedIds) {
+      const it = groupsRef.current.map((g) => findItemIn(g.items, id)).find(Boolean);
+      if (it) for (const sub of subtreeOf(it)) ids.add(sub.id);
     }
-    /* nothing deletable when every selected part sits in a locked group: no snapshot, keep the selection */
-    if (groupsRef.current.every((g) => g.locked || !g.items.some((it) => ids.has(it.id)))) {
-      showToast(lockedGroupMsg());
+    /* Which groups hold any of the parts asked for. A part inside a container is not one of its
+       group's own items, so the tree is searched: a plain contains-check would call a nested part
+       undeletable. */
+    const holders = holdersOf(groupsRef.current, selectedIds);
+    if (holders.length === 0) {
+      /* Nothing to delete: the selection no longer names any part that is on the canvas. */
+      setSelectedIds([]);
       return;
     }
     snapshot();
+    /* A deleted panel leaves the empty panel of its tab behind, like one taken out of the row: the
+       row's panels are known by their place, so its neighbours would slide back a tab without it. */
+    const slots = new Map<string, { parent: Item; at: number }>();
+    slotsOf(groupsRef.current.flatMap((g) => g.items), null, slots);
+    const lost = new Map<string, number[]>();
+    for (const id of ids) {
+      const s = slots.get(id);
+      /* a tab row deleted whole takes its panels with it: only its own children are put back */
+      if (s && s.parent.kind === "tabs" && !ids.has(s.parent.id)) lost.set(s.parent.id, [...(lost.get(s.parent.id) ?? []), s.at]);
+    }
     setGroups((prev) =>
       prev
         .map((g) => {
-          /* Delete / Backspace leaves a locked group and its parts alone */
-          if (g.locked) return g;
-          if (g.free) return collapseFree({ ...g, items: pruneItems(g.items, ids) }, widthsRef.current);
+          if (g.free) return collapseFree({ ...g, items: refillPanels(pruneItems(g.items, ids), lost) }, widthsRef.current);
           let x = g.x;
           let y = g.y;
           let items = g.items;
@@ -1914,7 +2064,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
             items = items.slice(1);
           }
           if (x !== g.x || y !== g.y) instantRef.current.add(g.id);
-          return { ...g, x, y, items: pruneItems(items, ids) };
+          return { ...g, x, y, items: refillPanels(pruneItems(items, ids), lost) };
         })
         .filter((g) => g.items.length > 0),
     );
@@ -1933,7 +2083,6 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       for (const it of fg.items) pos[idMap.get(it.id)!] = fg.pos?.[it.id] ?? { x: 0, y: 0 };
       const copyG: Group = {
         ...fg,
-        locked: undefined,
         id: uid(),
         x: fg.x + 24,
         y: fg.y + 24,
@@ -2007,8 +2156,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     }
     let group: Group;
     if (g.items.every((it) => ids.has(it.id))) {
-      /* a copy starts unlocked; the lock belongs to the original */
-      group = { ...structuredClone(g), locked: undefined };
+      group = structuredClone(g);
     } else {
       const rect = itemRects().find((r) => r.id === selected.id);
       if (!rect) return;
@@ -2083,8 +2231,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     (kind: AlignKind) => {
       const ids = new Set(selectedIds);
       const all = groupsRef.current;
-      /* a locked group is left out of the alignment and stays an obstacle for the others */
-      const units = all.filter((g) => !g.locked && g.items.some((it) => ids.has(it.id)));
+      const units = all.filter((g) => g.items.some((it) => ids.has(it.id)));
       if (units.length === 0) return;
       const unitIds = new Set(units.map((g) => g.id));
       const distributing = kind === "distributeH" || kind === "distributeV";
@@ -2158,11 +2305,6 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const groupSelected = useCallback(() => {
     const ids = new Set(selectedIds);
     if (ids.size < 2) return;
-    /* regrouping would carry a locked group's parts into an unlocked group */
-    if (groupsRef.current.some((g) => g.locked && g.items.some((it) => ids.has(it.id)))) {
-      showToast(lockedGroupMsg());
-      return;
-    }
     const rects = new Map(itemRects().map((r) => [r.id, r]));
     const picked: Item[] = [];
     let top = -1;
@@ -2230,10 +2372,6 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const containerizeSelected = useCallback(() => {
     const ids = new Set(selectedIds);
     if (ids.size === 0) return;
-    if (groupsRef.current.some((g) => g.locked && g.items.some((it) => ids.has(it.id)))) {
-      showToast(lockedGroupMsg());
-      return;
-    }
     const { picked, rects, top } = pickedTop(ids);
     if (picked.length === 0) return;
     const l = Math.min(...picked.map((it) => rects.get(it.id)!.l));
@@ -2246,7 +2384,10 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     box.id = uid();
     box.size = boxW;
     box.size2 = boxH;
-    box.children = picked.map((it) => ({ ...it, x: Math.round(rects.get(it.id)!.l - l + CONTAINER_PAD), y: Math.round(rects.get(it.id)!.t - t + CONTAINER_PAD) }));
+    /* becoming a child means drawing above the parent, contents and all (see liftAbove) */
+    box.children = picked.map((it) =>
+      liftAbove({ ...it, x: Math.round(rects.get(it.id)!.l - l + CONTAINER_PAD), y: Math.round(rects.get(it.id)!.t - t + CONTAINER_PAD) }, layerOf(box) + 1),
+    );
     const ng: Group = { id: uid(), x: Math.round(l - CONTAINER_PAD), y: Math.round(t - CONTAINER_PAD), axis: "x", items: [box], free: true };
     snapshot();
     setGroups((prev) => {
@@ -2276,10 +2417,6 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     const box = boxes[0];
     const boxRect = rects.get(box.id)!;
     const kids = picked.filter((it) => it.id !== box.id);
-    if (groupsRef.current.some((g) => g.locked && g.items.some((it) => it.id === box.id))) {
-      showToast(lockedGroupMsg());
-      return;
-    }
     snapshot();
     setGroups((prev) => {
       const out: Group[] = [];
@@ -2297,7 +2434,9 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                 ...it,
                 children: [
                   ...(it.children ?? []),
-                  ...kids.map((k) => ({ ...k, x: Math.round(rects.get(k.id)!.l - boxRect.l), y: Math.round(rects.get(k.id)!.t - boxRect.t) })),
+                  ...kids.map((k) =>
+                    liftAbove({ ...k, x: Math.round(rects.get(k.id)!.l - boxRect.l), y: Math.round(rects.get(k.id)!.t - boxRect.t) }, layerOf(it) + 1),
+                  ),
                 ] as PlacedItem[],
               }
             : it,
@@ -2325,13 +2464,19 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       const out: Group[] = [];
       for (const g of prev) {
         const freed: { child: PlacedItem; owner: Item }[] = [];
+        /* the places a tab row has just lost, filled again below: a panel that leaves takes the
+           empty panel of its tab's place, so the panels after it keep their own tabs */
+        const lost = new Map<string, number[]>();
         const items = g.items.map((it) => {
           if (!it.children) return it;
           const keep = it.children.filter((c) => !freeing.has(c.id));
-          for (const c of it.children) if (freeing.has(c.id)) freed.push({ child: c, owner: it });
+          for (const [at, c] of it.children.entries()) if (freeing.has(c.id)) {
+            freed.push({ child: c, owner: it });
+            if (it.kind === "tabs") lost.set(it.id, [...(lost.get(it.id) ?? []), at]);
+          }
           return { ...it, children: keep.length ? keep : undefined };
         });
-        out.push({ ...g, items });
+        out.push({ ...g, items: refillPanels(items, lost) });
         /* a freed part lands on the screen as its own layer, where it was drawn */
         for (const { child, owner } of freed) {
           const o = rects.get(owner.id);
@@ -2381,8 +2526,12 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       const out = prev.map((g) => {
         const owner = findItemIn(g.items, parent.id);
         if (!owner) return g;
+        const at = (owner.children ?? []).findIndex((c) => c.id === itemId);
         const keep = (owner.children ?? []).filter((c) => c.id !== itemId);
-        return { ...g, items: patchItemIn(g.items, parent.id, { children: keep.length ? keep : undefined }) };
+        /* a panel that leaves a tab row leaves the empty panel of its tab behind: the row's
+           panels are known by their place, so its neighbours would slide back a tab without it */
+        const next = keepPanelSlots({ ...owner, children: keep }, at < 0 ? [] : [at]);
+        return { ...g, items: patchItemIn(g.items, parent.id, { children: next.length ? next : undefined }) };
       });
       const { x: _x, y: _y, ...it } = held;
       /* they gather in one group of their own, named so the panel says what it is */
@@ -2398,155 +2547,169 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   }, [itemRects, snapshot]);
 
   /** Asks, with both names, before moving a part into a container on its screen. */
-  const [nestAsk, setNestAsk] = useState<{ itemId: string; containerId: string; itemName: string; containerName: string } | null>(null);
+  const [nestAsk, setNestAsk] = useState<{ itemIds: string[]; containerId: string; itemName: string; containerName: string } | null>(null);
 
-  const askNest = useCallback((it: Item, wants?: string) => {
+  const askNest = useCallback((items: Item[], wants?: string) => {
     const rects = new Map(itemRects().map((r) => [r.id, r]));
-    const me = rects.get(it.id);
-    if (!me) return;
-    /* the box the part already sits in, else the nearest one on the same screen */
-    const boxes = itemsOf(groupsRef.current).filter((b) => b.kind === "box" && b.id !== it.id && !subtreeOf(it).some((d) => d.id === b.id));
-    if (boxes.length === 0) {
-      showToast(t("nestNoContainer", lang), 1800, "info");
-      return;
-    }
-    const home = groupsRef.current.find((g) => !!findItemIn(g.items, it.id));
+    const picked = items.map((it) => rects.get(it.id)).filter((r): r is NonNullable<typeof r> => !!r);
+    if (picked.length === 0 || picked.length !== items.length) return;
+    /* what the drop is judged by: the box around everything being dropped, which is one part or
+       every part of a run */
+    const me = {
+      l: Math.min(...picked.map((r) => r.l)),
+      t: Math.min(...picked.map((r) => r.t)),
+      r: Math.max(...picked.map((r) => r.r)),
+      b: Math.max(...picked.map((r) => r.b)),
+    };
+    const ids = new Set(items.map((it) => it.id));
+    /* a container cannot be dropped into itself or into anything it holds */
+    const boxes = itemsOf(groupsRef.current).filter(
+      (b) => b.kind === "box" && !ids.has(b.id) && !items.some((it) => subtreeOf(it).some((d) => d.id === b.id)),
+    );
+    const home = groupsRef.current.find((g) => !!findItemIn(g.items, items[0].id));
     const page = home ? frameOfGroup(home, framesRef.current, widthsRef.current) : null;
     const here = boxes.filter((b) => {
       const owner = groupsRef.current.find((g) => !!findItemIn(g.items, b.id));
       return !page || (owner ? frameOfGroup(owner, framesRef.current, widthsRef.current)?.id === page.id : false);
     });
-    const chosen = wants ? boxes.find((b) => b.id === wants) : undefined;
-    const pool = chosen ? [chosen] : here.length ? here : boxes;
+    /* The row the author dropped onto decides, and only it: falling back to "the box that overlaps
+       most" would move the part somewhere they did not point at. */
+    if (wants) {
+      /* a tab row receives into the panel of the tab in front, and says so in the question */
+      const row = itemsOf(groupsRef.current).find((x) => x.id === wants);
+      const outside = !!row && !items.some((it) => subtreeOf(it).some((d) => d.id === row.id));
+      const isRow = row?.kind === "tabs" && outside;
+      /* A row takes what is dropped on it; so does a part that writes text of its own, which a
+         dragged text belongs inside. */
+      const named = isRow ? row : (boxes.find((b) => b.id === wants) ?? (outside && row && items.every((it) => it.kind === "text") && takesText(row) ? row : undefined));
+      if (!named) {
+        showToast(t("nestSelf", lang), 2000, "info");
+        return;
+      }
+      setNestAsk({
+        itemIds: items.map((it) => it.id),
+        containerId: named.id,
+        itemName: describeItems(items, lang),
+        /* a box that goes back into the panel of its own tab is named after that tab, not after the
+           one in front */
+        containerName:
+          named.kind === "tabs"
+            ? named.tabs?.[(items.length === 1 ? panelSlotFor(named, items[0]) : null) ?? tabIndexOf(named)]?.label.trim() || named.label.trim() || t("tabs", lang)
+            : named.label.trim() || KIND_TEXT[lang][named.kind]?.noun || t("container", lang),
+      });
+      return;
+    }
+    const pool = here.length ? here : boxes;
+    if (pool.length === 0) {
+      showToast(t("nestNoContainer", lang), 1800, "info");
+      return;
+    }
     const mine = (b: Item) => {
       const r = rects.get(b.id);
       return r ? Math.max(0, Math.min(r.r, me.r) - Math.max(r.l, me.l)) * Math.max(0, Math.min(r.b, me.b) - Math.max(r.t, me.t)) : 0;
     };
     const box = [...pool].sort((a, b) => mine(b) - mine(a))[0];
     setNestAsk({
-      itemId: it.id,
+      itemIds: items.map((it) => it.id),
       containerId: box.id,
       /* the name the layers panel shows for it, so the question reads as the author sees it */
-      itemName: it.label.trim() || (KIND_SPEC[it.kind] ?? KIND_SPEC.box).label,
+      itemName: describeItems(items, lang),
       containerName: box.label.trim() || t("container", lang),
     });
   }, [itemRects, lang]);
 
-  /** the confirmed move: the part becomes a child, keeping the place it had on screen */
-  const nestInto = useCallback((itemId: string, containerId: string) => {
+  /**
+   * Puts parts inside a container: a container takes them directly, while a tab row takes a box
+   * named after one of its empty panels back into that panel — the author is putting back a panel
+   * they took out, and a panel is known by its place in the row — and anything else into the panel
+   * of the tab in front, making the row's panels first when it has none, in the same step. Null
+   * means the container is gone, so the caller can leave the drop alone rather than lose the parts.
+   */
+  const putIn = useCallback((groups: Group[], parts: { item: Item; at: { l: number; t: number } }[], containerId: string): Group[] | null => {
+    const parts_ = parts;
+    const target = groups.map((g) => findItemIn(g.items, containerId)).find(Boolean) as Item | null;
+    if (!target) return null;
+    if (target.kind === "tabs") {
+      const patch = tabPanelsPatch(target);
+      const row = patch ? { ...target, ...patch } : target;
+      const out = patch ? groups.map((g) => (findItemIn(g.items, row.id) ? { ...g, items: patchItemIn(g.items, row.id, patch) } : g)) : groups;
+      /* one box, named after a tab whose panel is empty: it goes back in that panel, where it was */
+      const one = parts_.length === 1 ? (parts_[0].item as PlacedItem) : null;
+      const back = one ? restorePanel(row, one, widthsRef.current) : null;
+      if (back) return out.map((g) => (findItemIn(g.items, row.id) ? { ...g, items: patchItemIn(g.items, row.id, { children: back }) } : g));
+      const panel = tabPanelId(row);
+      return panel ? putIn(out, parts_, panel) : null;
+    }
+    /* The empty panel of a tab is scaffolding, not content: a box named for that tab goes back into
+       the row's slot rather than inside the panel, which is what the author aimed at. */
+    const dropped = parts_.length === 1 ? (parts_[0].item as PlacedItem) : null;
+    const parentRow = dropped ? parentOf(groups, target.id) : null;
+    if (dropped && parentRow?.kind === "tabs") {
+      const panelAt = (parentRow.children ?? []).findIndex((c) => c.id === target.id);
+      if (panelAt >= 0 && panelSlotFor(parentRow, dropped) === panelAt) {
+        const back = restorePanel(parentRow, dropped, widthsRef.current);
+        if (back) return groups.map((g) => (findItemIn(g.items, parentRow.id) ? { ...g, items: patchItemIn(g.items, parentRow.id, { children: back }) } : g));
+      }
+    }
     const rects = new Map(itemRects().map((r) => [r.id, r]));
-    const me = rects.get(itemId);
-    const box = rects.get(containerId);
-    const src = groupsRef.current.find((g) => !!findItemIn(g.items, itemId));
-    const dest = groupsRef.current.find((g) => !!findItemIn(g.items, containerId));
-    if (!me || !box || !src || !dest) return;
-    const moving = findItemIn(src.items, itemId);
-    if (!moving) return;
+    const at = rects.get(target.id);
+    if (!at) return null;
+    const borns = parts_.map((p) => childAt(target, p.item, p.at, at, widthsRef.current));
+    return groups.map((g) => (findItemIn(g.items, target.id) ? { ...g, items: patchItemIn(g.items, target.id, { children: [...(findItemIn(g.items, target.id)?.children ?? []), ...borns] as PlacedItem[] }) } : g));
+  }, [itemRects]);
+
+  /** the confirmed move: the parts become children, keeping the place they had on screen */
+  const nestInto = useCallback((itemIds: string[], containerId: string) => {
+    const rects = new Map(itemRects().map((r) => [r.id, r]));
+    const moving = itemIds.map((id) => {
+      const it = findItemIn(groupsRef.current.flatMap((g) => g.items), id) as PlacedItem | null;
+      const r = rects.get(id);
+      return it && r ? { item: it, at: { l: r.l, t: r.t } } : null;
+    });
+    if (moving.some((m) => !m)) return;
+    const gone = new Set(itemIds);
     snapshot();
     setGroups((prev) => {
-      /* the part leaves its group (and its run) and lands in the container's own coordinates */
+      /* the parts leave their groups (and their runs) first */
       const out: Group[] = [];
       for (const g of prev) {
-        const without = pruneItems(g.items, new Set([itemId]));
-        if (g.id === src.id) {
-          if (g.free) {
-            if (without.length) out.push(collapseFree({ ...g, items: without }, widthsRef.current));
-          } else {
-            let x = g.x;
-            let y = g.y;
-            let rest = g.items;
-            while (rest.length && rest[0].id === itemId) {
-              const sz = sizeOf(rest[0], widthsRef.current);
-              if (g.axis === "x") x += sz.w + GAP;
-              else y += sz.h + GAP;
-              rest = rest.slice(1);
-            }
-            if (without.length) out.push({ ...g, x, y, items: without });
-          }
-        } else if (without.length) out.push({ ...g, items: without });
+        /* A part being nested may sit inside a container rather than in the group's own run: the
+           pruning has to be taken whenever anything went, however deep — keeping the group's own
+           items on a length check would quietly leave the part where it was and add a second copy
+           inside the container it was dropped on. */
+        const { items: without, changed } = pruneParts(g.items, gone);
+        if (!changed) {
+          out.push(g);
+          continue;
+        }
+        if (g.free) {
+          if (without.length) out.push(collapseFree({ ...g, items: without }, widthsRef.current));
+          continue;
+        }
+        let x = g.x;
+        let y = g.y;
+        let rest = g.items;
+        while (rest.length && gone.has(rest[0].id)) {
+          const sz = sizeOf(rest[0], widthsRef.current);
+          if (g.axis === "x") x += sz.w + GAP;
+          else y += sz.h + GAP;
+          rest = rest.slice(1);
+        }
+        if (without.length) out.push({ ...g, x, y, items: without });
       }
-      /* a child sits over its parent in the layer order */
-      const parentItem = dest ? findItemIn(dest.items, containerId) : null;
-      const parentZ = parentItem ? layerOf(parentItem) : LAYER_DEFAULT;
-      const boxSize = sizeOf(parentItem ?? (moving as Item), widthsRef.current);
-      const kidSize = sizeOf(moving, widthsRef.current);
-      /* a part dropped past the container's edge is pulled inside, where it can be seen */
-      const born: PlacedItem = {
-        ...(moving as PlacedItem),
-        x: Math.round(clamp(me.l - box.l, 0, Math.max(0, boxSize.w - kidSize.w))),
-        y: Math.round(clamp(me.t - box.t, 0, Math.max(0, boxSize.h - kidSize.h))),
-        z: parentZ + 1,
-      };
-      return out.map((g) => (g.id === dest.id ? { ...g, items: patchItemIn(g.items, containerId, { children: [...(findItemIn(g.items, containerId)?.children ?? []), born] as PlacedItem[] }) } : g));
+      return putIn(out, moving as { item: Item; at: { l: number; t: number } }[], containerId) ?? out;
     });
-    setSelectedIds([itemId]);
+    setSelectedIds(itemIds);
     setNestAsk(null);
-  }, [itemRects, snapshot]);
+  }, [itemRects, putIn, snapshot]);
 
   /** Binds a dialog to a part. The dialog lives on the part's own page, hidden until the
    *  tap: the first press adds it there (making a page first when the part has none), and
    *  every press after that finds the very same one again. */
-  const bindDialog = useCallback(
-    (itemId: string) => {
-      const owner = groupsRef.current.find((g) => !!findItemIn(g.items, itemId));
-      const item = owner ? findItemIn(owner.items, itemId) : null;
-      if (!owner || !item) return;
-      /* already bound, and the dialog is still in the layers: take the author to it */
-      const boundTo = item.action?.dialog ? item.action.to : null;
-      if (boundTo && groupsRef.current.some((g) => !!findItemIn(g.items, boundTo))) {
-        setSelectedFrameId(null);
-        setSelectedIds([boundTo]);
-        return;
-      }
-      /* the composite the author keeps as a dialog, by any name that reads like one */
-      const template = customParts.find((c) => /(弹框|弹窗|对话框|dialog|popup|modal)/i.test(c.name)) ?? customParts[0] ?? null;
-      const inside: Item = template ? compositeInstance(template, uid) : (() => {
-        const d = makeItem("dialog");
-        d.size = CONTENT_W;
-        return d;
-      })();
-      inside.modal = true;
-      const size = sizeOf(inside, widthsRef.current);
-
-      /* where the dialog goes: the page the button sits on, or a fresh page for it */
-      const page = frameOfGroup(owner, framesRef.current, widthsRef.current);
-      const pageX = framesRef.current.length ? Math.max(...framesRef.current.map((f) => frameRect(f).r)) + FRAME_GAP : 0;
-      const fresh: Frame | null = page ? null : { id: uid(), name: `${item.label.trim() || t("dialog", lang)}`, x: pageX, y: framesRef.current[0]?.y ?? 0, w: framesRef.current[0]?.w, h: framesRef.current[0]?.h };
-      const target = page ?? fresh!;
-      const { w, h } = frameSizeOf(target);
-      const group: Group = {
-        id: uid(),
-        x: target.x + Math.round((w - size.w) / 2),
-        y: target.y + Math.round((h - size.h) / 2),
-        axis: "x",
-        items: [inside],
-        free: true,
-      };
-      snapshot();
-      if (fresh) {
-        setFrames((fs) => [...fs, fresh]);
-        /* a part with no page of its own is brought onto the page just made for the dialog */
-        const dx = fresh.x + PHONE_MARGIN - owner.x;
-        const dy = fresh.y + 120 - owner.y;
-        setGroups((gs) => gs.map((g) => (g.id === owner.id ? { ...g, x: g.x + dx, y: g.y + dy } : g)));
-      }
-      setGroups((gs) => [...gs, group]);
-      setGroups((gs) => gs.map((g) => (findItemIn(g.items, itemId) ? { ...g, items: patchItemIn(g.items, itemId, { action: { to: inside.id, transition: "expand", dialog: true } }) } : g)));
-      setSelectedFrameId(null);
-      setSelectedIds([inside.id]);
-    },
-    [customParts, lang, snapshot],
-  );
-
   /** Split a free group back into single runs at their current positions, in the same layer slot. */
   const ungroupSelected = useCallback(() => {
     const g = selectedGroup;
     if (!g) return;
-    /* ungrouping would replace a locked group with unlocked single runs */
-    if (g.locked) {
-      showToast(lockedGroupMsg());
-      return;
-    }
     snapshot();
     const singles: Group[] = explodeGroup(g, widthsRef.current).map((run) => ({ ...run, id: uid() }));
     for (const sg of singles) instantRef.current.add(sg.id);
@@ -2583,10 +2746,9 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       }
       if (selectedIds.length === 0) return;
       const ids = new Set(selectedIds);
-      /* a locked group stays where it is, even when its parts are selected */
       const moving = new Set(
         groupsRef.current
-          .filter((g) => !g.locked && g.items.some((it) => ids.has(it.id)))
+          .filter((g) => g.items.some((it) => ids.has(it.id)))
           .map((g) => g.id),
       );
       /* a part inside a container moves within it instead of moving the whole group */
@@ -2752,16 +2914,17 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   );
   const selectedPartFrame = useMemo(() => {
     if (!primaryId || frame !== "phone") return null;
-    const g = groups.find((g) => g.items.some((it) => it.id === primaryId));
+    const g = groups.find((x) => !!findItemIn(x.items, primaryId));
     return g ? (frameOfGroup(g, frames, widths) ?? null) : null;
   }, [primaryId, frame, groups, frames, widths]);
 
-  /** the screen the tidy button works on: the selected one, or the one under the selected part */
-  const tidyTarget = useMemo((): Frame | null => {
+  /** the screen in play: the selected one, or the one under the selected part. The AI reads it,
+   *  and it is what the panel would work on */
+  const screenInPlay = useMemo((): Frame | null => {
     if (frame !== "phone" || isMobile) return null;
     if (selectedFrame) return selectedFrame;
     if (!primaryId) return null;
-    const g = groups.find((g) => g.items.some((it) => it.id === primaryId));
+    const g = groups.find((x) => !!findItemIn(x.items, primaryId));
     return g ? (frameOfGroup(g, frames, widths) ?? null) : null;
   }, [frame, isMobile, selectedFrame, primaryId, groups, frames, widths]);
 
@@ -2868,6 +3031,52 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     }
   };
 
+  /**
+   * A page for a dialog. It is drawn like a screen — the same size, the same margins, the same tidy
+   * — but a tap opens only what is drawn on it: the page is the stage the dialog was laid out on, so
+   * its own background never appears. That is what keeps a dialog from covering the screen it opens
+   * over, and it is why a dialog can be edited without hiding anything.
+   */
+  const addDialogFrame = useCallback(
+    (bindTo?: string, target?: string | null) => {
+    snapshot();
+    const screens = framesRef.current.filter((f) => !isOverlayFrame(f));
+    const base = screens[screens.length - 1] ?? framesRef.current[0];
+    const f: Frame = {
+      id: uid(),
+      name: `${t("dialogN", lang)} ${framesRef.current.filter(isOverlayFrame).length + 1}`,
+      x: nextFrameX(),
+      y: base?.y ?? 0,
+      /* the author can change the level from here; a dialog is what this button is for */
+      role: "overlay",
+      level: DEFAULT_OVERLAY_LEVEL,
+      /* the shape of the screens it belongs to, so drawing in it feels like drawing in one */
+      ...(base ? framePresetPatch(framePresetOf(base)) : {}),
+    };
+    setFrames((fs) => [...fs, f]);
+    /* the tap that asked for it opens it: making a dialog and wiring it are one action */
+    if (bindTo) {
+      setGroups((gs) =>
+        gs.map((g) => {
+          const it = findItemIn(g.items, bindTo);
+          return it ? { ...g, items: patchItemIn(g.items, bindTo, actionPatchFor(it, target ?? null, { to: f.id, transition: "expand", dialog: true })) } : g;
+        }),
+      );
+    }
+    setLayersFrameId(f.id);
+    setSelectedFrameId(f.id);
+    setSelectedIds([]);
+    /* put it in the middle of the window, the way a new screen arrives */
+    const r = canvasRect();
+    if (r) {
+      const z = viewRef.current.z;
+      const { w, h } = frameSizeOf(f);
+      setView({ x: r.width / 2 - (f.x + w / 2) * z, y: r.height / 2 - (f.y + h / 2) * z, z });
+    }
+    },
+    [lang, snapshot],
+  );
+
   const patchFrame = (id: string, patch: Partial<Frame>) => {
     snapshotFor("frame:" + id + ":" + Object.keys(patch).join(","));
     setFrames((fs) => fs.map((f) => (f.id === id ? { ...f, ...patch } : f)));
@@ -2897,53 +3106,14 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     /* a target the author never picked follows the screens */
     if (platform === defaultPlatformOf(frames, frameRef.current)) setPlatform(null);
     snapshot();
-    tidyRef.current = null;
     setEasing(true);
     window.setTimeout(() => setEasing(false), SETTLE_MS + 40);
     setFrames(laid.frames);
     setGroups(laid.groups);
   };
 
-  /** the tidy button's state for the screen in play; the layout pass runs only when the document changes */
-  const tidyState = useMemo((): TidyState | null => {
-    if (!tidyTarget) return null;
-    const last = tidyRef.current;
-    if (last && last.frameId === tidyTarget.id && last.after === groups) return "undo";
-    return tidyFrame(groups, tidyTarget, frames, widths) ? "tidy" : "done";
-  }, [tidyTarget, groups, frames, widths]);
-
-  const tidy = (f: Frame) => {
-    const last = tidyRef.current;
-    if (last && last.frameId === f.id && last.after === groupsRef.current) {
-      snapshot();
-      setGroups(last.before);
-      tidyRef.current = null;
-      return;
-    }
-    const after = tidyFrame(groupsRef.current, f, framesRef.current, widthsRef.current);
-    if (!after) return;
-    snapshot();
-    tidyRef.current = { frameId: f.id, before: groupsRef.current, after };
-    setGroups(after);
-  };
-
-
-  /** sets where Tidy puts a screen's body, then tidies it that way */
-  const setPlace = (f: Frame, place: Place) => {
-    const next: Frame = { ...f, place: place === "top" ? undefined : place };
-    /* one undo step covers both the setting and the tidy it causes */
-    snapshot();
-    const frames = framesRef.current.map((o) => (o.id === f.id ? next : o));
-    setFrames(frames);
-    tidyRef.current = null;
-    const after = tidyFrame(groupsRef.current, next, frames, widthsRef.current);
-    if (!after) return;
-    tidyRef.current = { frameId: f.id, before: groupsRef.current, after };
-    setGroups(after);
-  };
-
   const toastTimer = useRef<number | null>(null);
-  /** the desktop's message pill beside the tidy button; the phone keeps its centered toast */
+  /** the desktop's message pill under the header; the phone keeps its centered toast */
   const showAiNote = (text: string, icon = "check", ms = 2200) => {
     setAiNote({ text, icon });
     if (aiNoteTimer.current) window.clearTimeout(aiNoteTimer.current);
@@ -2966,7 +3136,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   };
 
   const aiReady = hasKey(aiSettings) && aiSettings.model.trim().length > 0 && isSecureUrl(aiSettings.baseUrl);
-  const aiReason = !aiReady ? t("aiNoKey", lang) : !tidyTarget ? t("aiSelectScreen", lang) : undefined;
+  const aiReason = !aiReady ? t("aiNoKey", lang) : !screenInPlay ? t("aiSelectScreen", lang) : undefined;
 
   /** Writes one field with the model: a part's behavior note, or a screen's description.
    *  The result goes straight in; the field remembers what it said so the rewrite can be undone. */
@@ -3061,10 +3231,13 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
             }),
           })),
       );
+      /* the page's own variables go with it; a rule that referred to one simply stops matching */
+      setVars((vs) => vs.filter((v) => v.pageId !== id));
+      if (varsScope === id) setVarsScope(VARS_ALL);
       setSelectedFrameId(null);
       setSelectedIds((cur) => cur.filter((x) => !groupsRef.current.some((g) => gone.has(g.id) && g.items.some((it) => it.id === x))));
     },
-    [snapshot],
+    [snapshot, varsScope],
   );
 
   const duplicateFrame = (id: string) => {
@@ -3129,8 +3302,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   /** the runs of one screen drawn with plain divs: the export layer */
   /** a container's children as the plain, deterministic renderer needs them */
   const staticChildren = (parent: Item): React.ReactNode =>
-    (parent.children ?? []).filter((c) => childShown(parent, c)).sort(byLayer).map((c) => (
-      <div key={c.id} style={{ position: "absolute", left: c.x, top: c.y }}>
+    (parent.children ?? []).filter((c, i) => childDrawn(parent, c, i)).sort(byLayer).map((c) => (
+      <div key={c.id} style={{ position: "absolute", left: c.x + foldPlace(c, widths).dx, top: c.y + foldPlace(c, widths).dy }}>
         <M3Static item={c} palette={p} overlay={staticChildren(c)} />
       </div>
     ));
@@ -3192,7 +3365,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   item={it}
                   palette={p}
                   radii={radii}
-                  style={MEASURED.includes(it.kind) ? undefined : { width: sizeOf(it, widths).w, height: sizeOf(it, widths).h }}
+                  style={{ ...(MEASURED.includes(it.kind) ? {} : { width: sizeOf(it, widths).w, height: sizeOf(it, widths).h }), ...foldMargins(it, widths) }}
                   overlay={staticChildren(it)}
                 />
               );
@@ -3414,13 +3587,186 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   /* ---------- render ---------- */
   const dragSize = drag ? sizeOf(drag.item, widths) : { w: 0, h: 0 };
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  /** what the selected tap can open as a dialog, and what that dialog can be made of */
+  /** The part the author asked to work on up close, and the view to go back to. */
+  const [magnified, setMagnified] = useState<{ id: string; before: CanvasView } | null>(null);
+
+  /**
+   * "Edit this one up close": the canvas settles on the part — as large as it and the window allow —
+   * so a container whose children are too small to aim at can be worked in. Pressing it again puts
+   * the view back exactly where it was, whatever happened in between.
+   */
+  const toggleMagnify = useCallback(
+    (id: string) => {
+      if (magnified?.id === id) {
+        setView(magnified.before);
+        setMagnified(null);
+        return;
+      }
+      const box = itemRects().find((r) => r.id === id);
+      const el = canvasRect();
+      if (!box || !el) return;
+      const before = magnified?.before ?? viewRef.current;
+      setView(
+        magnifyView({
+          width: el.width,
+          height: el.height,
+          view: viewRef.current,
+          box: { l: box.l, t: box.t, r: box.r, b: box.b },
+          pad: revealPadding(mobileRef.current, 48),
+          minZ: MIN_Z,
+          maxZ: MAX_Z,
+        }),
+      );
+      setMagnified({ id, before });
+      setSelectedIds([id]);
+    },
+    [itemRects, magnified],
+  );
+
+  const revealRect = useCallback((box: { l: number; t: number; r: number; b: number }, margin = 24) => {
+    const r = canvasRect();
+    if (!r) return;
+    const next = revealView({
+      width: r.width,
+      height: r.height,
+      view: viewRef.current,
+      box,
+      /* the floating toolbar and the control bar sit over the canvas on a phone, so the window
+         that is really free there is smaller than the element */
+      pad: revealPadding(mobileRef.current, margin),
+      minZ: MIN_Z,
+      maxZ: MAX_Z,
+    });
+    if (next) setView(next);
+  }, []);
+
+  /** brings a page into view, bezel and title included, so it arrives recognisable */
+  const revealFrame = useCallback(
+    (id: string) => {
+      const f = framesRef.current.find((x) => x.id === id);
+      if (!f) return;
+      const box = frameRect(f);
+      revealRect({ l: box.l - BEZEL, t: box.t - BEZEL - FRAME_LABEL_H, r: box.r + BEZEL, b: box.b + BEZEL }, 32);
+    },
+    [revealRect],
+  );
+
+  /** brings a set of parts into view: the box around all of them, so a multi-selection arrives whole */
+  const revealItems = useCallback(
+    (ids: string[]) => {
+      if (!ids.length) return;
+      const wanted = new Set(ids);
+      const hit = itemRects().filter((x) => wanted.has(x.id));
+      if (!hit.length) return;
+      revealRect(
+        {
+          l: Math.min(...hit.map((x) => x.l)),
+          t: Math.min(...hit.map((x) => x.t)),
+          r: Math.max(...hit.map((x) => x.r)),
+          b: Math.max(...hit.map((x) => x.b)),
+        },
+        80,
+      );
+    },
+    [revealRect],
+  );
+
+  /** What the dialog card's two choices do: make a dialog for this tap, or open one that exists. */
+  const chooseDialog = useCallback(
+    (itemId: string, choice: DialogChoice, target: string | null) => {
+      const item = groupsRef.current.map((g) => findItemIn(g.items, itemId)).find(Boolean);
+      if (!item) return;
+      /* the tap the author is binding: a destination of a bar carries its own action, a plain part
+         the part's own — reading and writing the same one keeps "bound" and "saved" the same thing */
+      const current = target ? item.actions?.[target] : item.action;
+      if (choice.kind === "new") {
+        addDialogFrame(itemId, target);
+        return;
+      }
+      /* choosing the one this tap already opens just takes the author to it */
+      if (choice.id === (current?.dialog ? current.to : null)) {
+        setLayersFrameId(choice.id);
+        if (framesRef.current.some((f) => f.id === choice.id)) {
+          setSelectedIds([]);
+          setSelectedFrameId(choice.id);
+          revealFrame(choice.id);
+        } else {
+          setSelectedFrameId(null);
+          setSelectedIds([choice.id]);
+          revealItems([choice.id]);
+        }
+        return;
+      }
+      snapshot();
+      setGroups((gs) =>
+        gs.map((g) => {
+          const it = findItemIn(g.items, itemId);
+          return it ? { ...g, items: patchItemIn(g.items, itemId, actionPatchFor(it, target, { to: choice.id, transition: "expand", dialog: true })) } : g;
+        }),
+      );
+    },
+    [addDialogFrame, revealFrame, revealItems, snapshot],
+  );
+
+  const dialogChoices = useMemo(() => {
+    if (!selected) return undefined;
+    /* an overlay drawn on a page is only reachable from that page, so only its groups are read */
+    const owner = groups.find((g) => !!findItemIn(g.items, selected.id));
+    const page = owner ? frameOfGroup(owner, frames, widths) : undefined;
+    const onPage = page ? groups.filter((g) => frameOfGroup(g, frames, widths)?.id === page.id) : groups;
+    return { dialogs: existingDialogs(frames, onPage), choose: (choice: DialogChoice, target: string | null) => chooseDialog(selected.id, choice, target) };
+  }, [selected, groups, frames, widths, chooseDialog]);
+
+  /** The other parts on the selected part's page: what a rule's look can be aimed at. A claim button
+   *  that marks the gift beside it as claimed names a part, and only the parts of its own page are in
+   *  reach, because a look is drawn while that screen is on show. */
+  const lookTargets = useMemo(() => {
+    if (!selected) return [];
+    const owner = groups.find((g) => !!findItemIn(g.items, selected.id));
+    const page = owner ? frameOfGroup(owner, frames, widths) : undefined;
+    const here = page ? groups.filter((g) => frameOfGroup(g, frames, widths)?.id === page.id) : groups;
+    const named = (it: Item) => it.label.trim() || KIND_TEXT[lang][it.kind]?.noun || KIND_SPEC[it.kind].label;
+    return itemsOf(here)
+      .filter((it) => it.id !== selected.id)
+      .map((it) => ({ id: it.id, name: named(it) }));
+  }, [selected, groups, frames, widths, lang]);
+
   const doc: Doc = useMemo(
-    () => ({ groups, frames, paletteKey, frame, title, brief, promptEdit, platform: platform ?? undefined, customPalette: customPalette ?? undefined, dynamicColor, theme, customParts: customParts.length ? customParts : undefined }),
-    [groups, frames, paletteKey, frame, title, brief, promptEdit, platform, customPalette, dynamicColor, theme, customParts],
+    () => ({ groups, frames, paletteKey, frame, title, brief, promptEdit, platform: platform ?? undefined, customPalette: customPalette ?? undefined, dynamicColor, theme, customParts: customParts.length ? customParts : undefined, vars: vars.length ? vars : undefined }),
+    [groups, frames, paletteKey, frame, title, brief, promptEdit, platform, customPalette, dynamicColor, theme, customParts, vars],
   );
   /** the same document, for callbacks that were created on an earlier render */
   const docRef = useRef(doc);
   docRef.current = doc;
+
+  /* The walkthrough report: the rail badge counts it and the panel lists it, so it is worked
+     out once here rather than twice from the same inputs. */
+  const auditReport = useMemo(() => audit(doc, widths), [doc, widths]);
+  const auditErrors = auditReport.filter((i) => i.severity === "error").length;
+
+  /**
+   * Brings a piece of the canvas into view. A row in the Layers panel or the review report is an
+   * instruction to *look* at something, so it must never leave the author staring at an unchanged
+   * screen; but recentring on every click throws the view around while they work through a list,
+   * so a target already on screen is left alone. The zoom is kept unless the target is bigger than
+   * the window, which is the one case where it could not be shown at all.
+   */
+  /** takes the author from a report row to the page or the part it is about */
+  const locateIssue = useCallback(
+    (issue: AuditIssue) => {
+      if (issue.frameId) setLayersFrameId(issue.frameId);
+      /* a row that names a part wants that part's own panel: the frame panel would hide it */
+      setSelectedIds(issue.itemId ? [issue.itemId] : []);
+      setSelectedFrameId(issue.itemId ? null : issue.frameId);
+      setSelectedLinkId(null);
+      setRightTab("edit");
+      /* the part itself when the row names one, its page otherwise */
+      if (issue.itemId) revealItems([issue.itemId]);
+      else if (issue.frameId) revealFrame(issue.frameId);
+    },
+    [revealFrame, revealItems],
+  );
 
   /** arrows from tappable parts to the frames they open */
   const links = useMemo(() => {
@@ -3536,7 +3882,10 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const layersFrame = useMemo(() => {
     if (frame !== "phone") return null;
     if (primaryId) {
-      const g = groups.find((x) => x.items.some((it) => it.id === primaryId));
+      /* the owner is searched through the whole tree: a nested child (a panel of a tabs
+       * row, a part inside a container) must point at its own screen, not at whatever
+       * screen happened to be listed before */
+      const g = groups.find((x) => !!findItemIn(x.items, primaryId));
       const fid = g ? frameOf.get(g.id) : undefined;
       if (fid) return frames.find((f) => f.id === fid) ?? null;
     }
@@ -3564,18 +3913,12 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     setGroups((gs) => [...gs.filter((g) => !inFrame.has(g.id)), ...ordered]);
   };
 
-  /** flips a group's lock from its row's lock icon in the Layers panel */
-  const toggleGroupLock = (id: string) => {
-    snapshot();
-    setGroups((prev) => prev.map((g) => (g.id === id ? { ...g, locked: !g.locked } : g)));
-  };
-
   /** The parts of one group in a new order: reading order for a connected run, back to
    *  front for a free group. Inside a free group a hidden run keeps its slots, handed out
    *  again in the new order, so reordering a list really moves its rows. */
   const reorderGroupItems = (groupId: string, order: string[]) => {
     const g = groupsRef.current.find((x) => x.id === groupId);
-    if (!g || g.locked) return;
+    if (!g) return;
     const byId = new Map(g.items.map((it) => [it.id, it]));
     const items = order.map((id) => byId.get(id)).filter((it): it is Item => !!it);
     if (items.length !== g.items.length || new Set(order).size !== order.length) return;
@@ -3600,6 +3943,36 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
 
   /** A part being moved inside its container: the pointer moves it in the container's own
    *  coordinates, so it stays inside the box it belongs to. */
+  const dragChildFrom = (clientX: number, clientY: number, shift: boolean, g: Group, parent: Item, child: PlacedItem) => {
+    flushPending();
+    setSelectedIds((cur) => (shift ? [...cur.filter((x) => x !== child.id), child.id] : [child.id]));
+    setSelectedFrameId(null);
+    setSelectedLinkId(null);
+    setRightTab("edit");
+    /* A child that fills its container edge to edge has nowhere to go inside it — a bar or a rail
+       laid in a box of its own size is the case this exists for. Dragging it moves the container,
+       which is the only thing left that can happen; leaving it a child drag would make the whole
+       thing look stuck. Two children are not in that position: one whose container scrolls (content
+       is meant to sit outside the viewport) and one the author picked in the layers panel — they
+       said which part they meant, so that part moves. */
+    const free = childDragFree(parent, selectedIds.includes(child.id));
+    const room = childDragRoom(parent, child, widthsRef.current, free);
+    /* the press is recorded where the part is *drawn*: a folded navigation part is drawn at the
+       corner its button sits in, not at the offsets it carries */
+    const f = foldPlace(child, widthsRef.current);
+    const ox = child.x + f.dx;
+    const oy = child.y + f.dy;
+    if (!free && room.w <= 0 && room.h <= 0) {
+      const gg: Gesture = { kind: "group", id: g.id, sx: clientX, sy: clientY, gx: g.x, gy: g.y, moved: false, overBin: false };
+      gestureRef.current = gg;
+      setGesture(gg);
+      return;
+    }
+    const gg: Gesture = { kind: "child", groupId: g.id, parentId: parent.id, id: child.id, sx: clientX, sy: clientY, ox, oy, moved: false, free };
+    gestureRef.current = gg;
+    setGesture(gg);
+  };
+
   const onChildPointerDown = (e: React.PointerEvent, g: Group, parent: Item, child: PlacedItem) => {
     if (e.button === 1 || modeRef.current === "hand" || spaceRef.current) {
       e.preventDefault();
@@ -3610,50 +3983,43 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
-    flushPending();
-    setSelectedIds((cur) => (e.shiftKey ? [...cur.filter((x) => x !== child.id), child.id] : [child.id]));
-    setSelectedFrameId(null);
-    setSelectedLinkId(null);
-    setRightTab("edit");
-    if (g.locked) return;
-    const gg: Gesture = { kind: "child", groupId: g.id, parentId: parent.id, id: child.id, sx: e.clientX, sy: e.clientY, ox: child.x, oy: child.y, moved: false };
-    gestureRef.current = gg;
-    setGesture(gg);
+    /* A part the author picked in the layers panel takes the drag, even when the press lands on a
+       part drawn over it: they chose the container, not whatever covers it. */
+    const picked = selectedAncestor(groupsRef.current, child.id, selectedIds);
+    if (picked && picked.id !== child.id) {
+      const up = parentOf(groupsRef.current, picked.id);
+      if (up) dragChildFrom(e.clientX, e.clientY, e.shiftKey, g, up, picked as PlacedItem);
+      else dragItemFrom(e.clientX, e.clientY, e.shiftKey, g, g.items.findIndex((it) => it.id === picked.id), picked);
+      return;
+    }
+    dragChildFrom(e.clientX, e.clientY, e.shiftKey, g, parent, child);
   };
 
-  /** A navigation part's own collapse button, live on the canvas: clicking it folds the
+  /** A navigation part's own fold button, live on the canvas: clicking its icon folds the
    *  destinations away exactly as the preview will, so the author can try it while editing. */
-  const navToggleNode = (it: Item): React.ReactNode => {
+  const navToggleNode = (it: Item, onDrag?: (e: React.PointerEvent) => void): React.ReactNode => {
     if (it.kind === "bottomNav" && it.barFolded !== undefined) {
       return (
-        <button
-          type="button"
+        <FoldButton
           title={t(it.barFolded ? "expandNavigation" : "collapseNavigation", lang)}
-          aria-label={t(it.barFolded ? "expandNavigation" : "collapseNavigation", lang)}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            patchItemById(it.id, { barFolded: !it.barFolded });
-          }}
-          style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 44, border: "none", padding: 0, background: "transparent", cursor: "pointer" }}
+          /* the same strip the icon is drawn in, folded or not (see the bar's own render) */
+          at={{ right: 0, top: 0, bottom: 0, width: 44 }}
+          onFold={() => setNavFold(it, !it.barFolded)}
+          onDrag={onDrag}
         />
       );
     }
     if (it.kind === "navRail" && isWideRail(it)) {
       const rail = railMetrics(it);
-      /* folded, the whole rail is the button's own pill, so it sits at its corner */
-      const at = it.railFolded ? { left: 4, top: 4 } : { left: rail.headerLeft, top: RAIL_TOP };
+      /* folded, the whole rail is the button's own pill, so it sits at its corner: the position
+         comes from the rail's own geometry, the same one the drawing uses */
+      const at = { left: rail.headerLeft, top: rail.headerTop };
       return (
-        <button
-          type="button"
+        <FoldButton
           title={t(it.railFolded ? "expandNavigation" : "collapseNavigation", lang)}
-          aria-label={t(it.railFolded ? "expandNavigation" : "collapseNavigation", lang)}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            patchItemById(it.id, { railFolded: !it.railFolded, railExpanded: !!it.railFolded });
-          }}
-          style={{ position: "absolute", ...at, width: 48, height: 48, border: "none", padding: 0, background: "transparent", cursor: "pointer", borderRadius: 24 }}
+          at={{ ...at, width: 48, height: 48, borderRadius: 24 }}
+          onFold={() => setNavFold(it, !it.railFolded)}
+          onDrag={onDrag}
         />
       );
     }
@@ -3662,8 +4028,9 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
 
   /** the children of one part, drawn inside its box in the order their levels ask for */  /** the children of one part, drawn inside its box in the order their levels ask for */
   const childNodes = (parent: Item, g: Group): React.ReactNode =>
-    (parent.children ?? []).filter((c) => childShown(parent, c)).sort(byLayer).map((c) => (
-      <div key={c.id} style={{ position: "absolute", left: c.x, top: c.y }}>
+    (parent.children ?? []).filter((c, i) => childDrawn(parent, c, i)).sort(byLayer).map((c) => (
+      /* a navigation part inside a container folds the same way it does on a screen */
+      <div key={c.id} style={{ position: "absolute", left: c.x + foldPlace(c, widths).dx, top: c.y + foldPlace(c, widths).dy }}>
         <M3Node
           item={c}
           palette={p}
@@ -3676,7 +4043,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           overlay={
             <>
               {childNodes(c, g)}
-              {navToggleNode(c)}
+              {navToggleNode(c, (e) => dragChildFrom(e.clientX, e.clientY, e.shiftKey, g, parent, c))}
             </>
           }
         />
@@ -3721,7 +4088,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                 overlay={
                   <>
                     {childNodes(pl.item, g)}
-                    {navToggleNode(pl.item)}
+                    {navToggleNode(pl.item, (e) => dragItemFrom(e.clientX, e.clientY, e.shiftKey, g, pl.index, pl.item))}
                   </>
                 }
               />
@@ -3822,6 +4189,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
               palette={p}
               widths={widths}
               radii={radii}
+              /* a run lays its parts out itself, so a folded navigation part takes its place as a margin */
+              style={foldMargins(c.item, widths)}
               pressed={pressedId === c.item.id}
               selected={selectedSet.has(c.item.id)}
               inRun={g.items.length > 1}
@@ -3830,7 +4199,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
               overlay={
                 <>
                   {childNodes(c.item, g)}
-                  {navToggleNode(c.item)}
+                  {navToggleNode(c.item, (e) => dragItemFrom(e.clientX, e.clientY, e.shiftKey, g, c.index, c.item))}
                 </>
               }
             />
@@ -4041,7 +4410,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
               )}
               <span aria-hidden style={{ width: 24, height: 1, background: p.outlineVariant }} />
               {LEFT_TABS.map((tab, i) => (
-                <div key={tab.key} style={{ marginTop: i === 0 ? 2 : 0 }}>
+                <div key={tab.key} style={{ marginTop: i === 0 ? 2 : 0, position: "relative" }}>
                   <IconBtn
                     icon={tab.icon}
                     p={p}
@@ -4053,6 +4422,31 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                     title={t(tab.title, lang)}
                     size={44}
                   />
+                  {/* the review tab carries the number of things that break the prototype:
+                      the count is worth seeing before the panel is ever opened */}
+                  {tab.key === "audit" && auditErrors > 0 && (
+                    <span
+                      aria-hidden
+                      style={{
+                        position: "absolute",
+                        top: 2,
+                        right: 2,
+                        minWidth: 18,
+                        height: 18,
+                        padding: "0 4px",
+                        borderRadius: 9,
+                        background: p.error,
+                        color: p.onError,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        lineHeight: "18px",
+                        textAlign: "center",
+                        pointerEvents: "none",
+                      }}
+                    >
+                      {auditErrors > 99 ? "99+" : auditErrors}
+                    </span>
+                  )}
                 </div>
               ))}
               <div style={{ flex: 1 }} onClick={() => !leftOpen && setLeftOpen(true)} />
@@ -4112,6 +4506,22 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                       showToast(t("deleteComposite", lang), 1400, "delete");
                     }}
                   />
+                ) : leftTab === "audit" ? (
+                  <AuditPanel p={p} doc={doc} issues={auditReport} onLocate={locateIssue} />
+                ) : leftTab === "vars" ? (
+                  /* a variable is document-wide, so an undo step has to carry the whole document
+                     with it: restoring only the parts would leave the two out of step */
+                  <VarsPanel
+                    p={p}
+                    vars={vars}
+                    frames={frames}
+                    scope={varsScope}
+                    onScope={setVarsScope}
+                    onChange={(next) => {
+                      snapshotFor("vars", true);
+                      setVars(next);
+                    }}
+                  />
                 ) : leftTab === "color" ? (
                   <ColorPanel
                     p={p}
@@ -4141,6 +4551,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                       setLayersFrameId(id);
                       setSelectedIds([]);
                       setSelectedFrameId(id);
+                      /* a page picked from the list is a page to look at: bring it into view */
+                      revealFrame(id);
                     }}
                     groups={groups}
                     frameIdOf={(id) => frameOf.get(id) ?? null}
@@ -4151,17 +4563,37 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                       setSelectedFrameId(null);
                       setSelectedLinkId(null);
                       setRightTab("edit");
+                      /* and a part picked from the list is brought into view too, with the
+                         whole selection when several rows were added */
+                      revealItems(add ? [...selectedIds, ...ids] : ids);
+                      /* a panel picked from the list brings its tab forward, so it is on screen */
+                      showPanelOf(ids);
                     }}
                     onReorder={reorderLayers}
-                    onToggleLock={toggleGroupLock}
                     onReorderItems={reorderGroupItems}
+                    vars={vars}
+                    /* a variable row in the page list opens the panel showing that variable: on
+                       its own page when it has one, and on 全部 for the shared ones */
+                    onVar={(id) => {
+                      const v = vars.find((x) => x.id === id);
+                      setVarsScope(v?.pageId ?? VARS_ALL);
+                      setLeftTab("vars");
+                    }}
                     onDragging={onLayerDragging}
-                    onNest={askNest}
+                    onTabSelect={switchTab}
+                    onNest={(it) => askNest([it])}
+                    onMagnify={toggleMagnify}
+                    magnifiedId={magnified?.id ?? null}
                     onFreePart={freePart}
-                    onDropPart={(from, to) => {
-                      const moved = groupsRef.current.map((g) => findItemIn(g.items, from)).find(Boolean);
-                      const target = groupsRef.current.map((g) => findItemIn(g.items, to)).find(Boolean);
-                      if (!moved || !target) return;
+                    /* the name an author types over a row in the list is the part's, the run's or
+                       the screen's own name */
+                    onRename={(id, name) => patchItemById(id, { label: name })}
+                    onGroupRename={renameGroup}
+                    onFrameRename={renameFrame}
+                    onTabRename={renameTab}
+                    onDropPart={(ids, to) => {
+                      const moved = ids.map((id) => findItemIn(groupsRef.current.flatMap((g) => g.items), id)).filter((it): it is Item => !!it);
+                      if (moved.length !== ids.length) return;
                       askNest(moved, to);
                     }}
                   />
@@ -4228,6 +4660,9 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
               {frame === "phone" &&
                 frames.map((f) => {
                   const on = f.id === selectedFrameId;
+                  /* a dialog is marked by the frame drawn around it, not by its surface: what the
+                     author sees inside stays the design, exactly as on a screen */
+                  const tint = pageTintOf(f, p);
                   const bg = p[f.bg ?? "surface"];
                   const { w, h } = frameSizeOf(f);
                   const radius = frameRadius(f);
@@ -4264,6 +4699,27 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                           <FrameSizePicker frame={f} onChange={(preset) => setFramePreset(f.id, preset)} palette={p} compact />
                         </div>
                         {f.name || t("screen", lang)}
+                        {/* an overlay page says so on the canvas: on the flow it is popped over
+                            a screen rather than navigated to */}
+                        {isOverlayFrame(f) && (
+                          <span
+                            title={t("overlayLevel", lang)}
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                              padding: "2px 10px",
+                              borderRadius: 999,
+                              background: tint?.bg ?? p.secondaryContainer,
+                              color: tint?.ink ?? p.onSecondaryContainer,
+                              fontSize: 14,
+                              fontWeight: 600,
+                            }}
+                          >
+                            <Icon name="picture_in_picture_alt" size={16} />
+                            {overlayLevelText(overlayLevelOfFrame(f), lang)}
+                          </span>
+                        )}
                       </div>
                       <div
                         onPointerDown={(e) => onFramePointerDown(e, f)}
@@ -4275,7 +4731,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                           width: w + BEZEL * 2,
                           height: h + BEZEL * 2,
                           borderRadius: radius + BEZEL,
-                          backgroundColor: p.inverseSurface,
+                          /* the bezel is the page's frame: a dialog wears its own colour there */
+                          backgroundColor: tint?.bg ?? p.inverseSurface,
                           backgroundImage: draftBusy ? DRAFT_GRADIENT(p) : undefined,
                           backgroundSize: draftBusy ? "300% 300%" : undefined,
                           animation: draftBusy ? "m3e-drift 3s ease-in-out infinite" : undefined,
@@ -4453,6 +4910,30 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                 />
               )}
 
+              {/* what a drop would land in: the container lights up under the part being dragged */}
+              {(() => {
+                const wanted = drag?.over ?? (gesture?.kind === "child" ? gesture.over ?? null : null);
+                const over = wanted ? itemRects().find((r) => r.id === wanted) : undefined;
+                if (!over) return null;
+                return (
+                  <div
+                    aria-hidden
+                    style={{
+                      position: "absolute",
+                      left: over.l,
+                      top: over.t,
+                      width: over.r - over.l,
+                      height: over.b - over.t,
+                      border: `${2 / view.z}px dashed ${p.primary}`,
+                      borderRadius: 8 / view.z,
+                      background: `${p.primary}14`,
+                      pointerEvents: "none",
+                      zIndex: 30,
+                    }}
+                  />
+                );
+              })()}
+
               {marquee && (
                 <div
                   style={{
@@ -4503,10 +4984,6 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
             }}
             onAddFrame={addFrame}
             onPreview={() => openPreview()}
-            tidy={selectedIds.length > 1 ? undefined : tidyState ?? undefined}
-            onTidy={tidyTarget ? () => tidy(tidyTarget) : undefined}
-            place={tidyTarget?.place}
-            onPlace={tidyTarget ? (pl) => setPlace(tidyTarget, pl) : undefined}
             note={aiNote}
             onSaveProject={() => saveProject(doc)}
             onOpenProject={() => projectFileRef.current?.click()}
@@ -4714,19 +5191,16 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   prompt={buildPrompt(doc, widths, selectedFrame.id, lang)}
                   onSaveImage={() => saveFrameImage(selectedFrame)}
                   frames={frames}
-                  tidy={tidyState ?? "done"}
-                  onTidy={() => tidy(selectedFrame)}
-                  onPlace={(pl) => setPlace(selectedFrame, pl)}
                   ai={{ ready: aiReady, reason: aiReason, busy: aiBusy && aiFrameId === selectedFrame.id, onRun: () => runAi("describe", selectedFrame), onCancel: cancelAi }}
                 />
               ) : rightTab === "edit" ? (
                 <Inspector
                   ai={{
-                    ready: aiReady && !!tidyTarget,
+                    ready: aiReady && !!screenInPlay,
                     reason: aiReason,
                     busy: aiBusy,
                     onRun: () => {
-                      if (tidyTarget && selected) runAi("behavior", tidyTarget, selected.id);
+                      if (screenInPlay && selected) runAi("behavior", screenInPlay, selected.id);
                     },
                     onCancel: cancelAi,
                   }}
@@ -4744,11 +5218,14 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   onGroup={groupSelected}
                   onContainerize={selectedIds.length > 1 ? containerizeSelected : undefined}
                   onUnlink={selectedIds.length > 0 ? unlinkSelected : undefined}
-                  onDialog={selected ? () => bindDialog(selected.id) : undefined}
+                  dialog={dialogChoices}
                   onSaveComposite={selected ? () => setSaveAsk({ itemId: selected.id, name: "" }) : undefined}
                   childCount={selected?.children?.length ?? 0}
                   inContainer={!!selected && !!parentOf(groups, selected.id)}
+                  widths={widths}
+                  lookTargets={lookTargets}
                   onUngroup={ungroupSelected}
+                  vars={vars}
                 />
               ) : (
                 <PromptPanel
@@ -4835,7 +5312,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           p={p}
           onCancel={() => setNestAsk(null)}
           onConfirm={() => {
-            if (nestAsk) nestInto(nestAsk.itemId, nestAsk.containerId);
+            if (nestAsk) nestInto(nestAsk.itemIds, nestAsk.containerId);
           }}
         />
 

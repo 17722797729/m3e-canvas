@@ -250,6 +250,36 @@ describe("isProject: a part's own looks, level, rules and children", () => {
 });
 /* the autosave is the one document that does not pass isProject; a part this build cannot
  * draw is left out rather than allowed to reach the layout as an unknown kind */
+describe("the machine a part runs", () => {
+  const flow = {
+    looks: [{ id: "l1", label: "领取", icon: "redeem", disabled: true }],
+    steps: [
+      { id: "s1", from: ":start", to: "l1", trigger: { kind: "tap" } },
+      { id: "s2", from: "l1", to: ":start", trigger: { kind: "after", seconds: 5 }, do: [{ kind: "look", target: "gift", icon: "check_circle" }] },
+    ],
+  };
+
+  it("opens a document whose parts carry flows", () => {
+    const value = doc();
+    value.groups[0].items[0] = { ...value.groups[0].items[0], flow } as never;
+    expect(isProject(value)).toBe(true);
+    expect(readableGroups(value.groups)).toEqual(value.groups);
+  });
+
+  it("refuses a flow a build could not run", () => {
+    const bad = (patch: unknown) => {
+      const value = doc();
+      value.groups[0].items[0] = { ...value.groups[0].items[0], flow: patch } as never;
+      return isProject(value);
+    };
+    expect(bad({ looks: "no", steps: [] })).toBe(false);
+    expect(bad({ looks: [], steps: [{ id: "s", from: "a", to: "b", trigger: { kind: "whenever" } }] })).toBe(false);
+    expect(bad({ looks: [], steps: [{ id: "s", from: "a", to: "b", trigger: { kind: "after", seconds: -1 } }] })).toBe(false);
+    expect(bad({ looks: [{ id: "l1", variant: "chartreuse" }], steps: [] })).toBe(false);
+    expect(bad({ looks: [{ id: "l1" }], steps: [{ id: "s", from: "a", to: "b", trigger: { kind: "after", seconds: 0 } }] })).toBe(true);
+  });
+});
+
 describe("readableGroups", () => {
   it("keeps a readable document exactly as it is", () => {
     const value = doc();

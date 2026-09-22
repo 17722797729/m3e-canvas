@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { COLOR_TOKENS, CardLayout, ColorToken, PLACES, Palette, Place, R_INNER, TEXT_TOKENS, TextToken, clamp } from "@/lib/tokens";
+import { COLOR_TOKENS, CardLayout, ColorToken, Palette, R_INNER, TEXT_TOKENS, TextToken, clamp } from "@/lib/tokens";
 import { AnimatePresence, motion } from "motion/react";
 import { COLOR_TOKEN_TEXT, TEXT_TOKEN_TEXT, t, useLang } from "@/lib/i18n";
 import { Icon } from "./M3Node";
@@ -839,42 +839,54 @@ export function TokenChips({
 /** Colour chips for one part: every palette role, a free colour picker, and an
  *  "automatic" chip that hands the part back to the role its kind would pick.
  *  `value` is a role key or a #rrggbb literal. */
-export function ItemColorChips({ value, onChange, p }: { value?: string; onChange: (color?: string) => void; p: Palette }) {
+/**
+ * The free-colour disc on its own: a swatch that opens the browser's colour picker. The palette
+ * chips are a different question from "which colour exactly", and a place that only wants the one
+ * colour — a rule that recolours a part, say — asks for this disc rather than the whole row.
+ */
+export function CustomColorDisc({ value, onChange, p }: { value?: string; onChange: (color?: string) => void; p: Palette }) {
   const lang = useLang();
   const custom = isHex(value ?? "");
+  return (
+    <label
+      title={t("customColor", lang)}
+      style={{
+        position: "relative",
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        border: `1px solid ${p.outlineVariant}`,
+        background: custom ? value : "conic-gradient(#f44336,#ffeb3b,#4caf50,#00bcd4,#3f51b5,#e91e63,#f44336)",
+        display: "grid",
+        placeItems: "center",
+        cursor: "pointer",
+        outline: custom ? `2px solid ${p.primary}` : "2px solid transparent",
+        outlineOffset: 2,
+        overflow: "hidden",
+        flex: "0 0 auto",
+      }}
+    >
+      <input
+        type="color"
+        value={custom ? value : p.primary}
+        onChange={(e) => onChange(e.target.value.toUpperCase())}
+        aria-label={t("customColor", lang)}
+        style={{ position: "absolute", inset: -10, width: 50, height: 50, opacity: 0, cursor: "pointer" }}
+      />
+      {!custom && <Icon name="palette" size={16} />}
+    </label>
+  );
+}
+
+export function ItemColorChips({ value, onChange, p }: { value?: string; onChange: (color?: string) => void; p: Palette }) {
+  const lang = useLang();
   return (
     <div role="group" aria-label={t("partColor", lang)} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
       <TokenDisc color="transparent" label={t("autoColor", lang)} on={!value} onClick={() => onChange(undefined)} p={p} icon="restart_alt" iconColor={p.onSurfaceVariant} />
       {COLOR_TOKENS.map((tk) => (
         <TokenDisc key={tk.key} color={p[tk.key]} label={lang === "en" ? tk.label : COLOR_TOKEN_TEXT[lang][tk.key]} on={value === tk.key} onClick={() => onChange(value === tk.key ? undefined : tk.key)} p={p} />
       ))}
-      <label
-        title={t("customColor", lang)}
-        style={{
-          position: "relative",
-          width: 30,
-          height: 30,
-          borderRadius: 15,
-          border: `1px solid ${p.outlineVariant}`,
-          background: custom ? value : "conic-gradient(#f44336,#ffeb3b,#4caf50,#00bcd4,#3f51b5,#e91e63,#f44336)",
-          display: "grid",
-          placeItems: "center",
-          cursor: "pointer",
-          outline: custom ? `2px solid ${p.primary}` : "2px solid transparent",
-          outlineOffset: 2,
-          overflow: "hidden",
-          flex: "0 0 auto",
-        }}
-      >
-        <input
-          type="color"
-          value={custom ? value : p.primary}
-          onChange={(e) => onChange(e.target.value.toUpperCase())}
-          aria-label={t("customColor", lang)}
-          style={{ position: "absolute", inset: -10, width: 50, height: 50, opacity: 0, cursor: "pointer" }}
-        />
-        {!custom && <Icon name="palette" size={16} />}
-      </label>
+      <CustomColorDisc value={value} onChange={onChange} p={p} />
     </div>
   );
 }
@@ -893,172 +905,68 @@ export function TextTokenChips({ value, auto, onChange, p }: { value?: TextToken
   );
 }
 
+/** How far a press on a fold button may travel before it is a drag of the part, not a fold. */
+export const FOLD_SLOP = 4;
+
+/**
+ * A navigation part's own fold button, live on the canvas so the author can try the fold while
+ * editing. The press belongs to the button — a click must not start moving the part, which is what
+ * a press that bubbled to the part underneath did to a rail being expanded. But a folded bar is
+ * nothing but its own button, so a press that *travels* has to become a drag of the part: the
+ * button keeps the pointer, and the first few pixels decide which of the two the gesture is.
+ */
+export function FoldButton({
+  title,
+  at,
+  onFold,
+  onDrag,
+}: {
+  title: string;
+  at: React.CSSProperties;
+  onFold: () => void;
+  /** the press travelled: it is a drag of the part, which takes over from here */
+  onDrag?: (e: React.PointerEvent) => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      onPointerDown={(e) => {
+        const el = e.currentTarget as HTMLElement;
+        el.dataset.armed = `${e.clientX},${e.clientY}`;
+        /* the pointer stays with the button, so a press that travels can be handed over whole */
+        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+        e.stopPropagation();
+      }}
+      onPointerMove={(e) => {
+        const el = e.currentTarget as HTMLElement;
+        const from = el.dataset.armed;
+        if (!from) return;
+        const [x, y] = from.split(",").map(Number);
+        if (Math.hypot(e.clientX - x, e.clientY - y) < FOLD_SLOP) return;
+        delete el.dataset.armed;
+        el.releasePointerCapture?.(e.pointerId);
+        onDrag?.(e);
+      }}
+      onPointerUp={(e) => {
+        const el = e.currentTarget as HTMLElement;
+        if (!el.dataset.armed) return;
+        delete el.dataset.armed;
+        onFold();
+      }}
+      onPointerCancel={(e) => {
+        delete (e.currentTarget as HTMLElement).dataset.armed;
+      }}
+      style={{ position: "absolute", border: "none", padding: 0, background: "transparent", cursor: "pointer", touchAction: "none", ...at }}
+    />
+  );
+}
+
 /** M3 basic dialog for a destructive confirmation. */
 /** A run of buttons fused like the canvas's connected buttons: round outside, small corners where they meet. */
 export function ButtonRun({ children }: { children: React.ReactNode }) {
   return <div className="m3-run" style={{ display: "flex", gap: 3 }}>{children}</div>;
-}
-
-export type TidyState = "tidy" | "undo" | "done";
-
-/** One button that reads as "Tidy", turns into "Undo tidy" right after, and is
- *  disabled while the screen is already tidy. */
-export function TidyButton({
-  state,
-  onClick,
-  p,
-  pill,
-  place,
-  onPlace,
-}: {
-  state: TidyState;
-  onClick: () => void;
-  p: Palette;
-  /** the toolbar version next to the zoom pill */
-  pill?: boolean;
-  /** where the screen's body goes; with `onPlace` the button gains a trailing menu to change it */
-  place?: Place;
-  onPlace?: (place: Place) => void;
-}) {
-  const lang = useLang();
-  const done = state === "done";
-  const label = state === "undo" ? t("tidyUndo", lang) : state === "done" ? t("tidyDone", lang) : t("tidy", lang);
-  const [menu, setMenu] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  /* the menu closes on a tap anywhere else or on Escape */
-  useEffect(() => {
-    if (!menu) return;
-    const away = (e: PointerEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setMenu(false);
-    };
-    const key = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      /* the editor also clears its selection on Escape; closing the menu is enough here */
-      e.stopPropagation();
-      setMenu(false);
-    };
-    document.addEventListener("pointerdown", away, true);
-    document.addEventListener("keydown", key, true);
-    return () => {
-      document.removeEventListener("pointerdown", away, true);
-      document.removeEventListener("keydown", key, true);
-    };
-  }, [menu]);
-  const split = !!onPlace;
-  const current = place ?? "top";
-  const placeLabel = (k: Place) => t(k === "top" ? "placeTop" : k === "center" ? "placeCenter" : k === "bottom" ? "placeBottom" : "placeSpread", lang);
-  const h = pill ? 40 : 44;
-  const bg = done ? "transparent" : state === "undo" ? p.tertiaryContainer : p.secondaryContainer;
-  const fg = done ? p.onSurfaceVariant : state === "undo" ? p.onTertiaryContainer : p.onSecondaryContainer;
-  const main = (
-    <button
-      onClick={onClick}
-      disabled={done}
-      title={label}
-      aria-label={label}
-      className="m3-press"
-      style={{
-        width: pill ? (done ? 40 : undefined) : split ? undefined : "100%",
-        flex: split && !pill ? 1 : undefined,
-        height: h,
-        padding: done ? 0 : pill ? "0 16px 0 12px" : "0 16px",
-        borderRadius: split && !done ? `${h / 2}px ${R_INNER}px ${R_INNER}px ${h / 2}px` : h / 2,
-        border: "none",
-        background: bg,
-        color: fg,
-        fontSize: 13,
-        fontWeight: 600,
-        cursor: done ? "default" : "pointer",
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 8,
-        opacity: done ? 0.7 : 1,
-        whiteSpace: "nowrap",
-      }}
-    >
-      <Icon name={state === "undo" ? "undo" : state === "done" ? "check" : "align_space_even"} size={done ? 22 : 20} />
-      {!done && label}
-    </button>
-  );
-  if (!split) return main;
-  /* a split button: tidy on the left, the placement menu behind the chevron, 3dp apart like a connected pair */
-  return (
-    <div ref={ref} style={{ position: "relative", display: "flex", gap: 3, alignItems: "center", width: pill ? undefined : "100%" }}>
-      {main}
-      <button
-        onClick={() => setMenu((m) => !m)}
-        title={t("placement", lang)}
-        aria-label={t("placement", lang)}
-        aria-expanded={menu}
-        aria-haspopup="true"
-        className="m3-press"
-        style={{
-          height: h,
-          width: h,
-          borderRadius: done ? h / 2 : `${R_INNER}px ${h / 2}px ${h / 2}px ${R_INNER}px`,
-          border: "none",
-          background: done ? "transparent" : bg,
-          color: done ? p.onSurfaceVariant : fg,
-          cursor: "pointer",
-          display: "grid",
-          placeItems: "center",
-          flex: "0 0 auto",
-        }}
-      >
-        <Icon name={PLACES.find((o) => o.key === current)?.icon ?? "vertical_align_top"} size={20} />
-      </button>
-      {menu && (
-        /* the placement choices as one compact row of icon buttons, floating off the chevron */
-        <div
-          role="group"
-          aria-label={t("placement", lang)}
-          style={{
-            position: "absolute",
-            ...(pill ? { bottom: "100%", marginBottom: 8 } : { top: "100%", marginTop: 8 }),
-            right: 0,
-            display: "flex",
-            gap: 3,
-            padding: 4,
-            borderRadius: 24,
-            background: p.surfaceContainer,
-            boxShadow: "0 2px 6px rgba(0,0,0,0.15), 0 8px 24px rgba(0,0,0,0.12)",
-            zIndex: 30,
-          }}
-        >
-          {PLACES.map((o) => {
-            const on = current === o.key;
-            return (
-              <button
-                key={o.key}
-                aria-pressed={on}
-                title={placeLabel(o.key)}
-                aria-label={placeLabel(o.key)}
-                onClick={() => {
-                  setMenu(false);
-                  onPlace(o.key);
-                }}
-                className="m3-press"
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 20,
-                  border: "none",
-                  background: on ? p.secondaryContainer : "transparent",
-                  color: on ? p.onSecondaryContainer : p.onSurfaceVariant,
-                  cursor: "pointer",
-                  display: "grid",
-                  placeItems: "center",
-                }}
-              >
-                <Icon name={o.icon} size={22} fill={on} />
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
 }
 
 export function ConfirmDialog({
@@ -1167,5 +1075,114 @@ export function ConfirmDialog({
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+/** A compact dropdown for a short list: one row that opens into the choices it holds. */
+export function Pick<K extends string>({
+  options,
+  value,
+  onChange,
+  title,
+  p,
+}: {
+  options: { key: K; label: string; icon?: string }[];
+  value: K;
+  onChange: (k: K) => void;
+  title?: string;
+  p: Palette;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown);
+    return () => window.removeEventListener("pointerdown", onDown);
+  }, [open]);
+  const current = options.find((o) => o.key === value);
+  return (
+    <div ref={ref} style={{ position: "relative", flex: 1, minWidth: 0 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        title={title}
+        className="m3-press"
+        style={{
+          width: "100%",
+          height: 36,
+          borderRadius: 12,
+          border: `1px solid ${p.outlineVariant}`,
+          background: "transparent",
+          color: p.onSurface,
+          fontSize: 12,
+          fontWeight: 600,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "0 8px",
+        }}
+      >
+        {current?.icon && <Icon name={current.icon} size={16} />}
+        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}>{current?.label ?? value}</span>
+        <Icon name={open ? "expand_less" : "expand_more"} size={16} />
+      </button>
+      {open && (
+        <div
+          className="no-scrollbar"
+          style={{
+            position: "absolute",
+            zIndex: 30,
+            top: 40,
+            left: 0,
+            right: 0,
+            maxHeight: 200,
+            overflowY: "auto",
+            padding: 4,
+            borderRadius: 12,
+            background: p.surfaceContainerHighest,
+            boxShadow: "0 6px 18px rgba(0,0,0,0.18)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+          }}
+        >
+          {options.map((o) => (
+            <button
+              key={o.key}
+              type="button"
+              onClick={() => {
+                onChange(o.key);
+                setOpen(false);
+              }}
+              className="m3-press"
+              style={{
+                height: 32,
+                borderRadius: 8,
+                border: "none",
+                textAlign: "left",
+                padding: "0 8px",
+                background: o.key === value ? p.secondaryContainer : "transparent",
+                color: o.key === value ? p.onSecondaryContainer : p.onSurface,
+                fontSize: 12,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                overflow: "hidden",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {o.icon && <Icon name={o.icon} size={16} />}
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

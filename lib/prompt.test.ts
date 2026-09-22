@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { Lang, setGlobalLang } from "./i18n";
+import { KIND_TEXT, Lang, setGlobalLang } from "./i18n";
 import { buildPrompt } from "./prompt";
-import { BACK_TARGET, DEFAULT_THEME, Doc, Item, Platform, defaultTabs, makeItem, paletteOf } from "./tokens";
+import { BACK_TARGET, DEFAULT_THEME, Doc, Item, Platform, defaultTabs, makeItem, paletteOf, type PlacedItem } from "./tokens";
 
 const LANGS: Lang[] = ["ja", "en", "zh", "ko"];
 
@@ -332,6 +332,23 @@ describe("buildPrompt for the camera, map and dropdown parts", () => {
     expect(styleBullets(prompt, lang)).toHaveLength(2);
   });
 
+  it.each(LANGS)("writes a progress bar's size, fill and words in %s", (lang) => {
+    setGlobalLang(lang);
+    const bar: Item = { ...makeItem("progressBar"), id: "hp", size: 300, size2: 24, value: 35, label: "HP" };
+    const prompt = screen(lang, [bar]);
+    expect(prompt).toContain("300×24dp");
+    expect(prompt).toContain("35%");
+    expect(prompt).toContain("HP");
+  });
+
+  it.each(LANGS)("writes an image's own width and height in %s", (lang) => {
+    /* square by default, and a height of its own once the author sets one */
+    const square: Item = { ...makeItem("image"), id: "pic" };
+    expect(screen(lang, [square])).toContain("200×200dp");
+    const wide: Item = { ...makeItem("image"), id: "pic2", size: 380, size2: 214 };
+    expect(screen(lang, [wide])).toContain("380×214dp");
+  });
+
   it.each(LANGS)("lists a dropdown's options and names the initial value in %s", (lang) => {
     const select: Item = { ...makeItem("select"), id: "sel", label: "Size", tabs: [{ icon: "", label: "Espresso" }, { icon: "", label: "Latte" }], selected: 1 };
     const withValue = screen(lang, [select]);
@@ -355,5 +372,205 @@ describe("scrollable tab rows in the prompt", () => {
   it.each(LANGS)("says a row of seven tabs scrolls in %s, and a row of five does not", (lang) => {
     expect(buildPrompt(doc(7), {}, undefined, lang)).toContain(marker[lang]);
     expect(buildPrompt(doc(5), {}, undefined, lang)).not.toContain(marker[lang]);
+  });
+});
+
+describe("a part's machine in the prompt", () => {
+  const share = (): Item => ({
+    ...makeItem("button"),
+    id: "share",
+    label: "分享",
+    icon: "share",
+    flow: {
+      looks: [
+        { id: "l2", label: "领取", icon: "redeem" },
+        { id: "l3", label: "已领取", icon: "check_circle", disabled: true },
+      ],
+      steps: [
+        { id: "s1", from: ":start", to: "l2", trigger: { kind: "tap" } },
+        { id: "s2", from: "l2", to: "l3", trigger: { kind: "tap" }, do: [{ kind: "set", varId: "v1", value: 1 }] },
+        { id: "s3", from: "l3", to: ":start", trigger: { kind: "after", seconds: 30 } },
+      ],
+    },
+  });
+
+  it("states every step the part takes, in the reader's language", () => {
+    for (const lang of LANGS) {
+      setGlobalLang(lang);
+      const doc = fixture("android", [share()]);
+      doc.vars = [{ id: "v1", name: "claimed", kind: "number", initial: 0 }];
+      const text = buildPrompt(doc, {}, undefined, lang);
+      /* the look it lands in, what that look changes, and the wait that takes it back */
+      expect(text).toContain("领取");
+      expect(text).toContain("已领取");
+      expect(text).toContain("redeem");
+      expect(text).toContain("30");
+      /* and the variable the step writes is named the way the reader knows it */
+      expect(text).toContain("claimed");
+    }
+  });
+});
+
+describe("variables in the prompt", () => {
+  const stamina = { id: "st", name: "stamina", kind: "number" as const, initial: 12 };
+  const doc = (patch: Partial<Doc> = {}): Doc => ({
+    title: "T",
+    brief: "",
+    paletteKey: "purple",
+    frame: "phone",
+    platform: "web",
+    frames: [
+      { id: "f", name: "Home", x: 0, y: 0 },
+      { id: "g", name: "Fight", x: 500, y: 0 },
+    ],
+    groups: [
+      {
+        id: "g1",
+        x: 0,
+        y: 100,
+        axis: "x",
+        items: [
+          {
+            ...makeItem("button"),
+            id: "fight",
+            label: "Fight",
+            rules: [
+              { id: "r1", when: [{ varId: "st", op: ">=", value: 10 }], do: { kind: "goto", to: "g", transition: "slide" } },
+              { id: "r2", do: { kind: "add", varId: "st", delta: -10 } },
+            ],
+          },
+        ],
+      },
+    ],
+    vars: [stamina],
+    ...patch,
+  });
+  const heading: Record<Lang, string> = { ja: "## 変数", en: "## Variables", zh: "## 变量", ko: "## 변수" };
+  const binding: Record<Lang, string> = { ja: "{name}", en: "{name}", zh: "{name}", ko: "{name}" };
+
+  it.each(LANGS)("lists every variable with its kind and starting value in %s", (lang) => {
+    const out = buildPrompt(doc(), {}, undefined, lang);
+    expect(out).toContain(heading[lang]);
+    expect(out).toContain("stamina");
+    expect(out).toContain("12");
+    /* the {name} syntax is explained, so the reader knows what the labels refer to */
+    expect(out).toContain(binding[lang]);
+  });
+
+  it.each(LANGS)("writes a conditional tap as one branch per rule in %s", (lang) => {
+    const out = buildPrompt(doc(), {}, undefined, lang);
+    /* the condition and the write both read in symbols, so they survive translation */
+    expect(out).toContain("stamina ≥ 10");
+    expect(out).toContain("stamina − 10");
+    expect(out).toContain("Fight");
+  });
+
+  it.each(LANGS)("leaves the variables section out when the document declares none in %s", (lang) => {
+    expect(buildPrompt(doc({ vars: undefined }), {}, undefined, lang)).not.toContain(heading[lang]);
+  });
+});
+
+describe("tab panels in the prompt", () => {
+  /* The panels under a tab row are alternatives, not layers. An implementer told to stack them would
+   * build one screen with every page of the app showing at once. */
+  const withPanels = (): Doc => {
+    const row: Item = { ...makeItem("tabs"), id: "row", label: "", tabs: [{ icon: "", label: "One" }, { icon: "", label: "Two" }], selected: 1 };
+    const panel = (id: string, y: number): PlacedItem => ({ ...makeItem("box"), id, label: "", x: 0, y, size: 390, size2: 200 } as PlacedItem);
+    row.children = [panel("p1", 48), panel("p2", 48)];
+    return {
+      title: "T",
+      brief: "",
+      paletteKey: "purple",
+      frame: "phone",
+      platform: "web",
+      frames: [{ id: "f", name: "Home", x: 0, y: 0 }],
+      groups: [{ id: "g", x: 0, y: 100, axis: "x", items: [row] }],
+    };
+  };
+  const lead: Record<Lang, string> = {
+    ja: "タブを切り替えるとそのパネルだけを表示し",
+    en: "One panel per tab, in the order of the tabs",
+    zh: "按标签顺序各放一个面板",
+    ko: "탭을 바꾸면 그 패널만 표시하고",
+  };
+
+  it.each(LANGS)("says the panels are switched between, not stacked, in %s", (lang) => {
+    expect(buildPrompt(withPanels(), {}, undefined, lang)).toContain(lead[lang]);
+  });
+
+  it.each(LANGS)("says nothing of the sort for a row with no panels in %s", (lang) => {
+    const bare = withPanels();
+    bare.groups[0].items[0] = { ...bare.groups[0].items[0], children: undefined };
+    expect(buildPrompt(bare, {}, undefined, lang)).not.toContain(lead[lang]);
+  });
+});
+
+describe("a container's own parts in the prompt", () => {
+  /* The parts a container draws inside itself live on the item, not in a run of their own, so the
+   * row-by-row walk never reached them: the prompt used to describe an empty container while the
+   * canvas showed a full one. */
+  const doc = (childLabel: string): Doc => {
+    const kid: PlacedItem = { ...makeItem("button"), id: "kid", label: childLabel, x: 8, y: 8 } as PlacedItem;
+    const box: Item = { ...makeItem("box"), id: "box", label: "OUTER", children: [kid] };
+    return { title: "T", brief: "", paletteKey: "purple", frame: "phone", platform: "web", frames: [{ id: "f", name: "Home", x: 0, y: 0 }], groups: [{ id: "g", x: 0, y: 100, axis: "x", items: [box] }] };
+  };
+
+  it.each(LANGS)("names what a container holds, in %s", (lang) => {
+    expect(buildPrompt(doc("INSIDE-LABEL"), {}, undefined, lang)).toContain("INSIDE-LABEL");
+  });
+
+  it.each(LANGS)("says nothing about contents when there are none, in %s", (lang) => {
+    const empty = doc("INSIDE-LABEL");
+    empty.groups[0].items[0] = { ...empty.groups[0].items[0], children: undefined };
+    expect(buildPrompt(empty, {}, undefined, lang)).not.toContain("INSIDE-LABEL");
+  });
+});
+
+describe("an icon button in the prompt", () => {
+  /* An icon button is one shape holding one icon: the prompt describes it by its icon and by
+     nothing else. A document written when it could carry a caption still holds those words, and
+     they are left out — the prompt has to say what the preview draws. */
+  const withIcon = (label: string): Doc => ({
+    title: "T",
+    brief: "",
+    paletteKey: "purple",
+    frame: "phone",
+    platform: "android",
+    frames: [{ id: "f", name: "Home", x: 0, y: 0 }],
+    groups: [{ id: "g", x: 0, y: 100, axis: "x", items: [{ ...makeItem("iconButton"), id: "ib", icon: "swords", label }] }],
+  });
+
+  it.each(LANGS)("describes it by its icon alone, in %s", (lang) => {
+    setGlobalLang(lang);
+    const words = { ja: "アイコンボタン", en: "icon button", zh: "图标按钮", ko: "아이콘 버튼" }[lang];
+    expect(buildPrompt(withIcon("CAPTION"), {}, undefined, lang)).toContain(words);
+    expect(buildPrompt(withIcon("CAPTION"), {}, undefined, lang)).not.toContain("CAPTION");
+    expect(buildPrompt(withIcon(""), {}, undefined, lang)).toContain(words);
+  });
+});
+
+describe("a box in the prompt", () => {
+  /* A box is a container: the drag handle it once drew came with a 状態 toggle, and the prompt
+   * used to turn any box carrying that flag into a bottom sheet. Old documents still carry the
+   * flag, so the wording has to stay a plain box whatever the flag says. */
+  const SHEET_WORDS = /bottom sheet|drag handle|ボトムシート|ドラッグハンドル|底部面板|拖动条|하단 시트|드래그 핸들/i;
+  const withBox = (checked?: boolean): Doc => ({
+    title: "T",
+    brief: "",
+    paletteKey: "purple",
+    frame: "phone",
+    platform: "android",
+    frames: [{ id: "f", name: "Home", x: 0, y: 0 }],
+    groups: [{ id: "g", x: 0, y: 100, axis: "x", items: [{ ...makeItem("box"), id: "box", ...(checked === undefined ? {} : { checked }) }] }],
+  });
+
+  it.each(LANGS)("reads as a plain container, handle flag or not, in %s", (lang) => {
+    setGlobalLang(lang);
+    const plain = buildPrompt(withBox(), {}, undefined, lang);
+    const legacy = buildPrompt(withBox(true), {}, undefined, lang);
+    expect(plain).not.toMatch(SHEET_WORDS);
+    expect(legacy).not.toMatch(SHEET_WORDS);
+    /* the box is still described as a box, with its own background and corners */
+    expect(legacy).toContain(KIND_TEXT[lang].box.noun);
   });
 });

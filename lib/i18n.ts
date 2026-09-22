@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext } from "react";
+import type { Frame, Group, Item, OverlayLevel, PlacedItem } from "./tokens";
 
 export type Lang = "ja" | "en" | "zh" | "ko";
 export const LANGS: { key: Lang; label: string }[] = [
@@ -33,9 +34,28 @@ export const SEED_TEXT: Record<Lang, { favorite: string; share: string; inbox: s
 export function translateDefaultText(value: string, kind: string, field: "label" | "supporting" | "tab", lang: Lang): string {
   for (const { key: from } of LANGS) {
     if (field === "tab") {
-      const labels = (l: Lang) => kind === "tabs" ? TAB_LABELS[l] : kind === "select" ? SELECT_OPTIONS[l] : (kind === "fabMenu" ? FAB_MENU_TABS[l] : kind === "navRail" ? GAME_NAV_TABS[l] : NAV_TABS[l]).map((tab) => tab.label);
-      const index = labels(from).indexOf(value);
-      if (index >= 0) return labels(lang)[index] ?? value;
+      /* The words a destination starts with, the list its own kind draws from first. A bar or a rail
+         drawn by an older build can hold the plain navigation's words instead (its "Saved" on a game
+         rail), and those are defaults too, so every list is tried: the match is carried over by list
+         and index, and a list that says exactly what another says is dropped so a word that stands
+         in both ("Saved") is taken from the one its part would have drawn from. */
+      const labels = (l: Lang) => {
+        const own = kind === "tabs" ? TAB_LABELS[l] : kind === "select" ? SELECT_OPTIONS[l] : (kind === "fabMenu" ? FAB_MENU_TABS[l] : kind === "navRail" ? GAME_NAV_TABS[l] : NAV_TABS[l]).map((tab) => tab.label);
+        const rest = [GAME_NAV_TABS[l], NAV_TABS[l], FAB_MENU_TABS[l], TAB_LABELS[l], SELECT_OPTIONS[l]].map((list) =>
+          typeof list[0] === "string" ? (list as string[]) : (list as { label: string }[]).map((tab) => tab.label),
+        );
+        const seen = new Set<string>();
+        return [own, ...rest].filter((list) => {
+          const key = list.join("\u0001");
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      };
+      for (const [k, list] of labels(from).entries()) {
+        const index = list.indexOf(value);
+        if (index >= 0) return labels(lang)[k][index] ?? value;
+      }
     } else {
       if (value && value === KIND_TEXT[from][kind]?.[field]) return KIND_TEXT[lang][kind]?.[field] ?? value;
       const keys: (keyof typeof SEED_TEXT.en)[] = field === "supporting" ? ["supporting"] : kind === "button" ? ["favorite", "share", "start"] : kind === "listItem" ? ["inbox", "starred", "archive"] : [];
@@ -60,6 +80,35 @@ export function translateDefaultFrameName(name: string, lang: Lang): string {
   return name;
 }
 
+/** A document as the language the author is working in reads it: every default it was drawn with —
+ *  a part's own words, a bar's destinations, a screen's name — is carried over, while anything the
+ *  author typed is not one of the defaults and so is left exactly as written. A document drawn in
+ *  another language, or by an older build whose words have since changed, therefore reads in full
+ *  sentences instead of stray English. */
+export function translateDoc<T extends { groups: Group[]; frames: Frame[] }>(doc: T, lang: Lang): T {
+  /* a part inside a container carries its own default words too */
+  const item = (it: Item): Item => ({
+    ...it,
+    label: translateDefaultText(it.label, it.kind, "label", lang),
+    ...(it.supporting !== undefined && { supporting: translateDefaultText(it.supporting, it.kind, "supporting", lang) }),
+    ...(it.tabs && { tabs: it.tabs.map((tab) => ({ ...tab, label: translateDefaultText(tab.label, it.kind, "tab", lang) })) }),
+    ...(it.children && { children: it.children.map(item) as PlacedItem[] }),
+  });
+  return {
+    ...doc,
+    groups: doc.groups.map((group) => ({ ...group, items: group.items.map(item) })),
+    frames: doc.frames.map((frame) => ({ ...frame, name: translateDefaultFrameName(frame.name, lang) })),
+  };
+}
+
+/** A document as this build takes it in: its defaults read in the language the author is working in,
+ *  and the lock the Layers panel used to offer is dropped — a file that still carries one comes back
+ *  fully editable, rather than frozen with no way left to unlock it. */
+export function adoptDoc<T extends { groups: Group[]; frames: Frame[] }>(doc: T, lang: Lang): T {
+  const read = translateDoc(doc, lang);
+  return { ...read, groups: read.groups.map((group) => (group.locked ? { ...group, locked: undefined } : group)) };
+}
+
 export const TEXT_TOKEN_TEXT = {
   ja: { onSurface: "標準（オンサーフェス）", onSurfaceVariant: "控えめ（オンサーフェスバリアント）", primary: "プライマリ", secondary: "セカンダリ", onPrimaryContainer: "オンプライマリコンテナ", onSecondaryContainer: "オンセカンダリコンテナ", onTertiaryContainer: "オンターシャリコンテナ", inverseOnSurface: "反転オンサーフェス" },
   zh: { onSurface: "表面文字", onSurfaceVariant: "表面次要文字", primary: "主色", secondary: "次色", onPrimaryContainer: "主色容器文字", onSecondaryContainer: "次色容器文字", onTertiaryContainer: "第三色容器文字", inverseOnSurface: "反色表面文字" },
@@ -77,6 +126,116 @@ export const UI = {
   // panels
   parts: { ja: "部品", en: "Parts", zh: "组件" },
   layers: { ja: "レイヤー", en: "Layers", zh: "图层" },
+  audit: { ja: "動作チェック", en: "Review", zh: "走查报告" },
+  offScreens: { ja: "画面の外の部品", en: "Parts off the screens", zh: "不在页面上的组件" },
+  offScreensHint: {
+    ja: "どの画面にも属していない部品です。プロンプトでは共通パーツとして扱われます。",
+    en: "Parts that belong to no screen. The prompt treats them as shared parts.",
+    zh: "不属于任何页面的组件。提示词里会作为公共部件处理。",
+  },
+  variables: { ja: "変数", en: "Variables", zh: "变量" },
+  resetVars: { ja: "初期値に戻す", en: "Reset to initial", zh: "重置为初始值" },
+  varsHint: {
+    ja: "コインやスタミナなど、タップをまたいで持ち越す値です。部品のテキストに {name} と書くと現在の値に置き換わり、ルールの条件と書き換えはこの名前を使います。名前を変えると参照は外れます。",
+    en: "Values that survive a tap: coins, stamina, what has been claimed. Write {name} in a part's text and it shows the value; rules test and write them by name. Renaming a variable breaks what referred to it.",
+    zh: "跨点击保持的值：金币、体力、是否已领取。在组件文本里写 {name} 就会显示当前值；条件与写入也按名称引用。改名会让已有引用失效。",
+  },
+  varName: { ja: "変数名", en: "Variable name", zh: "变量名称" },
+  varNumber: { ja: "数値", en: "Number", zh: "数值" },
+  varBoolean: { ja: "オン / オフ", en: "On / off", zh: "开关" },
+  varText: { ja: "テキスト", en: "Text", zh: "文本" },
+  varInitial: { ja: "初期値", en: "Initial value", zh: "初始值" },
+  addVar: { ja: "変数を追加", en: "Add variable", zh: "添加变量" },
+  varsOnPage: { ja: "表示する範囲", en: "Show", zh: "显示范围" },
+  varsAll: { ja: "すべて", en: "All", zh: "全部" },
+  varsAllPages: { ja: "共通（どのページにも属さない）", en: "Shared (no page of its own)", zh: "共享（不属于任何页面）" },
+  varsOtherPages: {
+    ja: "ほかのページに {n} 個の変数があります。",
+    en: "{n} more variables belong to other pages.",
+    zh: "其它页面还有 {n} 个变量。",
+  },
+  varsEmpty: { ja: "このページにはまだ変数がありません。", en: "No variables on this page yet.", zh: "这个页面还没有变量。" },
+  varsOrphan: { ja: "削除されたページの変数", en: "Variables of a removed page", zh: "已删除页面的变量" },
+  tabStyle: { ja: "タブの見た目", en: "Tab look", zh: "标签样式" },
+  tabStyleUnderline: { ja: "下線", en: "Underline", zh: "下划线" },
+  tabStyleButtons: { ja: "ボタン", en: "Buttons", zh: "按钮" },
+  tabPanelsAuto: {
+    ja: "タブのパネルはタブと一緒に作られます。タブを追加すると、そのパネルも下に並びます。",
+    en: "Panels come with the tabs: adding a tab adds its panel below the row as well.",
+    zh: "标签面板会随标签一起生成：添加标签页时，它的面板也会出现在标签栏下面。",
+  },
+  tabPanelsHint: {
+    ja: "タブごとにパネルが一つ、タブ列の下にあります。タブを切り替えるとそのパネルだけが表示されます。",
+    en: "One panel per tab, under the row. Switching tabs shows only the panel of the tab in front.",
+    zh: "每个标签一个面板，放在标签栏下面；切换标签时只显示对应面板。",
+  },
+  varsNone: {
+    ja: "変数はまだありません。追加すると、部品のテキストの {name} がその値に変わります。",
+    en: "No variables yet. Once you add one, {name} in a part's text shows its value.",
+    zh: "还没有变量。添加后，组件文本里的 {name} 会显示它的值。",
+  },
+  // conditional taps
+  condRules: { ja: "条件付きタップ", en: "Conditional taps", zh: "条件点击" },
+  ruleWhen: { ja: "条件", en: "When", zh: "条件" },
+  ruleThen: { ja: "実行", en: "Then", zh: "则执行" },
+  addCondition: { ja: "条件を追加", en: "Add condition", zh: "添加条件" },
+  addCondRule: { ja: "条件付きルールを追加", en: "Add conditional rule", zh: "添加条件规则" },
+  ruleGoto: { ja: "移動", en: "Go to", zh: "跳转" },
+  ruleBack: { ja: "戻る", en: "Back", zh: "返回" },
+  ruleClose: { ja: "重ね画面を閉じる", en: "Close overlay", zh: "关闭叠加层" },
+  ruleSet: { ja: "代入", en: "Set", zh: "设为" },
+  ruleAdd: { ja: "増減", en: "Add to", zh: "增减" },
+  ruleToggle: { ja: "反転", en: "Toggle", zh: "取反" },
+  ruleLook: { ja: "見た目を変える", en: "Change the look", zh: "改外观" },
+  ruleAfter: { ja: "N 秒後に自動で", en: "Automatically after", zh: "N 秒后自动执行" },
+  ruleAfterHint: {
+    ja: "この画面を表示してから指定した秒数がたつと、自動で実行されます（プレビューの「時間」で速められます）。",
+    en: "Runs by itself once the screen has been on show this long — speed the preview's clock up with Time to watch it sooner.",
+    zh: "页面显示满这么多秒后自动执行（预览里的「时间」可以加速，用来跳过等待）。",
+  },
+  lookTarget: { ja: "変える対象", en: "Changes", zh: "作用对象" },
+  lookText: { ja: "テキスト", en: "Text", zh: "文本" },
+  lookColor: { ja: "カスタムカラー", en: "Custom colour", zh: "自定义颜色" },
+  lookSelf: { ja: "この部品", en: "This part", zh: "这个组件" },
+  ruleLookHint: {
+    ja: "条件が成り立っている間、この部品はここで決めた見た目で描かれます。タップでは何も起きません（条件が外れると元に戻ります）。",
+    en: "While the conditions hold, the part is drawn with this look. Tapping it does nothing else — when the conditions stop holding it goes back.",
+    zh: "条件成立期间，这个组件就按这里设定的样子显示；点击不会再做别的事，条件不成立时自动恢复。",
+  },
+  ruleValue: { ja: "値", en: "Value", zh: "值" },
+  ruleNoVars: {
+    ja: "条件を書く前に、左の「変数」で変数を追加してください。",
+    en: "Add a variable in the Variables panel before writing a condition.",
+    zh: "先在左侧「变量」页添加变量，才能设置条件。",
+  },
+  ruleFallback: {
+    ja: "上のどの条件も満たさないときは、「移動 / ポップアップ」の設定が実行されます。",
+    en: "When no condition above holds, the tap does what the jump / dialog setting says.",
+    zh: "上面所有条件都不满足时，执行「跳转 / 弹框」里的设置。",
+  },
+  ruleAfterShort: { ja: "N 秒後", en: "After", zh: "计时" },
+  flowHint: {
+    ja: "タップした後の変化：状態はそれぞれ一つの見た目で、状態の間の線が「タップで」「N 秒後に」どこへ移るかを示します。同じ状態から出る線は上から順に読まれます。",
+    en: "What the part becomes: a state is one look, and the lines between states say where a tap or a wait takes it. Lines leaving the same state are read top to bottom.",
+    zh: "点击后变化：每个状态是一种外观，状态之间的线说明点击或等待后走到哪里。从同一状态出发的多条线按顺序判断。",
+  },
+  flowStart: { ja: "開始の見た目", en: "As drawn", zh: "起始外观" },
+  flowStartHint: {
+    ja: "作者が描いたままの見た目です。下の線がタップをどこへ運ぶかを決めます。",
+    en: "The part exactly as you drew it. The lines below decide where a tap takes it.",
+    zh: "就是组件本身画的样子；下面的线决定点击后走到哪里。",
+  },
+  flowNewState: { ja: "新しい状態", en: "New state", zh: "新状态" },
+  flowNoChange: {
+    ja: "まだ変更はありません。「見た目を変える」で文字・アイコン・色を変えられます。",
+    en: "Nothing changed yet: use the buttons to change its words, icon or colour.",
+    zh: "还没有改动：用上面的按钮可以改文本、图标或颜色。",
+  },
+  flowChange: { ja: "見た目を変える", en: "Change look", zh: "改外观" },
+  flowAddState: { ja: "状態を追加", en: "Add state", zh: "添加状态" },
+  flowLink: { ja: "既存の状態へ", en: "To a state", zh: "去向已有状态" },
+  flowTo: { ja: "移動先", en: "Go to", zh: "去向" },
+  flowAddDo: { ja: "動作を追加", en: "Add action", zh: "添加动作" },
   edit: { ja: "編集", en: "Edit", zh: "编辑" },
   prompt: { ja: "プロンプト", en: "Prompt", zh: "提示词" },
   closePanel: { ja: "パネルを閉じる", en: "Close panel", zh: "关闭面板" },
@@ -91,7 +250,11 @@ export const UI = {
   hand: { ja: "手のひら (H / Space)", en: "Hand (H / Space)", zh: "抓手 (H / Space)" },
   blank: { ja: "白紙", en: "Blank canvas", zh: "空白画布" },
   phone: { ja: "スマホ画面", en: "Phone screens", zh: "手机屏幕" },
-  addFrame: { ja: "画面を追加", en: "Add screen", zh: "添加屏幕" },
+  addFrame: { ja: "画面を追加", en: "Add screen", zh: "添加屏幕" },  overlayNoBg: {
+    ja: "重ねて開くダイアログは、中の部品だけが表示されます（ページの背景は使われません）。全画面レイヤーにするとページの背景が使われます。",
+    en: "A dialog that floats shows only its parts: the page background is not drawn. A full screen layer uses it.",
+    zh: "浮动打开的弹框只显示里面的组件，不使用页面背景；整屏层才会使用页面背景。",
+  },
   preview: { ja: "プレビュー (P)", en: "Preview (P)", zh: "预览 (P)" },
   zoomIn: { ja: "拡大 (+)", en: "Zoom in (+)", zh: "放大 (+)" },
   zoomOut: { ja: "縮小 (-)", en: "Zoom out (-)", zh: "缩小 (-)" },
@@ -109,6 +272,22 @@ export const UI = {
   // inspector
   screen: { ja: "画面", en: "Screen", zh: "屏幕" },
   screenName: { ja: "画面の名前", en: "Screen name", zh: "屏幕名称" },
+  // overlays: what a page is, and how an overlay takes the screen over
+  pageRole: { ja: "ページの種類", en: "Page role", zh: "页面类型" },
+  roleScreen: { ja: "通常の画面", en: "Screen", zh: "普通页面" },
+  roleOverlay: { ja: "オーバーレイ", en: "Overlay", zh: "叠加层" },
+  overlayLevel: { ja: "重なりの階層", en: "Overlay level", zh: "叠加层级" },
+  overlayHint: {
+    ja: "オーバーレイはプレビューでタップして開くまで隠れ、階層が、後ろの画面を暗くするか・触れるか・戻るキーで閉じるかを決めます。",
+    en: "An overlay stays hidden in the preview until a tap opens it. The level decides how the screen behind is dimmed, whether it still takes taps, and what the back key does.",
+    zh: "叠加层在预览中要点击才会出现；层级决定背景是否变暗、还能否点击、以及返回键的行为。",
+  },
+  levelPopover: { ja: "ポップオーバー", en: "Popover", zh: "气泡浮层" },
+  levelSheet: { ja: "サイドパネル", en: "Panel", zh: "侧边面板" },
+  levelModal: { ja: "ダイアログ", en: "Dialog", zh: "弹框" },
+  levelFullscreen: { ja: "全画面レイヤー", en: "Full screen", zh: "整屏层" },
+  levelSystem: { ja: "システム層", en: "System", zh: "系统层" },
+  closeOverlay: { ja: "オーバーレイを閉じる", en: "Close overlay", zh: "关闭叠加层" },
   name: { ja: "名前", en: "Name", zh: "名称" },
   background: { ja: "背景", en: "Background", zh: "背景" },
   defaultColor: { ja: "既定の色", en: "Default color", zh: "默认颜色" },
@@ -187,8 +366,8 @@ export const UI = {
   changeIcon: { ja: "アイコンを変更", en: "Change icon", zh: "更改图标" },
   image: { ja: "画像", en: "Image", zh: "图片" },
   navToggle: { ja: "收起/展开ボタン", en: "Collapse / expand button", zh: "收起/展开按钮" },
-  navToggleLabel: { ja: "ナビに「<」「>」ボタンを付ける", en: "Put the chevron button on the bar", zh: "在导航栏上加入「<」「>」按钮" },
-  navToggleHint: { ja: "タップするとナビの中身を畳み、「<」が「>」に変わります（レールは「V」→「^」）。", en: "Tapping it folds the whole navigation away and turns the chevron around (the rail folds V into ^).", zh: "点击后收起整个导航内容，「<」会变成「>」（侧边栏是「V」变成「^」）。" },
+  navToggleLabel: { ja: "折りたたみボタンを表示", en: "Show the fold button", zh: "显示折叠按钮" },
+  navToggleHint: { ja: "ボタンのアイコンをタップするとナビの中身を畳み、もう一度タップすると戻ります。アイコンは逆向きに変わります。", en: "Click the button's icon to fold the whole navigation away, and click it again to bring it back; the icon turns around as it does.", zh: "点击按钮上的图标即可收起整个导航内容，再点一次展开；图标会同时转向相反的方向。" },
   state_grow: { ja: "大きくする", en: "Grow", zh: "变大" },
   buttonShape: { ja: "ボタンの形", en: "Button shape", zh: "按钮形态" },
   buttonShapeHint: { ja: "「まる」にすると丸ボタンになります。", en: "Round turns the button into a circle.", zh: "选择“圆形”会把按钮变成圆形。" },
@@ -201,11 +380,12 @@ export const UI = {
   tapTarget: { ja: "対象のボタン", en: "Which button", zh: "目标按钮" },
   ruleJump: { ja: "タップで移動", en: "Tap to go to", zh: "点击后跳转" },
   dialog: { ja: "弹框", en: "Dialog", zh: "弹框" },
-  ruleDialog: { ja: "タップでポップアップ", en: "Tap to open a dialog", zh: "点击后弹出弹框" },
-  makeDialog: { ja: "ポップアップを作る", en: "Make the dialog", zh: "新建弹框" },
-  openBoundDialog: { ja: "ポップアップを開く", en: "Open the dialog", zh: "打开已绑定弹框" },
+  ruleDialog: { ja: "タップでポップアップ", en: "Tap to open a dialog", zh: "点击后弹出弹框" },  dialogNew: { ja: "新しいダイアログ", en: "New dialog", zh: "新建弹框" },
+  dialogExisting: { ja: "レイヤーにあるダイアログを選ぶ", en: "Choose a dialog in the layers", zh: "选择图层里已有的弹框" },
+  dialogNone: { ja: "レイヤーにまだ他のダイアログがありません", en: "No other dialog in the layers yet", zh: "图层面板里还没有别的弹框" },
+  dialogNested: { ja: "その部品はコンテナの中にあります。先に取り出してください", en: "That component sits inside a container: take it out first", zh: "这个组件在容器里，先把它移出容器" },
   dialogBound: { ja: "バインド済み：", en: "Bound to: ", zh: "已绑定：" },
-  dialogHint: { ja: "このページに無ければ作り、あれば同じものを使います。", en: "One is made for this page and button, and reused after that.", zh: "该页面该按钮若没有弹框就新建，有则直接复用。" },
+  dialogHint: { ja: "このボタンをタップすると、上で選んだダイアログが開きます。", en: "Tapping this button opens the dialog chosen above.", zh: "这个按钮被点击时，弹出上面选择的弹框。" },
   backgroundImage: { ja: "背景画像（SVG 可）", en: "Background image (SVG ok)", zh: "背景图（支持 SVG）" },
   pickImage: { ja: "画像を選ぶ", en: "Choose image", zh: "选择图片" },
   removeImage: { ja: "画像を外す", en: "Remove image", zh: "移除图片" },
@@ -252,6 +432,12 @@ export const UI = {
   state_label: { ja: "文字を変える", en: "Change the words", zh: "改变文字" },
   state_color: { ja: "色を変える（自由な色）", en: "Change the colour (any colour)", zh: "改变颜色（可自定义）" },
   state_variant: { ja: "見た目を変える", en: "Change the look", zh: "改变样式" },
+  state_icon: { ja: "アイコンを変える", en: "Change the icon", zh: "改变图标" },
+  state_iconHint: {
+    ja: "もう一度タップすると元のアイコンに戻り、またタップすると変わります。",
+    en: "Tapping again puts the original icon back, and the tap after that changes it again.",
+    zh: "再点一次恢复原来的图标，再点又切换回来。",
+  },
   state_hide: { ja: "隠す", en: "Hide it", zh: "隐藏" },
   railState: { ja: "レールの表示", en: "Rail state", zh: "导航栏形态" },
   railLegacy: { ja: "従来のレール · 幅 80dp", en: "Legacy rail · 80dp wide", zh: "旧版导航栏 · 宽 80dp" },
@@ -265,11 +451,36 @@ export const UI = {
   expandNavigation: { ja: "ナビゲーションを展開", en: "Expand navigation", zh: "展开导航" },
   collapseNavigation: { ja: "ナビゲーションを折りたたむ", en: "Collapse navigation", zh: "收起导航" },
   selected: { ja: "選択", en: "Selected", zh: "已选中" },
-  handle: { ja: "ハンドル（ボトムシート）", en: "Handle (bottom sheet)", zh: "拖动条（底部面板）" },
   listSwitch: { ja: "末尾にスイッチ", en: "Trailing switch", zh: "列表项开关" },
   on: { ja: "オン", en: "On", zh: "开" },
   container: { ja: "コンテナ", en: "Container", zh: "容器" },
   wavy: { ja: "波形", en: "Wavy", zh: "波浪形" },
+  timeSpeed: { ja: "時間", en: "Time", zh: "时间" },
+  timeSpeedHint: {
+    ja: "プレビューの時計を速めます。タップ後のクールダウンも、待ち時間つきのルールも同じ時計で動くので、10 分待ちを数秒で確認できます。",
+    en: "Speeds up the preview's own clock. A tap's cooldown and a rule that waits both read it, so a ten-minute wait can be watched in seconds.",
+    zh: "把预览的时钟加快。点击后的冷却和「等 N 秒」的规则都走这个时钟，10 分钟的等待几秒就能看完。",
+  },
+  scroll: { ja: "スクロール", en: "Scroll", zh: "滚动" },
+  scrollNone: { ja: "なし", en: "None", zh: "无" },
+  scrollY: { ja: "上下", en: "Up / down", zh: "上下" },
+  scrollX: { ja: "左右", en: "Left / right", zh: "左右" },
+  scrollBoth: { ja: "両方向", en: "Both", zh: "双向" },
+  scrollHint: {
+    ja: "コンテンツ {c}dp / 表示領域 {v}dp。プレビューでは中身をドラッグして動かせます。",
+    en: "Content {c}dp in a {v}dp viewport. Drag the contents in the preview to move them.",
+    zh: "内容 {c}dp／视口 {v}dp。预览里可以拖动里面的子组件。",
+  },
+  scrollFits: {
+    ja: "コンテンツ {c}dp は表示領域 {v}dp に収まっているため、いまは動かせません。",
+    en: "The content is {c}dp inside a {v}dp viewport: there is nothing to move yet.",
+    zh: "内容 {c}dp 没有超出视口 {v}dp，暂时不能滚动。",
+  },
+  scrollEmpty: {
+    ja: "このコンテナにはまだ子部品がありません。",
+    en: "This container holds no children yet.",
+    zh: "这个容器里还没有子组件。",
+  },
   trackThickness: { ja: "トラックの太さ", en: "Track thickness", zh: "轨道粗细" },
   determinate: { ja: "確定", en: "Determinate", zh: "确定进度" },
   size: { ja: "サイズ", en: "Size", zh: "尺寸" },
@@ -315,9 +526,15 @@ export const UI = {
   movedOut: { ja: "出した部品", en: "Taken-out parts", zh: "被移出的组件" },
   nestInto: { ja: "コンテナに入れる", en: "Put inside a container", zh: "放入容器" },
   nestNoContainer: { ja: "この画面にコンテナがありません", en: "No container on this screen", zh: "该页面没有容器" },
+  nestMany: { ja: "部品 {n} 個", en: "{n} parts", zh: "{n} 个组件" },
+  nestSelf: { ja: "コンテナを自分の中には入れられません", en: "A container cannot go inside itself", zh: "容器不能放进它自己里面" },
   insideContainer: { ja: "コンテナの中にあります", en: "Inside a container", zh: "位于容器内" },
   releaseChildren: { ja: "中の部品を出す", en: "Take the parts out", zh: "移出内部组件" },
   takeOut: { ja: "コンテナから出す", en: "Take out of the container", zh: "移出容器" },
+  rename: { ja: "名前を変更", en: "Rename", zh: "重命名" },
+  magnify: { ja: "拡大して編集", en: "Edit up close", zh: "放大编辑" },
+  magnifyOff: { ja: "拡大をやめる", en: "Stop editing up close", zh: "退出放大编辑" },
+  renameHint: { ja: "ダブルクリックで名前を変更", en: "Double-click to rename", zh: "双击重命名" },
   selectedParts: { ja: "個を選択中", en: "selected", zh: "个已选中" },
   groupHint: {
     ja: "重なりを保ったまま、ひとつのレイヤーとして一緒に動かせます",
@@ -359,9 +576,6 @@ export const UI = {
   noLayers: { ja: "この画面には部品がありません", en: "Nothing on this screen yet", zh: "此屏幕还没有组件" },
   showParts: { ja: "中の部品を表示", en: "Show the parts inside", zh: "显示组内组件" },
   hideParts: { ja: "中の部品を隠す", en: "Hide the parts inside", zh: "隐藏组内组件" },
-  lock: { ja: "ロック", en: "Lock", zh: "锁定" },
-  unlock: { ja: "ロック解除", en: "Unlock", zh: "解锁" },
-  lockedGroup: { ja: "ロック中のグループです。Layers パネルで解除してください", en: "That group is locked. Unlock it in the Layers panel first", zh: "该组已锁定，请先在图层面板中解锁" },
   // prompt panel
   brief: { ja: "このアプリの説明…", en: "What this app is…", zh: "这个应用的说明…" },
   appName: { ja: "アプリの名前", en: "App name", zh: "应用名称" },
@@ -394,6 +608,7 @@ export const UI = {
   // frames
   home: { ja: "ホーム", en: "Home", zh: "首页" },
   screenN: { ja: "画面", en: "Screen", zh: "屏幕" },
+  dialogN: { ja: "ダイアログ", en: "Dialog", zh: "弹框" },
   copySuffix: { ja: " コピー", en: " copy", zh: " 副本" },
   frameSize: { ja: "画面サイズ", en: "Screen size", zh: "屏幕尺寸" },
   landscapeFrame: { ja: "横画面", en: "Landscape", zh: "横屏" },
@@ -442,15 +657,7 @@ export const UI = {
     zh: "富有表现力为弹性弹簧动效，作用于预览的屏幕过渡和提示词。",
   },
   tryIt: { ja: "タップして確認", en: "Tap to try", zh: "点击试试" },
-  // tidy
-  tidy: { ja: "整える", en: "Tidy", zh: "整理" },
-  tidyUndo: { ja: "整える前に戻す", en: "Undo tidy", zh: "撤销整理" },
-  tidyDone: { ja: "すでに整っています", en: "Already tidy", zh: "已经整齐" },
-  placement: { ja: "本文の縦の配置", en: "Where the body goes", zh: "内容的纵向布局" },
-  placeTop: { ja: "上から", en: "From the top", zh: "从顶部开始" },
-  placeCenter: { ja: "中央", en: "Centered", zh: "居中" },
-  placeBottom: { ja: "下寄せ", en: "At the bottom", zh: "靠底部" },
-  placeSpread: { ja: "均等", en: "Spread out", zh: "均匀分布" },
+  // tidy  tidyUndo: { ja: "整える前に戻す", en: "Undo tidy", zh: "撤销整理" },  placement: { ja: "本文の縦の配置", en: "Where the body goes", zh: "内容的纵向布局" },  placeCenter: { ja: "中央", en: "Centered", zh: "居中" },  placeSpread: { ja: "均等", en: "Spread out", zh: "均匀分布" },
   // alignment of a selection
   align: { ja: "整列", en: "Align", zh: "对齐" },
   alignHintOne: { ja: "画面の本文領域（バーとレールを除いた余白の内側）に揃えます。", en: "Lines the part up with the screen's body, inside the margins and clear of the bars.", zh: "与屏幕内容区域（栏和导轨以外、边距以内）对齐。" },
@@ -501,16 +708,51 @@ export const UI = {
 
 export type UIKey = keyof typeof UI;
 
+/** an overlay level's name, for every place that has to spell a level out: the inspector,
+ *  the layers panel and the flow diagram all read the same word */
+export const OVERLAY_LEVEL_KEYS: Record<OverlayLevel, UIKey> = {
+  popover: "levelPopover",
+  sheet: "levelSheet",
+  modal: "levelModal",
+  fullscreen: "levelFullscreen",
+  system: "levelSystem",
+};
+export const overlayLevelText = (level: OverlayLevel, lang: Lang) => t(OVERLAY_LEVEL_KEYS[level], lang);
+
 /** exported for the parity tests only; read strings through t() */
 export const KO: Record<UIKey, string> = {
   frameSize: "화면 크기", landscapeFrame: "가로 화면", phoneFrame: "휴대전화", desktopFrame: "데스크톱", columnWidth: "휴대전화 한 화면 너비", cornerLeft: "왼쪽 모서리", cornerRight: "오른쪽 모서리", cornersEach: "모서리별로 지정", cornerTl: "왼쪽 위", cornerTr: "오른쪽 위", cornerBl: "왼쪽 아래", cornerBr: "오른쪽 아래",
   filled: "채움", tonal: "색조", elevated: "그림자", outlined: "윤곽선", standard: "표준", vibrant: "선명함",
-  parts: "부품", layers: "레이어", edit: "편집", prompt: "프롬프트", closePanel: "패널 닫기",
+  parts: "부품", layers: "레이어", audit: "점검", edit: "편집", prompt: "프롬프트", closePanel: "패널 닫기",
+  offScreens: "화면 밖 부품", offScreensHint: "어느 화면에도 속하지 않는 부품입니다. 프롬프트에서는 공용 부품으로 다룹니다.",
+  variables: "변수", resetVars: "초기값으로 되돌리기",
+  varsHint: "코인, 스태미나처럼 탭을 넘어 유지되는 값입니다. 부품 텍스트에 {name}을 쓰면 현재 값이 표시되고, 규칙의 조건과 쓰기도 이 이름을 씁니다. 이름을 바꾸면 기존 참조가 끊어집니다.",
+  varName: "변수 이름", varNumber: "숫자", varBoolean: "켜기/끄기", varText: "텍스트", varInitial: "초기값", addVar: "변수 추가", varsOnPage: "표시할 범위", varsAll: "전체", varsAllPages: "공유(어느 페이지에도 속하지 않음)", varsOtherPages: "다른 페이지에 변수가 {n}개 더 있습니다.", varsEmpty: "이 페이지에는 아직 변수가 없습니다.", varsOrphan: "삭제된 페이지의 변수", tabStyle: "탭 모양", tabStyleUnderline: "밑줄", tabStyleButtons: "버튼", tabPanelsAuto: "탭 패널은 탭과 함께 만들어집니다. 탭을 추가하면 그 패널도 아래에 함께 놓입니다.", tabPanelsHint: "탭마다 패널이 하나씩, 탭 줄 아래에 있습니다. 탭을 바꾸면 그 패널만 표시됩니다.",
+  varsNone: "변수가 아직 없습니다. 추가하면 부품 텍스트의 {name}이 그 값으로 바뀝니다.",
+  condRules: "조건 탭", ruleWhen: "조건", ruleThen: "실행", addCondition: "조건 추가", addCondRule: "조건 규칙 추가",
+  ruleGoto: "이동", ruleBack: "뒤로", ruleClose: "오버레이 닫기", ruleSet: "설정", ruleAdd: "증감", ruleToggle: "반전", ruleLook: "모양 바꾸기", ruleAfter: "N초 뒤 자동 실행", ruleAfterHint: "이 화면이 표시된 뒤 지정한 시간이 지나면 스스로 실행됩니다(미리보기의 '시간'으로 빠르게 볼 수 있습니다).", lookTarget: "바꿀 대상", lookText: "텍스트", lookColor: "사용자 지정 색", lookSelf: "이 부품", ruleLookHint: "조건이 성립하는 동안 이 부품은 여기서 정한 모양으로 그려집니다. 탭해도 다른 일은 하지 않고, 조건이 풀리면 원래대로 돌아옵니다.", ruleValue: "값",
+  ruleNoVars: "조건을 쓰기 전에 왼쪽 '변수'에서 변수를 추가하세요.",
+  ruleFallback: "위의 어떤 조건도 맞지 않으면 '이동 / 팝업' 설정이 실행됩니다.",
+  ruleAfterShort: "N초 후",
+  flowHint: "탭한 뒤의 변화: 상태는 각각 하나의 모양이고, 상태 사이의 선이 '탭하면' 'N초 뒤에' 어디로 가는지 보여 줍니다. 같은 상태에서 나가는 선은 위에서 아래로 읽습니다.",
+  flowStart: "처음 모양",
+  flowStartHint: "지은 그대로의 모양입니다. 아래 선이 탭을 어디로 보낼지 정합니다.",
+  flowNewState: "새 상태",
+  flowNoChange: "아직 바뀐 것이 없습니다. 위의 버튼으로 글자, 아이콘, 색을 바꿀 수 있습니다.",
+  flowChange: "모양 바꾸기",
+  flowAddState: "상태 추가",
+  flowLink: "기존 상태로",
+  flowTo: "이동할 곳",
+  flowAddDo: "동작 추가",
   search: "검색", favorites: "즐겨찾기", addFavorite: "즐겨찾기에 추가", removeFavorite: "즐겨찾기에서 제거", clear: "지우기", language: "언어",
-  select: "선택 (V)", hand: "손 도구 (H / Space)", blank: "빈 캔버스", phone: "휴대전화 화면", addFrame: "화면 추가", preview: "미리보기 (P)",
+  select: "선택 (V)", hand: "손 도구 (H / Space)", blank: "빈 캔버스", phone: "휴대전화 화면", addFrame: "화면 추가", overlayNoBg: "떠서 열리는 대화상자는 안의 부품만 표시됩니다(페이지 배경은 쓰지 않습니다). 전체 화면 레이어로 바꾸면 페이지 배경이 쓰입니다.", preview: "미리보기 (P)",
   zoomIn: "확대 (+)", zoomOut: "축소 (-)", fit: "전체 맞춤 (0)", zoomLevel: "확대/축소 비율(% 입력)", undo: "실행 취소 (Ctrl+Z)", redo: "다시 실행 (Ctrl+Shift+Z)",
   clearAll: "모두 지우기", clearAllTitle: "캔버스를 비울까요?", clearAllBody: "모든 화면과 부품을 삭제합니다. 실행 취소(Ctrl+Z)로 복원할 수 있습니다.",
   screen: "화면", screenName: "화면 이름", name: "이름", background: "배경", defaultColor: "기본 색상", export: "내보내기", project: "프로젝트",
+  pageRole: "페이지 종류", roleScreen: "일반 화면", roleOverlay: "오버레이", overlayLevel: "겹침 단계",
+  overlayHint: "오버레이는 미리보기에서 탭하기 전까지 숨겨집니다. 단계가 뒤 화면을 어둡게 할지, 탭을 받을지, 뒤로 가기 키가 무엇을 할지 정합니다.",
+  levelPopover: "팝오버", levelSheet: "사이드 패널", levelModal: "대화상자", levelFullscreen: "전체 화면 레이어", levelSystem: "시스템 레이어",
+  closeOverlay: "오버레이 닫기",
   saveProject: "프로젝트 저장", openProject: "프로젝트 열기", viewFlow: "흐름 보기", replaceProjectTitle: "이 프로젝트를 열까요?",
   replaceProject: "현재 캔버스가 교체됩니다. 실행 취소(Ctrl+Z)로 되돌릴 수 있습니다.",
   askAi: "AI에게 맡기기",
@@ -529,8 +771,8 @@ export const KO: Record<UIKey, string> = {
   copied: "복사됨", saveImage: "이미지로 저장", saving: "저장 중…", previewFrom: "이 화면부터 미리보기",
   duplicate: "복제", duplicateKey: "복제 (Ctrl+D)", delete: "삭제 (Delete)", deleteSelection: "선택 항목 삭제",
   text: "텍스트", label: "레이블", bold: "굵게", action: "동작", supporting: "보조 텍스트", tabs: "항목", changeIcon: "아이콘 변경",
-  options: "옵션", addOption: "옵션 추가", removeOption: "이 옵션 삭제", addTab: "탭 추가", removeTab: "이 탭 삭제", selectedOption: "초깃값으로 설정(다시 누르면 선택 해제)", image: "이미지", navToggle: "접기/펼치기 버튼", navToggleLabel: "내비게이션에 \"<\" / \">\" 버튼 넣기", navToggleHint: "탭하면 내비게이션 내용이 모두 접히고 \"<\"가 \">\"로 바뀝니다(레일은 \"V\"→\"^\").", state_grow: "크게 만들기", buttonShape: "버튼 모양", buttonShapeHint: "'원형'을 고르면 버튼이 동그랗게 바뀝니다.", shape_default: "직사각형", shape_round: "원형", shape_square: "정사각형", chooseScreen: "화면 선택", searchOff: "검색 결과 없음", navPerRow: "한 줄 최대 개수", tapTarget: "대상 버튼", ruleJump: "탭하여 이동", dialog: "팝업", ruleDialog: "탭하면 팝업 열기", makeDialog: "팝업 만들기", openBoundDialog: "연결된 팝업 열기", dialogBound: "연결됨: ", dialogHint: "이 페이지와 버튼에 팝업이 없으면 만들고, 있으면 같은 것을 다시 씁니다.", backgroundImage: "배경 이미지(SVG 가능)", pickImage: "이미지 선택", removeImage: "이미지 제거", imageUrl: "이미지 URL", imageTop: "위쪽", imageLeading: "앞쪽", imageTrailing: "뒤쪽", cardLayout: "레이아웃", noImageLayout: "이미지 없음", textPosition: "텍스트 위치", textTop: "위", textMiddle: "가운데", textBottom: "아래", textColor: "텍스트 색상", autoColor: "자동", autoWidth: "글자 너비", icon: "아이콘", noIcon: "아이콘 없음", searchIcons: "아이콘 검색",
-  style: "스타일", stroke: "테두리", strokeHint: "두께 0이면 테두리가 없어집니다. 색은 자유롭게 고를 수 있습니다.", appearance: "모양과 순서", partColor: "이 부품의 색", bgColor: "배경 색상", strokeColorLabel: "테두리 색상", layer: "레이어 순서", layerHint: "숫자가 클수록 앞에 그려집니다(기본 10)", state: "상태", transitions: "탭한 뒤의 변화", transitionsHint: "이 부품을 탭했을 때 일어나는 일을 추가하세요. 예: 한 번 누르면 회색으로.", onTap: "탭하면", addRule: "규칙 추가", removeRule: "규칙 삭제", cooldownSeconds: "쿨다운(초)", state_disable: "회색으로 만들고 반응하지 않기", state_cooldown: "회색으로 만들고 카운트다운", state_label: "글자 바꾸기", state_color: "색 바꾸기(사용자 지정 가능)", state_variant: "모양 바꾸기", state_hide: "숨기기", selected: "선택됨", handle: "핸들(하단 시트)", listSwitch: "끝에 스위치", on: "켜짐", container: "컨테이너", wavy: "물결 모양", determinate: "확정형",
+  options: "옵션", addOption: "옵션 추가", removeOption: "이 옵션 삭제", addTab: "탭 추가", removeTab: "이 탭 삭제", selectedOption: "초깃값으로 설정(다시 누르면 선택 해제)", image: "이미지", navToggle: "접기/펼치기 버튼", navToggleLabel: "접기 버튼 표시", navToggleHint: "버튼 아이콘을 탭하면 내비게이션 내용이 모두 접히고, 다시 탭하면 펼쳐집니다. 아이콘은 반대 방향으로 바뀝니다.", state_grow: "크게 만들기", buttonShape: "버튼 모양", buttonShapeHint: "'원형'을 고르면 버튼이 동그랗게 바뀝니다.", shape_default: "직사각형", shape_round: "원형", shape_square: "정사각형", chooseScreen: "화면 선택", searchOff: "검색 결과 없음", navPerRow: "한 줄 최대 개수", tapTarget: "대상 버튼", ruleJump: "탭하여 이동", dialog: "팝업", ruleDialog: "탭하면 팝업 열기", dialogBound: "연결됨: ", dialogHint: "이 버튼을 탭하면 위에서 고른 대화상자가 열립니다.", backgroundImage: "배경 이미지(SVG 가능)", pickImage: "이미지 선택", removeImage: "이미지 제거", imageUrl: "이미지 URL", imageTop: "위쪽", imageLeading: "앞쪽", imageTrailing: "뒤쪽", cardLayout: "레이아웃", noImageLayout: "이미지 없음", textPosition: "텍스트 위치", textTop: "위", textMiddle: "가운데", textBottom: "아래", textColor: "텍스트 색상", autoColor: "자동", autoWidth: "글자 너비", icon: "아이콘", noIcon: "아이콘 없음", searchIcons: "아이콘 검색",
+  style: "스타일", stroke: "테두리", strokeHint: "두께 0이면 테두리가 없어집니다. 색은 자유롭게 고를 수 있습니다.", appearance: "모양과 순서", partColor: "이 부품의 색", bgColor: "배경 색상", strokeColorLabel: "테두리 색상", layer: "레이어 순서", layerHint: "숫자가 클수록 앞에 그려집니다(기본 10)", state: "상태", transitions: "탭한 뒤의 변화", transitionsHint: "이 부품을 탭했을 때 일어나는 일을 추가하세요. 예: 한 번 누르면 회색으로.", onTap: "탭하면", addRule: "규칙 추가", removeRule: "규칙 삭제", cooldownSeconds: "쿨다운(초)", state_disable: "회색으로 만들고 반응하지 않기", state_cooldown: "회색으로 만들고 카운트다운", state_label: "글자 바꾸기", state_color: "색 바꾸기(사용자 지정 가능)", state_variant: "모양 바꾸기", state_icon: "아이콘 바꾸기", state_iconHint: "다시 탭하면 원래 아이콘으로 돌아가고, 또 탭하면 다시 바뀝니다.", state_hide: "숨기기", selected: "선택됨", listSwitch: "끝에 스위치", on: "켜짐", container: "컨테이너", wavy: "물결 모양", timeSpeed: "시간", timeSpeedHint: "미리보기의 시계를 빠르게 합니다. 탭 후 쿨다운과 대기 시간이 있는 규칙이 같은 시계를 쓰므로 10분 대기를 몇 초에 확인할 수 있습니다.", scroll: "스크롤", scrollNone: "없음", scrollY: "위/아래", scrollX: "좌/우", scrollBoth: "양방향", scrollHint: "콘텐츠 {c}dp / 표시 영역 {v}dp. 미리보기에서 내용을 끌어 움직일 수 있습니다.", scrollFits: "콘텐츠 {c}dp가 표시 영역 {v}dp 안에 있어 아직 움직일 수 없습니다.", scrollEmpty: "이 컨테이너에는 아직 자식 부품이 없습니다.", determinate: "확정형",
   railState: "레일 표시", railCollapsed: "접힘", railExpanded: "펼침",
   railLegacy: "기존 레일 · 너비 80dp", railUpgrade: "Expressive로 전환 (96dp)",
   railStandalone: "모달 표시를 사용하려면 레일의 그룹을 해제하세요.",
@@ -542,25 +784,25 @@ export const KO: Record<UIKey, string> = {
   tapTo: "탭하여 이동", none: "없음", goBack: "뒤로", swipeTo: "스와이프하여 이동", toggle: "토글 버튼", toggleHint: "탭할 때 켜짐/꺼짐 전환",
   thumbCheck: "켜졌을 때 체크 아이콘 표시", behavior: "동작", whenPressed: "눌렀을 때…", whatItDoes: "이 부품의 동작…", removeLink: "링크 제거",
   group: "그룹", makeGroup: "그룹화", ungroup: "그룹 해제", selectedParts: "개 선택됨", groupHint: "겹침을 유지한 채 하나의 레이어처럼 함께 이동합니다",
-  createContainer: "컨테이너 만들기", putInContainer: "컨테이너에 넣기", children: "안에 부품 {n}개", nestTitle: "\"{a}\"을(를) \"{b}\" 안에 넣을까요?", nestBody: "\"{a}\"는 \"{b}\"의 자식 부품이 되어 함께 움직입니다.", addToComposites: "조합 부품에 추가", movedOut: "꺼낸 부품", nestInto: "컨테이너에 넣기", nestNoContainer: "이 화면에 컨테이너가 없습니다", insideContainer: "컨테이너 안에 있음", releaseChildren: "안의 부품 꺼내기", takeOut: "컨테이너에서 꺼내기",
+  createContainer: "컨테이너 만들기", putInContainer: "컨테이너에 넣기", children: "안에 부품 {n}개", nestTitle: "\"{a}\"을(를) \"{b}\" 안에 넣을까요?", nestBody: "\"{a}\"는 \"{b}\"의 자식 부품이 되어 함께 움직입니다.", addToComposites: "조합 부품에 추가", movedOut: "꺼낸 부품", nestInto: "컨테이너에 넣기", dialogNew: "새 대화상자", dialogExisting: "레이어에 있는 대화상자 선택", dialogNone: "레이어에 아직 다른 대화상자가 없습니다", dialogNested: "그 부품은 컨테이너 안에 있습니다. 먼저 꺼내세요", nestNoContainer: "이 화면에 컨테이너가 없습니다", nestMany: "부품 {n}개", nestSelf: "컨테이너를 자기 안에 넣을 수 없습니다", insideContainer: "컨테이너 안에 있음", releaseChildren: "안의 부품 꺼내기", takeOut: "컨테이너에서 꺼내기", rename: "이름 바꾸기", renameHint: "더블클릭하여 이름 바꾸기", magnify: "확대해서 편집", magnifyOff: "확대 편집 끝내기",
   iconBackground: "아이콘 배경", noBackground: "배경 없음", normalState: "기본", onState: "켜짐", onStateHint: "켜졌을 때의 텍스트, 아이콘, 스타일",
   groupEditNote: "안쪽 부품을 편집하려면 그룹을 해제하세요", openPanel: "패널 열기", colors: "색상", templates: "팔레트", customColor: "사용자 지정",
   seedColor: "기준 색상", seedHint: "색상 하나로 전체 Material 3 색상 구성을 만듭니다. 세부 조정에서 개별 색상도 바꿀 수 있습니다.",
   useThis: "이 색상 사용", fineTune: "세부 조정", dynamicColor: "동적 색상",
   dynamicOnHint: "여기 표시된 색상은 편집기 전용입니다. 실제 기기에서는 배경화면 색상을 사용합니다.",
   dynamicOffHint: "켜면 실제 기기는 배경화면 색상을 사용하고 여기의 색상은 대체 색상이 됩니다.", closeBtn: "닫기", screens: "화면 선택",
-  noLayers: "이 화면에는 아직 부품이 없습니다", showParts: "안의 부품 표시", hideParts: "안의 부품 숨기기", lock: "잠금", unlock: "잠금 해제", lockedGroup: "잠긴 그룹입니다. 먼저 레이어 패널에서 잠금을 해제하세요",
+  noLayers: "이 화면에는 아직 부품이 없습니다", showParts: "안의 부품 표시", hideParts: "안의 부품 숨기기",
   brief: "이 앱에 대한 설명…", appName: "앱 이름", targetPlatform: "구현 대상", targetAndroid: "Android 네이티브 앱으로 만들기",
   targetWeb: "브라우저에서 실행되는 웹 앱으로 만들기", copyPrompt: "프롬프트 복사", back: "뒤로", close: "닫기 (Esc)", cancel: "취소", ok: "확인",
   composites: "조합 부품", composite: "조합", composeNew: "사용자 지정(조합 만들기)", composeHint: "아래 부품을 탭해 추가하고 끌어서 배치하세요. 다 되면 '조합 완료'를 누르면 왼쪽 목록에 들어갑니다.", compositeNameHint: "조합 이름을 입력하세요", overwriteName: "같은 이름이 있습니다. 덮어쓸까요?", compositeName: "조합 이름", composeEmpty: "아래에서 부품을 골라 조합을 만드세요", composeDone: "조합 완료", bringForward: "앞으로", sendBackward: "뒤로", editComposite: "조합 편집", resizePart: "끌어서 크기 조절", deleteComposite: "조합 삭제",
-  leading: "앞쪽", trailing: "뒤쪽", home: "홈", screenN: "화면", copySuffix: " 복사본", mobileNote: "전체 기능은 데스크톱 브라우저에서 사용할 수 있습니다",
+  leading: "앞쪽", trailing: "뒤쪽", home: "홈", screenN: "화면", dialogN: "대화상자", copySuffix: " 복사본", mobileNote: "전체 기능은 데스크톱 브라우저에서 사용할 수 있습니다",
   addButton: "버튼 추가", done: "완료", theme: "테마", settings: "테마 및 설정", shape: "모양", typography: "글꼴", motion: "모션",
   brightness: "밝기", light: "라이트", dark: "다크", contrast: "대비", bothModes: "둘 다", contrastStandard: "표준", contrastMedium: "중간", contrastHigh: "높음",
   shapeScale: "모서리 둥글기", shapeSquare: "사각형", shapeRounded: "둥근형", shapeFull: "완전 둥근형",
   shapeHint: "모든 부품의 기본 모서리를 한 번에 바꿉니다. 부품에 직접 입력한 반경은 유지됩니다.", fontFamily: "글꼴", emphasized: "강조 스타일",
   emphasizedHint: "제목과 레이블에 더 굵은 M3 Expressive 스타일을 사용합니다.", motionScheme: "모션 방식", motionStandard: "표준", motionExpressive: "익스프레시브",
   motionHint: "익스프레시브는 통통 튀는 스프링 효과입니다. 미리보기 화면 전환과 프롬프트에 반영됩니다.", tryIt: "탭하여 확인",
-  tidy: "정리", tidyUndo: "정리 실행 취소", tidyDone: "이미 정돈되어 있습니다", placement: "본문의 세로 배치", placeTop: "위에서부터", placeCenter: "가운데", placeBottom: "아래쪽", placeSpread: "균등", align: "정렬", alignHintOne: "화면 본문 영역(바와 레일을 제외한 여백 안쪽)에 맞춰 정렬합니다.", alignHintMany: "선택한 부품끼리 정렬합니다. 균등 배치는 양끝 부품을 고정합니다.", alignLeft: "왼쪽 정렬", alignCenterH: "가로 가운데 정렬", alignRight: "오른쪽 정렬", distributeH: "가로 균등 배치", alignTop: "위쪽 정렬", alignCenterV: "세로 가운데 정렬", alignBottom: "아래쪽 정렬", distributeV: "세로 균등 배치", description: "설명", screenDescription: "이 화면의 용도",
+  align: "정렬", alignHintOne: "화면 본문 영역(바와 레일을 제외한 여백 안쪽)에 맞춰 정렬합니다.", alignHintMany: "선택한 부품끼리 정렬합니다. 균등 배치는 양끝 부품을 고정합니다.", alignLeft: "왼쪽 정렬", alignCenterH: "가로 가운데 정렬", alignRight: "오른쪽 정렬", distributeH: "가로 균등 배치", alignTop: "위쪽 정렬", alignCenterV: "세로 가운데 정렬", alignBottom: "아래쪽 정렬", distributeV: "세로 균등 배치", description: "설명", screenDescription: "이 화면의 용도",
   ai: "AI", promptReset: "생성된 프롬프트로 되돌리기", aiWriteShort: "AI로 작성", aiWrite: "AI에게 작성 맡기기", aiSettings: "AI 설정",
   aiProvider: "제공업체", aiBaseUrl: "기본 URL", aiModel: "모델 ID", aiKey: "API 키", aiGetKey: "키 받기",
   aiKeyHint: "키는 이 브라우저에만 저장되며 제공업체로 직접 전송됩니다.", aiRestore: "AI 수정본과 원본 전환", aiApplied: "적용됨",
@@ -604,6 +846,7 @@ export const KIND_TEXT: Record<
     divider: { noun: "区切り線" },
     loadingIndicator: { noun: "ローディングインジケータ" },
     linearProgress: { noun: "リニアプログレス" },
+    progressBar: { noun: "プログレスバー" },
     circularProgress: { noun: "サーキュラープログレス" },
     splitButton: { noun: "スプリットボタン", label: "送信" },
     fabMenu: { noun: "FAB メニュー" },
@@ -639,6 +882,7 @@ export const KIND_TEXT: Record<
     divider: { noun: "divider" },
     loadingIndicator: { noun: "loading indicator" },
     linearProgress: { noun: "linear progress indicator" },
+    progressBar: { noun: "progress bar" },
     circularProgress: { noun: "circular progress indicator" },
     splitButton: { noun: "split button", label: "Send" },
     fabMenu: { noun: "FAB menu" },
@@ -674,6 +918,7 @@ export const KIND_TEXT: Record<
     divider: { noun: "分割线" },
     loadingIndicator: { noun: "加载指示器" },
     linearProgress: { noun: "线性进度条" },
+    progressBar: { noun: "进度条" },
     circularProgress: { noun: "圆形进度条" },
     splitButton: { noun: "拆分按钮", label: "发送" },
     fabMenu: { noun: "FAB 菜单" },
@@ -709,6 +954,7 @@ export const KIND_TEXT: Record<
     divider: { noun: "구분선" },
     loadingIndicator: { noun: "로딩 표시기" },
     linearProgress: { noun: "선형 진행 표시기" },
+    progressBar: { noun: "진행 표시줄" },
     circularProgress: { noun: "원형 진행 표시기" },
     splitButton: { noun: "분할 버튼", label: "보내기" },
     fabMenu: { noun: "FAB 메뉴" },

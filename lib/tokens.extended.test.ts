@@ -219,6 +219,18 @@ describe("carryItemSize", () => {
     expect(out.size2).toBe(200);
   });
 
+  it("an image given a height keeps its aspect ratio when its width is carried", () => {
+    const it: Item = { id: "1", kind: "image", label: "", icon: null, variant: "filled", size: 412, size2: 160 };
+    const out = carryItemSize(it, { w: 412, h: 892 }, { w: 320, h: 892 });
+    /* the image keeps its shape, so its width comes down to the new content width — and its height
+       follows that, rather than staying at the old screen's number */
+    expect(out.size).toBe(288);
+    expect(out.size2).toBe(Math.round((160 * 288) / 412));
+    /* a square image carries its width alone: its height is still its width */
+    const square: Item = { id: "2", kind: "image", label: "", icon: null, variant: "filled", size: 412 };
+    expect(carryItemSize(square, { w: 412, h: 892 }, { w: 320, h: 892 }).size2).toBeUndefined();
+  });
+
   it("a text does not auto-resize (text spec size icon is 'format_size', not 'width')", () => {
     const it: Item = { id: "1", kind: "text", label: "Hello", icon: null, variant: "filled", size: 28 };
     const out = carryItemSize(it, from, to);

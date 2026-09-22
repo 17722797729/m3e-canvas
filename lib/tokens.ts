@@ -32,12 +32,59 @@ export const RAIL_W = 80;
 /** How many lines a navigation's destinations take: more than `per` of them wrap. */
 export const navRows = (count: number, per: number | undefined) => (per && per > 0 ? Math.max(1, Math.ceil(count / per)) : 1);
 
+/** How many destinations share one line of a bar — one column of a rail. */
+export const navPerLine = (count: number, per: number | undefined) => (per && per > 0 ? Math.min(count || 1, per) : count || 1);
+
+/**
+ * Where one destination of a navigation part sits: which line it is on, how far into that line, how
+ * many share it and how many lines there are. A bar wraps a line at a time, a rail starts a new
+ * column, and both the drawing and the hit areas are read off this, so a tap lands on the
+ * destination it looks like it hits.
+ */
+export function navCell(count: number, per: number | undefined, index: number) {
+  const perLine = navPerLine(count, per);
+  const lines = Math.max(1, Math.ceil(Math.max(1, count) / perLine));
+  const line = Math.floor(index / perLine);
+  return {
+    perLine,
+    lines,
+    line,
+    at: index % perLine,
+    /* a line with fewer destinations than the widest is the last one: a bar packs it to the
+       trailing edge, which is where its hit areas have to sit too */
+    inLine: Math.min(perLine, count - line * perLine),
+  };
+}
+
 export const RAIL_TOP = 44;
 /** the pill a folded navigation bar shrinks to: just room for its own arrow */
 export const BAR_FOLDED_W = 56;
 export const BAR_FOLDED_H = 56;
+/** A tab row: the row itself, and the panel area a row gets when its panels are made for it. */
+export const TAB_ROW_H = 48;
+export const TAB_PANEL_H = 240;
 export const RAIL_ITEM_H = 52;
 export const RAIL_GAP = 12;
+/** the fold / menu button heading a wide rail, and the gap before its destinations */
+export const RAIL_HEADER_H = 48;
+export const RAIL_HEADER_GAP = 4;
+/**
+ * The corner of the highlight a tapped destination wears — a navigation bar's or rail's own
+ * active indicator — and the size of the words under it. The indicator is square rather than the
+ * pill M3 draws, which is what a game's navigation reads like; both follow the document's shape
+ * scale.
+ */
+export const NAV_INDICATOR_R = 8;
+export const NAV_LABEL_FONT = 12;
+/** The indicator is a square around the icon, not the wide pill M3 draws across the destination;
+ *  it is as tall as the icon plus its padding, and the icon itself is a little bigger than M3's. */
+export const NAV_INDICATOR = 38;
+export const NAV_ICON = 26;
+
+/** the room a rail keeps under its last destination */
+export const RAIL_BOTTOM = 8;
+/** the shortest a destination's cell may be squeezed to when a rail is too small for its column */
+export const RAIL_CELL_MIN = 28;
 /** M3 Expressive navigation rail tokens; the 80dp rail above is kept for saved sketches. */
 export const RAIL_COLLAPSED_W = 96;
 export const RAIL_EXPANDED_W = 220;
@@ -48,20 +95,99 @@ export const railWidth = (it: Item) =>
 export const railLayoutWidth = (it: Item) => (it.railModal ? Math.min(RAIL_COLLAPSED_W, railWidth(it)) : railWidth(it));
 /** Runtime-only expansion edge: copied by item edits, never included in JSON. */
 export const railExpansionSide = Symbol("railExpansionSide");
-/** Shared drawing / hit-area geometry. The header is a 48dp menu button with an 8dp gap. */
+/** Shared drawing / hit-area geometry. A wide rail is headed by its 48dp fold button, and the
+ *  destinations begin just under it — the two are read from here by the canvas, the preview and the
+ *  editor's own fold button, so what is drawn and what answers a tap cannot drift apart. */
 export function railMetrics(it: Item) {
   const wide = isWideRail(it);
+  /* The header sits 4dp below the top edge whether the rail is folded or not, so folding does not
+     move the button; the destinations begin right under it. */
+  const headerTop = wide ? 4 : 0;
+  /* folded, the header is the whole pill and sits at its corner; open, it lines up with the
+     destinations (16dp in an expanded rail, centred in a collapsed one) */
+  const headerLeft = it.railFolded ? 4 : it.railExpanded ? 16 : Math.round((railWidth(it) - 48) / 2);
+  const top = wide ? headerTop + RAIL_HEADER_H + RAIL_HEADER_GAP : RAIL_TOP;
+  const itemHeight = wide ? 56 : RAIL_ITEM_H;
+  const gap = wide ? (it.railExpanded ? 0 : 4) : RAIL_GAP;
+  /* The destinations fit the rail the author gave it. A rail with room to spare keeps M3's own
+     pitch; one too short for its column squeezes the cells together rather than letting them run
+     out of the bottom of the rail. */
+  const perColumn = Math.max(1, navPerLine(it.tabs?.length ?? 0, it.navPerRow));
+  const avail = Math.max(0, (it.size2 ?? specOf(it).h) - top - RAIL_BOTTOM);
+  const needed = perColumn * itemHeight + (perColumn - 1) * gap;
+  const pitch = needed <= avail ? itemHeight + gap : Math.max(RAIL_CELL_MIN, avail / perColumn);
   return {
     width: railWidth(it),
-    headerLeft: it.railExpanded ? 16 : (railWidth(it) - 48) / 2,
+    headerLeft,
+    headerTop,
     inset: wide ? 12 : 6,
-    top: RAIL_TOP + (wide ? 56 : 0),
-    itemHeight: wide ? 56 : RAIL_ITEM_H,
-    gap: wide ? (it.railExpanded ? 0 : 4) : RAIL_GAP,
+    top,
+    itemHeight,
+    gap,
+    /** the distance from one destination to the next, squeezed when the rail is short */
+    pitch,
+    /** how tall a destination's own cell is */
+    cellHeight: Math.min(itemHeight, pitch),
   };
 }
+/**
+ * How far a navigation part moves when it folds, so that its own button stays where it was: a bar
+ * keeps the corner its button sits in (trailing edge, bottom edge), a rail keeps its header put.
+ * The caller applies the same shift the other way when the part opens again — the stored width and
+ * height of a folded part are still the open ones, so both boxes can be measured either way.
+ */
+export function foldShift(it: Item, widths: Record<string, number>): { dx: number; dy: number } {
+  if (it.kind === "bottomNav") {
+    const open = sizeOf({ ...it, barFolded: false }, widths);
+    const pill = sizeOf({ ...it, barFolded: true }, widths);
+    /* the button owns the bar's trailing end and its full height, so the pill keeps that end (the
+       bar shrinks to the right) and the button's centre: folding leaves the button itself alone */
+    return { dx: open.w - pill.w, dy: Math.round((open.h - pill.h) / 2) };
+  }
+  if (it.kind === "navRail") {
+    const open = railMetrics({ ...it, railFolded: false });
+    const pill = railMetrics({ ...it, railFolded: true });
+    return { dx: open.headerLeft - pill.headerLeft, dy: open.headerTop - pill.headerTop };
+  }
+  return { dx: 0, dy: 0 };
+}
+
+/**
+ * The ink a navigation destination's label reads in. The label sits on the part's own background —
+ * the indicator pill is only the icon's own circle — so a selected label is `onSurface` and the
+ * pill keeps `onSecondaryContainer` for the icon: reading the label in the pill's ink painted
+ * white words on a white rail under any scheme whose pill is dark.
+ */
+export const navLabelInk = (on: boolean): TextToken => (on ? "onSurface" : "onSurfaceVariant");
+
+/**
+ * Where one destination of a rail sits: the column it is in, how far across and down that is, and
+ * the room its own cell takes. A wide rail starts a new column at its own width; the 80dp rail kept
+ * for saved sketches packs its columns into a centred row. The drawing and the hit areas are both
+ * read from this, so a tap on the second column cannot land on the first.
+ */
+export function railCell(it: Item, count: number, index: number) {
+  const rail = railMetrics(it);
+  const wide = isWideRail(it);
+  const cell = navCell(count, it.navPerRow, index);
+  const itemW = RAIL_W - 12;
+  /* the narrow rail's columns are laid out as one centred row */
+  const spread = cell.lines * itemW + (cell.lines - 1) * RAIL_GAP;
+  const start = Math.round((wide ? 0 : (rail.width * cell.lines - spread) / 2));
+  const pitch = wide ? rail.width : itemW + RAIL_GAP;
+  return {
+    left: (wide ? rail.inset : start) + cell.line * pitch,
+    width: wide ? rail.width - rail.inset * 2 : itemW,
+    top: rail.top + cell.at * rail.pitch,
+    height: rail.cellHeight,
+  };
+}
+
 /** system insets: the status bar above a top app bar and the gesture area below a navigation bar.
- *  Both bars carry their inset as extra height so their background reaches the rounded screen edge. */
+ *  Both bars carry their inset as extra height so their background reaches the rounded screen edge.
+ *  A navigation bar centres its destinations in the whole box rather than in the 80dp above its
+ *  inset: the row is short enough to stay clear of the gesture area, and centring it in the inset
+ *  box instead left a hem under the labels that read as a mistake. */
 export const STATUS_BAR_H = 24;
 export const NAV_BAR_H = 24;
 /** M3 layout margin: parts that are not edge-to-edge sit this far from the screen edge */
@@ -446,6 +572,12 @@ export function variantStyle(v: Variant, p: Palette): CSSProperties {
   }
 }
 
+/**
+ * How much bigger or smaller than M3's medium button a button is: its words, its icon and its
+ * padding scale with this, so a button the author makes taller grows everything inside it too.
+ */
+export const buttonScale = (it: Item) => (it.size2 ?? H) / H;
+
 export function variantShadow(v: Variant): string {
   if (v === "elevated") return "0 1px 3px rgba(0,0,0,0.20), 0 4px 8px rgba(0,0,0,0.10)";
   return "none";
@@ -479,6 +611,7 @@ export type Kind =
   | "divider"
   | "loadingIndicator"
   | "linearProgress"
+  | "progressBar"
   | "circularProgress"
   | "splitButton"
   | "fabMenu"
@@ -525,6 +658,8 @@ export type KindSpec = {
   /** second dimension (height) for free-form boxes */
   size2?: SizeSpec;
   hasFill?: boolean;
+  /** offers the scroll switch: the axes a container's content can be moved along */
+  hasScroll?: boolean;
   hasValue?: boolean;
   hasWavy?: boolean;
   hasContained?: boolean;
@@ -551,8 +686,10 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasLabel: false,
     hasSupporting: false,
     hasIcon: false,
-    hasChecked: true,
+    /* a box has no checked state of its own: the drag handle it once drew is gone */
     hasFill: true,
+    /* and it can be made to scroll: the same container, with content that moves inside it */
+    hasScroll: true,
     size: { min: 40, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
     size2: { min: 24, max: PHONE_H, step: 4, icon: "height", presets: HEIGHT_PRESETS },
     defLabel: "",
@@ -572,6 +709,9 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasSupporting: false,
     hasIcon: true,
     connect: { axis: "x", outer: R_FULL, inner: R_INNER, family: "button" },
+    /* M3's medium button is 56dp tall; a bigger one is often asked for, so the height is the
+       author's to set as well as the width */
+    size2: { min: 32, max: 200, step: 4, icon: "height", presets: [40, 48, 56, 64, 80] },
     size: { min: 64, max: PHONE_W, step: 4, icon: "width", presets: [HALF_W, CONTENT_W] },
     defLabel: "ボタン",
     defIcon: "swords",
@@ -585,6 +725,8 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     h: 48,
     radius: 24,
     hasVariant: true,
+    /* an icon button is one shape holding one icon: it is not a button with words, so the label
+       row stays out of the inspector and a dropped text never becomes a caption of its own */
     hasLabel: false,
     hasSupporting: false,
     hasIcon: true,
@@ -915,7 +1057,10 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasLabel: false,
     hasSupporting: false,
     hasIcon: true,
-    size: { min: 48, max: PHONE_W, step: 4, icon: "open_in_full", presets: [96, HALF_W, CONTENT_W, PHONE_W] },
+    /* An image is a box an author crops a picture into: its own width and height, like a camera
+       preview or a map, rather than one number that keeps it square. */
+    size: { min: 48, max: PHONE_W, step: 4, icon: "width", presets: [96, HALF_W, CONTENT_W, PHONE_W] },
+    size2: { min: 48, max: PHONE_H, step: 4, icon: "height", presets: [120, 200, PHONE_H] },
     defLabel: "",
     defIcon: "image",
     defSize: 200,
@@ -1010,6 +1155,29 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     defIcon: null,
     defSize: CONTENT_W,
   },
+  progressBar: {
+    label: "Progress Bar",
+    noun: "プログレスバー",
+    category: "progress",
+    paletteIcon: "space_bar",
+    /* A game's own bar: slim, and its box *is* the bar, so the author's width and height are the
+       bar's own rather than a cell the track floats in. The words it carries are drawn in it. */
+    w: CONTENT_W,
+    h: 10,
+    radius: 5,
+    hasVariant: false,
+    hasLabel: true,
+    hasSupporting: false,
+    hasIcon: false,
+    hasValue: true,
+    /* the track is the author's to fill, and by default there is none: a bare bar over the page */
+    hasFill: true,
+    size: { min: 80, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size2: { min: 4, max: 64, step: 2, icon: "height", presets: [6, 10, 16, 28] },
+    defLabel: "",
+    defIcon: null,
+    defSize: CONTENT_W,
+  },
   circularProgress: {
     label: "Circular Progress",
     noun: "サーキュラープログレス",
@@ -1087,7 +1255,7 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     category: "navigation",
     paletteIcon: "tab",
     w: PHONE_W,
-    h: 48,
+    h: TAB_ROW_H,
     radius: 0,
     hasVariant: false,
     hasLabel: false,
@@ -1095,6 +1263,8 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasIcon: false,
     hasTabs: true,
     size: { min: 200, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    /* the row alone at its default; an author who wants the panels below it takes the height up */
+    size2: { min: TAB_ROW_H, max: PHONE_H, step: 4, icon: "height", presets: HEIGHT_PRESETS },
     defLabel: "",
     defIcon: null,
     defSize: PHONE_W,
@@ -1120,7 +1290,9 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     noun: "バッジ",
     category: "content",
     paletteIcon: "notifications_unread",
-    w: 0,
+    /* the width it draws when the author has not set one: a numbered badge is 16dp, and a width of
+       its own may still be set — the size row reads this, so it shows the size the badge has */
+    w: 16,
     h: 16,
     radius: 8,
     hasVariant: false,
@@ -1168,6 +1340,7 @@ export const KIND_ORDER: Kind[] = [
   "divider",
   "loadingIndicator",
   "linearProgress",
+  "progressBar",
   "circularProgress",
 ];
 
@@ -1233,6 +1406,10 @@ export type Item = {
   size2?: number;
   /** palette token used as background (boxes, list items) */
   fill?: ColorToken;
+  /** containers: the axes the visitor can move the content along; unset holds still */
+  scroll?: ScrollAxis;
+  /** containers: the offset the content starts at — what the author designs, and where the visitor begins */
+  scrollPos?: { x?: number; y?: number };
   /** background behind a list item's leading icon; "none" draws the icon bare */
   iconFill?: ColorToken | "none";
   /** data URL of a user-picked image */
@@ -1247,9 +1424,15 @@ export type Item = {
   strokeWidth?: number;
   /** the border's colour: a palette role key or a #rrggbb literal; unset uses outline */
   strokeColor?: string;
-  /** interaction rules hung on this part: what a tap changes about it (grey out, cool
-   *  down, swap its words or look, disappear) */
+  /** The state machine of this part: the looks a tap moves it between, drawn as a flow in the
+   *  inspector. Documents written before flows carry `states`, which is read back as one. */
+  flow?: PartFlow;
+  /** Interaction rules hung on this part: what a tap changes about it, the old way. Read back as
+   *  a flow when the document is opened, and kept so those documents still open. */
   states?: ItemState[];
+  /** conditional taps: each rule runs when its conditions hold, and the part's plain action
+   *  is what happens when none of them does */
+  rules?: ItemRule[];
   /** The parts this one holds: a container's children, drawn inside its box. Their x/y
    *  are offsets from the container's top-left corner, so moving or resizing the
    *  container carries them along. */
@@ -1259,7 +1442,10 @@ export type Item = {
   color?: string;
   /** buttons and other round-able kinds: the outline they take. Unset is the kind's
    *  own shape (a pill for a button, a circle for an icon button or a FAB). */
-  /** this container is a dialog: the screen keeps it hidden until a tap opens it */
+  /** This container is an overlay: the screen keeps it hidden until a tap opens it, and
+   *  the level says how it takes the screen over. Unset with `modal` set reads as "modal". */
+  overlay?: OverlayLevel;
+  /** the spelling of `overlay: "modal"` used by documents saved before levels existed */
   modal?: boolean;
   /** a navigation bar with a collapse button: unset means the bar has none. Folded hides
    *  every destination's label and keeps the icons. */
@@ -1269,9 +1455,13 @@ export type Item = {
   /** Rules hung on one destination of a bar rather than on the bar itself: the key is the
    *  slot `actionSlotsOf` names ("tab:2", "icon", ...). */
   slotStates?: Record<string, ItemState[]>;
+  /** one machine per slot of a bar, keyed the way `slotStates` is: the tab that changes when tapped */
+  slotFlows?: Record<string, PartFlow>;
   /** how many destinations fit on one line: more than this wraps the bar onto another row
    *  (a rail grows another column). Unset means they all share one line. */
   navPerRow?: number;
+  /** tab rows only: the M3 underline, or the buttons most games switch pages with. Unset is underline. */
+  tabStyle?: TabStyle;
   shape?: ButtonShape;
   /** stacking level among the parts it shares a screen with: a higher one draws on top.
    *  Unset means LAYER_DEFAULT. */
@@ -1281,19 +1471,23 @@ export type Item = {
 /* ---------- state transitions hung on a part ---------- */
 
 /** What a tap changes about the part itself. `disable` and `cooldown` grey the part
- *  out (a cooldown also counts down for `seconds`), `label`, `color` and `variant`
+ *  out (a cooldown also counts down for `seconds`), `label`, `color` and `icon`
  *  swap what the part says or looks like using `value`, and `hide` takes it off screen. */
-export type StateEffect = "disable" | "cooldown" | "label" | "color" | "variant" | "grow" | "hide";
+export type StateEffect = "disable" | "cooldown" | "label" | "color" | "icon" | "grow" | "hide" | "variant";
 export const STATE_EFFECTS: { key: StateEffect; icon: string }[] = [
   { key: "disable", icon: "block" },
   { key: "cooldown", icon: "timer" },
   { key: "label", icon: "edit" },
   { key: "color", icon: "format_color_fill" },
-  { key: "variant", icon: "palette" },
+  { key: "icon", icon: "emoji_symbols" },
   { key: "grow", icon: "open_in_full" },
   { key: "hide", icon: "visibility_off" },
 ];
-export const isStateEffect = (v: unknown): v is StateEffect => STATE_EFFECTS.some((e) => e.key === v);
+/** Documents written while a tap could swap the *variant* still carry that rule: it keeps working
+ *  and stays valid, it is simply no longer offered — an icon is the thing a tap changes now. */
+export const LEGACY_STATE_EFFECTS: StateEffect[] = ["variant"];
+export const isStateEffect = (v: unknown): v is StateEffect =>
+  STATE_EFFECTS.some((e) => e.key === v) || LEGACY_STATE_EFFECTS.includes(v as StateEffect);
 
 export type ItemState = {
   id: string;
@@ -1306,7 +1500,482 @@ export type ItemState = {
   seconds?: number;
 };
 
+/* ---------- a part's own state machine ---------- */
+
+/**
+ * One look a part can be in. A field left out keeps whatever the author drew, so a node that only
+ * swaps the icon says exactly that: a look is a difference from the part rather than a copy of it,
+ * and editing the part still moves every node that never overrode the field.
+ */
+export type PartLook = {
+  id: string;
+  /** what the flow calls this node; unset reads as the label the part shows while in it */
+  name?: string;
+  label?: string;
+  /** null draws the node with no icon at all */
+  icon?: string | null;
+  /** a palette role key or a #rrggbb literal, as Item.color is */
+  color?: string;
+  variant?: Variant;
+  /** the node greys the part out: it stops answering taps while it is in it */
+  disabled?: boolean;
+  /** the node draws the part a size up */
+  grow?: boolean;
+  /** the node takes the part off the screen */
+  hidden?: boolean;
+};
+
+/** The look a part is drawn in: the one its author made, before any step has been taken. */
+export const START_LOOK = ":start";
+
+/** What sets a step off: the visitor's tap, or a wait counted from the moment the part entered the
+ *  look it is in. */
+export type StepTrigger = { kind: "tap" } | { kind: "after"; seconds: number };
+
+/** One transition of the machine: from a look (or START_LOOK) to another, once its conditions hold.
+ *  Two steps leaving the same look are read in order, which is the only order an author has to
+ *  think about — and it is local to one look rather than to the whole part. */
+export type PartStep = {
+  id: string;
+  from: string;
+  to: string;
+  trigger: StepTrigger;
+  when?: Condition[];
+  /** what else the step does, in order: a jump, a value written, another part's look */
+  do?: RuleAction[];
+};
+
+/** The looks a part can be in and the steps between them. Every part has one of its own; each slot
+ *  of a bar can have one as well, which is what makes a tab change when it is tapped. */
+export type PartFlow = { looks: PartLook[]; steps: PartStep[] };
+
+export const isTimedStep = (s: PartStep) => s.trigger.kind === "after";
+export const stepSeconds = (s: PartStep) => (s.trigger.kind === "after" ? Math.max(0, s.trigger.seconds) : 0);
+/** the look an id names, or undefined for the drawn part */
+export const lookOf = (flow: PartFlow | undefined, id: string | undefined) => (id ? flow?.looks.find((l) => l.id === id) : undefined);
+/** the steps that leave a look, in the order they were written */
+export const stepsFrom = (flow: PartFlow | undefined, from: string) => (flow?.steps ?? []).filter((s) => s.from === from);
+
+/** The part as one of its looks draws it: the drawn part with the node's own fields on top. */
+export function lookItem(it: Item, look: PartLook | undefined): Item {
+  if (!look) return it;
+  let out = it;
+  if (look.label !== undefined && look.label !== it.label) out = { ...out, label: look.label };
+  if (look.icon !== undefined && look.icon !== it.icon) out = { ...out, icon: look.icon };
+  if (look.color !== undefined && look.color !== it.color) out = { ...out, color: look.color };
+  if (look.variant !== undefined && look.variant !== it.variant) out = { ...out, variant: look.variant };
+  return out;
+}
+
+/** The conditions hold, and the step's own clock (if it has one) has come round. */
+const stepHolds = (s: PartStep, vars: Record<string, VarValue>, declared: Var[], elapsed: number) =>
+  (s.when ?? []).every((c) => holds(c, vars, declared)) && (s.trigger.kind !== "after" || elapsed >= Math.max(0, s.trigger.seconds));
+
+/** The step a *tap* takes from this look, or null when the part's plain action is what runs. */
+export function firstTapStep(flow: PartFlow | undefined, from: string, vars: Record<string, VarValue>, declared: Var[]): PartStep | null {
+  for (const s of stepsFrom(flow, from)) if (s.trigger.kind === "tap" && stepHolds(s, vars, declared, 0)) return s;
+  return null;
+}
+
+/** The step that has come round on its own, counted from the moment the part entered this look. */
+export function firstDueStep(flow: PartFlow | undefined, from: string, vars: Record<string, VarValue>, declared: Var[], elapsed: number): PartStep | null {
+  for (const s of stepsFrom(flow, from)) if (s.trigger.kind === "after" && stepHolds(s, vars, declared, elapsed)) return s;
+  return null;
+}
+
+/** Whole seconds still to wait for the soonest timed step leaving this look, 0 when the look holds
+ *  no clock: a look that greys the part out and comes back shows the wait as a countdown. */
+export function waitLeft(flow: PartFlow | undefined, from: string, elapsed: number): number {
+  let best = 0;
+  for (const s of stepsFrom(flow, from)) {
+    if (s.trigger.kind !== "after") continue;
+    const left = Math.max(0, s.trigger.seconds - elapsed);
+    if (best === 0 || left < best) best = left;
+  }
+  return best;
+}
+
+/** Where a part is: the look it is in, and the moment on the preview's clock it got there. */
+export type AtLook = { look: string; since: number };
+export type MachineAt = Record<string, AtLook | undefined>;
+/** the look a part is in, the drawn one for a part no step has moved yet */
+export const lookAt = (at: MachineAt, id: string) => at[id]?.look ?? START_LOOK;
+
+/**
+ * The state rules a document was written with, read back as a machine: one tap that swapped the
+ * part's look becomes a node the tap reaches — and, when the icon was the thing it changed, the
+ * same tap takes it back, which is how those documents flipped. A cooldown becomes a greyed node
+ * the part waits its way out of, and a plain disable, grow or hide becomes a node it stays in.
+ */
+export function statesAsFlow(states: ItemState[]): PartFlow | undefined {
+  const cooling = states.find((s) => s.effect === "cooldown");
+  if (states.length === 0) return undefined;
+  const look: PartLook = { id: uid() };
+  for (const s of states) {
+    switch (s.effect) {
+      case "disable":
+        look.disabled = true;
+        break;
+      case "grow":
+        look.grow = true;
+        break;
+      case "hide":
+        look.hidden = true;
+        break;
+      case "label":
+        if (s.value !== undefined) look.label = s.value;
+        break;
+      case "icon":
+        look.icon = s.value ? s.value : null;
+        break;
+      case "color":
+        if (isCustomColor(s.value)) look.color = s.value;
+        break;
+      case "variant":
+        if (isVariant(s.value)) look.variant = s.value;
+        break;
+      case "cooldown":
+        break;
+    }
+  }
+  if (cooling) look.disabled = true;
+  const steps: PartStep[] = [{ id: uid(), from: START_LOOK, to: look.id, trigger: { kind: "tap" } }];
+  if (states.some((s) => s.effect === "icon")) steps.push({ id: uid(), from: look.id, to: START_LOOK, trigger: { kind: "tap" } });
+  if (cooling) steps.push({ id: uid(), from: look.id, to: START_LOOK, trigger: { kind: "after", seconds: Math.max(1, cooling.seconds ?? 3) } });
+  return { looks: [look], steps };
+}
+
+/**
+ * Every part in a document, with the state rules it was written with read back as a flow. This runs
+ * as a document is opened, so the editor, the preview and the prompt only ever see machines.
+ */
+export function migrateFlows(groups: Group[]): Group[] {
+  const walk = <T extends Item>(it: T): T => {
+    const children = it.children?.map(walk);
+    const nested = children && children.some((c, i) => c !== it.children?.[i]) ? children : it.children;
+    const keep = () => (nested === it.children ? it : { ...it, children: nested });
+    const hasStates = (it.states?.length ?? 0) > 0;
+    /* a document from a build that wrote something else there must not take the editor down:
+       only a real list of rules becomes a machine */
+    const slots = it.slotStates ? Object.entries(it.slotStates).filter(([, list]) => Array.isArray(list)) : [];
+    if (!hasStates && slots.length === 0) return keep();
+    const { states, slotStates, ...rest } = it;
+    const flow = hasStates ? statesAsFlow((states ?? []) as ItemState[]) : undefined;
+    const slotFlows = slots.reduce<Record<string, PartFlow>>((acc, [key, list]) => {
+      const made = statesAsFlow(list);
+      if (made) acc[key] = made;
+      return acc;
+    }, {});
+    return {
+      ...rest,
+      ...(nested ? { children: nested } : {}),
+      ...(flow ? { flow } : {}),
+      ...(slotStates && Object.keys(slotFlows).length ? { slotFlows } : {}),
+    } as T;
+  };
+  return groups.map((g) => {
+    const items = g.items.map(walk);
+    return items.some((x, i) => x !== g.items[i]) ? { ...g, items } : g;
+  });
+}
+
 export type ToggleLook = { icon?: string | null; variant?: Variant; label?: string };
+
+/* ---------- variables and rules ---------- */
+
+/**
+ * A value the prototype carries from one tap to the next — coins, stamina, level, "the
+ * reward has been claimed". Without these a prototype can only ever go forward; with them a
+ * button can do one thing when the visitor can afford it and another when they cannot, which
+ * is the difference between a clickable picture and a playable screen.
+ */
+export type VarValue = number | boolean | string;
+export type VarKind = "number" | "boolean" | "text";
+
+export type Var = {
+  id: string;
+  /** how a part's text refers to it: `{stamina}` */
+  name: string;
+  kind: VarKind;
+  /** what the preview starts from */
+  initial: VarValue;
+  /** The page it belongs to — a screen or a dialog. Left out, it is shared by every page, which is
+   *  what a document written before pages owned their variables looks like. */
+  pageId?: string;
+};
+
+/** The scope that shows every variable there is, whatever page owns it. A frame id is never this. */
+export const VARS_ALL = "*";
+
+/** The variables one scope shows: all of them, the ones no page owns, or one page's own. The empty
+ *  string is the shared scope — a picker can only carry string keys — and reads as "no page". */
+export const varsForScope = (vars: Var[], scope: string | null): Var[] =>
+  scope === VARS_ALL ? vars : varsOfPage(vars, scope === "" ? null : scope);
+
+/** The variables one page declares, in the order they were written. */
+export const varsOfPage = (vars: Var[], pageId: string | null): Var[] =>
+  pageId === null ? vars.filter((v) => !v.pageId) : vars.filter((v) => v.pageId === pageId);
+
+/** The variables the preview can watch while these pages are in play: their own, plus the shared ones. */
+export const varsInFrames = (vars: Var[], frameIds: string[]): Var[] =>
+  vars.filter((v) => !v.pageId || frameIds.includes(v.pageId));
+
+export const VAR_KINDS: { key: VarKind; icon: string }[] = [
+  { key: "number", icon: "tag" },
+  { key: "boolean", icon: "toggle_on" },
+  { key: "text", icon: "text_fields" },
+];
+export const isVarKind = (v: unknown): v is VarKind => VAR_KINDS.some((k) => k.key === v);
+
+/** the initial value as its own kind says it should read: a number var never holds "" */
+export const varInitial = (v: Var): VarValue => {
+  if (v.kind === "number") return typeof v.initial === "number" && Number.isFinite(v.initial) ? v.initial : Number(v.initial) || 0;
+  if (v.kind === "boolean") return v.initial === true || v.initial === "true";
+  return v.initial === undefined || v.initial === null ? "" : String(v.initial);
+};
+
+/** every variable's starting value, the state the preview opens on */
+export function initialVars(vars: Var[] | undefined): Record<string, VarValue> {
+  return Object.fromEntries((vars ?? []).map((v) => [v.id, varInitial(v)]));
+}
+
+export type ConditionOp = "==" | "!=" | ">" | "<" | ">=" | "<=";
+export const CONDITION_OPS: ConditionOp[] = ["==", "!=", ">", "<", ">=", "<="];
+/** the ops that only mean something for a number: the editor hides them for other kinds */
+export const NUMERIC_OPS: ConditionOp[] = [">", "<", ">=", "<="];
+export const isConditionOp = (v: unknown): v is ConditionOp => CONDITION_OPS.some((o) => o === v);
+
+/** one test a rule makes before it runs */
+export type Condition = { varId: string; op: ConditionOp; value: VarValue };
+
+const asNumber = (v: VarValue | undefined) => (typeof v === "number" ? v : Number(v));
+
+/** whether a single condition holds, read against the variable's own kind */
+export function holds(c: Condition, vars: Record<string, VarValue>, declared: Var[]): boolean {
+  const kind = declared.find((v) => v.id === c.varId)?.kind ?? "number";
+  const left = vars[c.varId];
+  if (left === undefined) return false;
+  if (kind === "text") {
+    /* text compares as text: "level 3" is never greater than "level 10" in a useful way, so
+       the numeric ops are refused rather than guessed at */
+    if (NUMERIC_OPS.includes(c.op)) return false;
+    return c.op === "==" ? String(left) === String(c.value) : String(left) !== String(c.value);
+  }
+  if (kind === "boolean") {
+    if (NUMERIC_OPS.includes(c.op)) return false;
+    const on = left === true;
+    const want = c.value === true || c.value === "true";
+    return c.op === "==" ? on === want : on !== want;
+  }
+  const a = asNumber(left);
+  const b = asNumber(c.value);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  switch (c.op) {
+    case "==":
+      return a === b;
+    case "!=":
+      return a !== b;
+    case ">":
+      return a > b;
+    case "<":
+      return a < b;
+    case ">=":
+      return a >= b;
+    case "<=":
+      return a <= b;
+  }
+}
+
+/** everything a rule does when its conditions hold */
+export type RuleAction =
+  /** the same places a plain tap can go: a page, or an overlay popped over this one */
+  | { kind: "goto"; to: string; transition: Transition }
+  /** the previous screen, as the preview's back button does it */
+  | { kind: "back" }
+  /** puts away the overlay the part stands in */
+  | { kind: "close" }
+  /** writes a variable outright */
+  | { kind: "set"; varId: string; value: VarValue }
+  /** spends or grants: a step from the value it holds now */
+  | { kind: "add"; varId: string; delta: number }
+  /** flips a boolean */
+  | { kind: "toggle"; varId: string }
+  /** While its conditions hold, a part is drawn as this: the look a variable decides, not a tap.
+   *  `target` names the part it changes, and leaving it out changes the part the rule belongs to —
+   *  a claim button can therefore turn the gift icon beside it into a claimed one. */
+  | { kind: "look"; target?: string; icon?: string; label?: string; color?: string; variant?: Variant };
+
+export const RULE_ACTIONS: { key: RuleAction["kind"]; icon: string }[] = [
+  { key: "goto", icon: "login" },
+  { key: "back", icon: "arrow_back" },
+  { key: "close", icon: "close_fullscreen" },
+  { key: "set", icon: "edit" },
+  { key: "add", icon: "exposure" },
+  { key: "toggle", icon: "toggle_on" },
+  { key: "look", icon: "format_paint" },
+];
+export const isRuleKind = (v: unknown): v is RuleAction["kind"] => RULE_ACTIONS.some((a) => a.key === v);
+
+/**
+ * One tap, with a condition on it. A part's rules are tried in order and the first one whose
+ * conditions all hold is the one that runs; a part with no matching rule falls back to its
+ * plain action, which is what makes "if it is affordable, fight; otherwise do nothing" one
+ * button instead of two.
+ */
+export type ItemRule = {
+  id: string;
+  when?: Condition[];
+  do: RuleAction;
+  /** seconds to wait, counted from the moment the screen is shown: a timed rule runs by itself
+   *  ("ten minutes later the battle is won"). Left out, the rule waits for a tap instead. */
+  after?: number;
+};
+
+/** whether a rule runs on its own clock rather than on a tap */
+export const isTimedRule = (r: ItemRule) => typeof r.after === "number";
+
+/** whether a timed rule's wait is over */
+export const ruleDue = (r: ItemRule, seconds: number) => !isTimedRule(r) || seconds >= (r.after as number);
+
+/** the conditions hold, and the rule's own clock (if it has one) has come round */
+const ruleHolds = (r: ItemRule, vars: Record<string, VarValue>, declared: Var[], seconds: number) =>
+  ruleDue(r, seconds) && (r.when ?? []).every((c) => holds(c, vars, declared));
+
+/** The first rule a *tap* takes, or null when the part's plain action is the one that runs. Timed
+ *  rules are not in it: a tap is not what they are waiting for. */
+export function firstRule(rules: ItemRule[] | undefined, vars: Record<string, VarValue>, declared: Var[]): ItemRule | null {
+  for (const r of rules ?? []) {
+    if (!isTimedRule(r) && (r.when ?? []).every((c) => holds(c, vars, declared))) return r;
+  }
+  return null;
+}
+
+/** The first rule that has come round and holds, of either kind: what a part is drawn as now. */
+export function firstDueRule(rules: ItemRule[] | undefined, vars: Record<string, VarValue>, declared: Var[], seconds: number): ItemRule | null {
+  for (const r of rules ?? []) {
+    if (ruleHolds(r, vars, declared, seconds)) return r;
+  }
+  return null;
+}
+
+/** The action a timed rule runs once its wait is over, when it is not a look: the victory that pops
+ *  by itself. Null says there is nothing to run this moment. */
+export function dueAction(rules: ItemRule[] | undefined, vars: Record<string, VarValue>, declared: Var[], seconds: number): ItemRule | null {
+  const rule = firstDueRule((rules ?? []).filter((r) => isTimedRule(r) && r.do.kind !== "look"), vars, declared, seconds);
+  return rule;
+}
+
+/** whether anything in the document runs on a clock, so the preview knows to keep time at all */
+export function hasTimedRules(items: Item[]): boolean {
+  return items.some((it) => (it.rules ?? []).some(isTimedRule) || (it.children ? hasTimedRules(it.children) : false));
+}
+
+/** Whether any part carries a step that waits: the ticker only has to run when one does. */
+export function hasTimedSteps(items: Item[]): boolean {
+  return items.some(
+    (it) =>
+      (it.flow?.steps ?? []).some(isTimedStep) ||
+      Object.values(it.slotFlows ?? {}).some((f) => f.steps.some(isTimedStep)) ||
+      (it.children ? hasTimedSteps(it.children) : false),
+  );
+}
+
+/** The part as a `look` rule draws it: only the fields the rule names are changed. */
+export function ruledLook(it: Item, look: Extract<RuleAction, { kind: "look" }>): Item {
+  const out: Item = { ...it };
+  if (look.icon !== undefined) out.icon = look.icon || null;
+  if (look.label !== undefined) out.label = look.label;
+  if (look.color !== undefined) out.color = look.color;
+  if (look.variant !== undefined) out.variant = look.variant;
+  return out;
+}
+
+/**
+ * Every look the variables ask for right now, keyed by the part it belongs to. A rule can change the
+ * part it sits on or name another one, so a claim button turns the gift icon beside it into a claimed
+ * one; the first rule that holds wins, in the order the document lists the parts.
+ */
+export function looksFor(items: Item[], vars: Record<string, VarValue>, declared: Var[], seconds = 0): Map<string, Item> {
+  const out = new Map<string, Item>();
+  const walk = (list: Item[]) => {
+    for (const it of list) {
+      /* Every look this part asks for, in order, each on the part it names: one button can wear a
+         look of its own and mark the gift beside it claimed at the same time, so the first look is
+         not the only one that counts — only the first look *per target* is. Rules that write a
+         variable or go somewhere are not looks, and must not mask the look behind them. */
+      for (const rule of it.rules ?? []) {
+        if (rule.do.kind !== "look" || !ruleHolds(rule, vars, declared, seconds)) continue;
+        const target = rule.do.target ?? it.id;
+        const targetItem = target === it.id ? it : findItemIn(items, target);
+        if (targetItem && !out.has(target)) out.set(target, ruledLook(targetItem, rule.do));
+      }
+      if (it.children) walk(it.children);
+    }
+  };
+  walk(items);
+  return out;
+}
+
+/**
+ * What a part looks like because of the variables: the first of its own rules whose conditions hold,
+ * when that rule is a look. This is how a button becomes the claim button once the reward is finished
+ * — the look follows the value, where a tap effect only reacts to being touched. A rule that goes
+ * somewhere is not a look, so the part is drawn as its author drew it.
+ */
+export function conditionalLook(it: Item, vars: Record<string, VarValue>, declared: Var[], seconds = 0): Item | null {
+  if (!(it.rules ?? []).length) return null;
+  return looksFor([it], vars, declared, seconds).get(it.id) ?? null;
+}
+
+/** what a variable holds after a rule writes it */
+export function writtenValue(v: Var, action: Extract<RuleAction, { kind: "set" | "add" | "toggle" }>, current: VarValue | undefined): VarValue {
+  if (action.kind === "set") return varInitial({ ...v, initial: action.value });
+  if (action.kind === "toggle") return !(current === true);
+  const step = Number.isFinite(action.delta) ? action.delta : 0;
+  return (asNumber(current) || 0) + step;
+}
+
+/**
+ * Replaces `{name}` with what the variable holds right now, so a resource bar counts down as
+ * the visitor spends. A name nothing declares is left on the screen exactly as written: a
+ * typo should be visible, not silently blank.
+ */
+export function varText(text: string, vars: Record<string, VarValue>, declared: Var[]): string {
+  if (!text.includes("{")) return text;
+  return text.replace(/\{([^{}]+)\}/g, (whole, name: string) => {
+    const v = declared.find((d) => d.name === name.trim());
+    if (!v) return whole;
+    const value = vars[v.id];
+    return value === undefined ? whole : String(value);
+  });
+}
+
+/** the names a piece of text reads, so the editor can tell which bindings are typos */
+export const readVars = (text: string | undefined): string[] => [...(text ?? "").matchAll(/\{([^{}]+)\}/g)].map((m) => m[1].trim());
+
+/* Comparisons and writes are written in symbols rather than words: "stamina ≥ 10" and
+ * "coins + 100" read the same in every language the editor speaks, so the flow diagram, the
+ * description document and the panel can all share one phrasing. */
+export const CONDITION_SYMBOLS: Record<ConditionOp, string> = { "==": "=", "!=": "≠", ">": ">", "<": "<", ">=": "≥", "<=": "≤" };
+
+/** a comparison in short form, naming the variable the way the author named it */
+export const conditionText = (c: Condition, declared: Var[]) =>
+  `${declared.find((v) => v.id === c.varId)?.name ?? c.varId} ${CONDITION_SYMBOLS[c.op]} ${String(c.value)}`;
+
+/** a write in short form: `coins + 100`, `stamina = 0`, `claimed ¬` */
+export function writeText(v: Var, a: Extract<RuleAction, { kind: "set" | "add" | "toggle" }>): string {
+  if (a.kind === "toggle") return `${v.name} ¬`;
+  if (a.kind === "set") return `${v.name} = ${String(a.value)}`;
+  return `${v.name} ${a.delta < 0 ? "−" : "+"} ${Math.abs(a.delta)}`;
+}
+
+/** every name a rule's conditions and writes touch, so a missing one can be reported */
+export function ruleVars(r: ItemRule): { read: string[]; write: string[] } {
+  return {
+    read: (r.when ?? []).map((c) => c.varId),
+    write: r.do.kind === "set" || r.do.kind === "add" || r.do.kind === "toggle" ? [r.do.varId] : [],
+  };
+}
 
 /** a part placed inside a container: its own offsets from the container's top-left */
 /** the outlines a button-like part can take */
@@ -1316,11 +1985,40 @@ export const BUTTON_SHAPES: { key: ButtonShape; icon: string }[] = [
   { key: "round", icon: "circle" },
   { key: "square", icon: "square" },
 ];
+/**
+ * The surface a badge paints. A badge is a pill of its own rather than a box, so nothing else paints
+ * it: the colour the author gave it fills the pill (the error role when they gave none), and the
+ * border they asked for rings the same pill — an inset ring on the box behind it would sit under it
+ * and never be seen.
+ */
+export function badgeSurface(it: Item, p: Palette): { background: string; color: string; boxShadow?: string } {
+  const own = colorOverrideOf(it, p);
+  const stroke = strokeOf(it, p);
+  return { background: own?.main ?? p.error, color: own?.on ?? p.onError, ...(stroke ? { boxShadow: stroke } : undefined) };
+}
+
+/**
+ * Whether a part takes a dragged *text* into itself: a part that writes text of its own — a button,
+ * a card — so a caption can be dropped straight onto the control it belongs to. A text is not one
+ * of them, and a container is a target for anything already.
+ */
+export const takesText = (it: Item) => it.kind !== "text" && !!KIND_SPEC[it.kind]?.hasLabel;
+
 /** kinds whose outline the shape switch controls */
 export const SHAPED: Kind[] = ["button", "iconButton", "fab", "extendedFab"];
+/** the shapes a kind that is a circle by nature — an icon button, a FAB — can take */
+export const ROUND_SHAPES: { key: ButtonShape; icon: string }[] = [
+  { key: "round", icon: "circle" },
+  { key: "square", icon: "square" },
+];
+/** whether a kind wears a circle unless the author asks for a square */
+export const roundByNature = (kind: Kind) => kind === "iconButton" || kind === "fab";
 export const isButtonShape = (v: unknown): v is ButtonShape => BUTTON_SHAPES.some((x) => x.key === v);
 
 export type PlacedItem = Item & { x: number; y: number };
+
+/** The axes a container's content can be moved along. A container without one holds still. */
+export type ScrollAxis = "x" | "y" | "both";
 
 /** kinds that can act as a toggle button in the preview */
 export const TOGGLEABLE: Kind[] = ["button", "iconButton", "fab", "extendedFab"];
@@ -1381,6 +2079,14 @@ export function collapseFree(g: Group, widths: Record<string, number>): Group {
   const pl = layoutOf(g, widths)[0];
   return { id: g.id, x: pl.x, y: pl.y, axis: connectSpecOf(g.items[0])?.axis ?? "x", items: g.items };
 }
+
+/**
+ * Where one tap's action is kept. A destination of a bar is a button of its own, so a dialog bound to
+ * the "warehouse" destination belongs to that destination — binding it to the bar instead would leave
+ * the destination doing nothing and the whole bar opening the dialog. A plain part keeps its own.
+ */
+export const actionPatchFor = (it: Item, target: string | null, action: Action): Partial<Item> =>
+  target ? { actions: { ...(it.actions ?? {}), [target]: action } } : { action };
 
 /** every navigation an item carries: its own action plus per-slot ones */
 export function actionsOf(it: Item): { slot: string; action: Action }[] {
@@ -1562,8 +2268,8 @@ export function paletteForItem(it: Item, p: Palette): Palette {
 
 /* ---------- containers and their children ---------- */
 
-/** what a part has become once its own rules have been set off: `fired` maps a part id
- *  to the moment its tap happened, and a cooldown runs out on its own after `seconds`. */
+/** What a part has become once its own machine has moved it: the look it is in, its flags, and the
+ *  wait left on the step that will take it out of it. */
 export type PartState = {
   /** the part as its rules leave it: a label or a look may have changed */
   item: Item;
@@ -1576,51 +2282,20 @@ export type PartState = {
   cooldown: number;
 };
 
-export function resolveStates(it: Item, fired: Record<string, number | undefined>, now: number): PartState {
-  let item = it;
-  let hidden = false;
-  let grown = false;
-  let disabled = false;
-  let cooldown = 0;
-  const at = fired[it.id];
-  if (at !== undefined) {
-    /* A cooldown is a state the part comes back from: while it runs the part is greyed,
-     * and the moment it runs out the part is exactly what its author drew again, ready
-     * to be tapped. A `disable` has no such end and stays for good. */
-    const cooling = (it.states ?? []).find((rule) => rule.effect === "cooldown");
-    if (cooling) {
-      const left = (cooling.seconds ?? 3) - (now - at) / 1000;
-      if (left <= 0) return { item: it, hidden: false, grown: false, disabled: false, cooldown: 0 };
-      cooldown = Math.ceil(left);
-      disabled = true;
-    }
-    for (const rule of it.states ?? []) {
-      switch (rule.effect) {
-        case "disable":
-          disabled = true;
-          break;
-        case "cooldown":
-          /* counted above, so the part goes back to its own look when the wait is over */
-          break;
-        case "label":
-          if (rule.value !== undefined && rule.value !== item.label) item = { ...item, label: rule.value };
-          break;
-        case "color":
-          if (isCustomColor(rule.value) && rule.value !== item.color) item = { ...item, color: rule.value };
-          break;
-        case "variant":
-          if (isVariant(rule.value) && rule.value !== item.variant) item = { ...item, variant: rule.value };
-          break;
-        case "grow":
-          grown = true;
-          break;
-        case "hide":
-          hidden = true;
-          break;
-      }
-    }
-  }
-  return { item, hidden, grown, disabled, cooldown };
+export function resolveStates(it: Item, at: MachineAt, now: number): PartState {
+  const entry = at[it.id];
+  const look = lookOf(it.flow, entry?.look);
+  const elapsed = entry ? Math.max(0, (now - entry.since) / 1000) : 0;
+  /* the wait is a property of the look, not of one step's guard: a greyed node that comes back
+     counts down whether or not the step out of it is also conditional */
+  const left = look ? waitLeft(it.flow, look.id, elapsed) : 0;
+  return {
+    item: lookItem(it, look),
+    hidden: !!look?.hidden,
+    grown: !!look?.grow,
+    disabled: !!look?.disabled,
+    cooldown: look?.disabled && left > 0 ? Math.ceil(left) : 0,
+  };
 }
 
 /** whether a part answers a tap at all: a hidden part is gone, a disabled one ignores it */
@@ -1631,6 +2306,18 @@ export function subtreeOf(it: Item): Item[] {
   const out: Item[] = [it];
   for (const c of it.children ?? []) out.push(...subtreeOf(c));
   return out;
+}
+
+/** One part anywhere in a tree, containers searched depth first. Ownership questions — is this
+ *  part held by that group, is that group locked over it — have to walk the tree: a part inside a
+ *  container is not one of the group's own items, and a plain contains-check would miss it. */
+export function findItemIn(items: Item[], id: string): Item | null {
+  for (const it of items) {
+    if (it.id === id) return it;
+    const found = it.children ? findItemIn(it.children, id) : null;
+    if (found) return found;
+  }
+  return null;
 }
 
 /** every part a document holds, containers' children included, in canvas order */
@@ -1677,6 +2364,33 @@ export function strokeOf(it: Item, p: Palette): string | null {
  *  child the author put BELOW the container is covered by it: the box hides it. */
 export const childShown = (parent: Item, child: Item) => layerOf(child) >= layerOf(parent);
 
+/**
+ * Raises a part's whole subtree to sit at or above `floor`. A container moved into another one has
+ * to carry its contents' layers along: only the container itself is given the level the drop asks
+ * for, and a child that kept the default would end up below its own parent — which `childShown`
+ * reads as "covered", so the contents of a nested container would simply not be drawn.
+ */
+export function liftAbove(it: PlacedItem, floor: number): PlacedItem {
+  const node = layerOf(it) < floor ? { ...it, z: floor } : it;
+  const kids = it.children;
+  return kids ? { ...node, children: kids.map((c) => liftAbove(c, layerOf(node))) } : node;
+}
+
+/** the part does not move as it folds */
+export const NO_FOLD = { dx: 0, dy: 0 };
+
+/** How far a part moves as it folds: nothing at all unless it is a navigation part folded to its pill. */
+export const foldPlace = (it: Item, widths: Record<string, number>) => (foldsToPill(it) ? foldShift(it, widths) : NO_FOLD);
+
+/**
+ * The same fold, as the margins that put a part there inside a run: a run lays its parts out itself,
+ * so the place `layoutOf` computes for a folded navigation part has to be handed to it this way.
+ */
+export function foldMargins(it: Item, widths: Record<string, number>): { marginLeft?: number; marginTop?: number } {
+  const f = foldPlace(it, widths);
+  return f.dx || f.dy ? { marginLeft: f.dx || undefined, marginTop: f.dy || undefined } : {};
+}
+
 /** A copy of a part and everything it holds, with fresh ids from `next`. The mapping is
  *  written into `ids` so a caller can also remap the interactions that point at them. */
 export function copySubtree(it: Item, next: () => string, ids: Map<string, string>): Item {
@@ -1708,6 +2422,11 @@ export type Frame = {
   swipe?: Partial<Record<SwipeDir, string>>;
   /** where Tidy puts the body rows between the bars: from the top unless the author says otherwise */
   place?: Place;
+  /** A screen the visitor navigates to, or an overlay popped over one. Unset reads as a
+   *  screen, so documents saved before overlays existed keep behaving the way they did. */
+  role?: FrameRole;
+  /** overlays only: the level whose rules it takes. Unset reads as "modal". */
+  level?: OverlayLevel;
 };
 
 /** how Tidy stacks the body of a screen: from the top, centered, against the bottom bar, or spread out */
@@ -1746,6 +2465,160 @@ export const frameRect = (f: Frame) => {
 };
 /** the corner radius of a screen: a phone's rounded glass, a flatter window for the desktop */
 export const frameRadius = (f: Frame) => (isPhoneFrame(f) ? PHONE_R : DESKTOP_R);
+
+/* ---------- overlays ---------- */
+
+/** A page is either somewhere the visitor navigates to, or an overlay popped over one. */
+export type FrameRole = "screen" | "overlay";
+
+/**
+ * How an overlay takes the screen over. A level is nothing but a bundle of runtime rules
+ * — how dark the screen behind goes, whether it still takes taps, who owns the keyboard,
+ * what the back key does — so the preview, the flow diagram and the spec document all read
+ * one table instead of each deciding for itself.
+ *
+ * This is deliberately *not* the layer tree. Parts nest inside parts for layout; a level
+ * says what the visitor can reach. A part three containers deep can still be a full-screen
+ * overlay, which is why the level is always written down rather than read off the nesting.
+ */
+export type OverlayLevel = "popover" | "sheet" | "modal" | "fullscreen" | "system";
+
+export type OverlayRule = {
+  /** the dim laid over the screen behind; 0 draws none */
+  scrim: number;
+  /** the screen behind stops taking taps and stops being read out */
+  inertBehind: boolean;
+  /** a tap beside the layer closes it: what a scrimless popover does instead of blocking */
+  dismissOnOutside: boolean;
+  /** the keyboard moves into the layer and Tab stays inside it */
+  focusTrap: boolean;
+  /** Esc and the preview's back button close it; a system layer has to be dealt with */
+  dismissOnBack: boolean;
+  /** what opening it does to the layers already open */
+  clears: "none" | "popovers" | "all";
+  /**
+   * The layer floats over the screen rather than taking it over, so only the parts drawn on its page
+   * appear: the page is the dialog's *stage*, and its own background is not drawn. A level that
+   * fills the screen (full screen, system) is the screen instead, and paints its background.
+   */
+  float: boolean;
+};
+
+export const OVERLAY_RULES: Record<OverlayLevel, OverlayRule> = {
+  /* a bubble or a menu: it hangs off a part, the screen behind keeps working, and a tap
+     anywhere else puts it away */
+  popover: { scrim: 0, inertBehind: false, dismissOnOutside: true, focusTrap: false, dismissOnBack: true, clears: "none", float: true },
+  /* a panel slid in from an edge: the screen behind waits behind a light dim */
+  sheet: { scrim: 0.24, inertBehind: true, dismissOnOutside: false, focusTrap: true, dismissOnBack: true, clears: "popovers", float: true },
+  /* the ordinary dialog: dimmed, blocking, and the back key closes it */
+  modal: { scrim: 0.32, inertBehind: true, dismissOnOutside: false, focusTrap: true, dismissOnBack: true, clears: "popovers", float: true },
+  /* an activity page or a battle result drawn over everything: it *is* the screen now, so
+     nothing below it survives */
+  fullscreen: { scrim: 0, inertBehind: true, dismissOnOutside: false, focusTrap: true, dismissOnBack: true, clears: "all", float: false },
+  /* sign-in, payment, a dropped connection: it cannot be waved away, and opening one ends
+     whatever the visitor was in the middle of */
+  system: { scrim: 0, inertBehind: true, dismissOnOutside: false, focusTrap: true, dismissOnBack: false, clears: "all", float: false },
+};
+
+/** lightest first: the order the pickers list them in, and what a spec table reads down */
+export const OVERLAY_LEVELS: OverlayLevel[] = ["popover", "sheet", "modal", "fullscreen", "system"];
+/** the icon each level's picker button shows */
+export const OVERLAY_LEVEL_ICONS: Record<OverlayLevel, string> = {
+  popover: "chat_bubble",
+  sheet: "view_sidebar",
+  modal: "picture_in_picture_alt",
+  fullscreen: "fullscreen",
+  system: "priority_high",
+};
+/** the two things a page can be: somewhere to go, or something popped over it */
+export const FRAME_ROLES: { key: FrameRole; icon: string }[] = [
+  { key: "screen", icon: "crop_portrait" },
+  { key: "overlay", icon: "picture_in_picture_alt" },
+];
+export const DEFAULT_OVERLAY_LEVEL: OverlayLevel = "modal";
+export const isOverlayLevel = (v: unknown): v is OverlayLevel => OVERLAY_LEVELS.some((l) => l === v);
+export const overlayRuleOf = (level: OverlayLevel) => OVERLAY_RULES[level];
+
+/** the level this part's overlay takes, or null when it is an ordinary part */
+export const overlayLevelOf = (it: Item): OverlayLevel | null => it.overlay ?? (it.modal ? DEFAULT_OVERLAY_LEVEL : null);
+export const isOverlayItem = (it: Item) => overlayLevelOf(it) !== null;
+export const isOverlayFrame = (f: Frame) => f.role === "overlay";
+export const overlayLevelOfFrame = (f: Frame) => f.level ?? DEFAULT_OVERLAY_LEVEL;
+
+/**
+ * One overlay the preview has open, or one step of the stack it plays back. The stack is
+ * the *time* order — what was opened last — which the layer tree cannot express: a tree
+ * says what is drawn where, never what the back key should close.
+ */
+export type Layer = { frameId: string; level: OverlayLevel; t: Transition };
+
+/**
+ * Opens an overlay, applying the level's own rules to the layers already open. Re-opening
+ * one that is already up brings it to the front instead of stacking a second copy, which is
+ * what keeps a screen that re-opens its own bag from growing a tower of them.
+ */
+export function pushLayer(layers: Layer[], next: Layer): Layer[] {
+  const { clears } = overlayRuleOf(next.level);
+  const rest = layers.filter((l) => l.frameId !== next.frameId);
+  const kept =
+    clears === "none" ? rest : clears === "popovers" ? rest.filter((l) => l.level !== "popover") : rest.filter((l) => l.level === "system");
+  return [...kept, next];
+}
+
+/**
+ * What each screen has open, keyed by the screen that popped it. An overlay is a step in the trail
+ * a visitor leaves behind, not a property of "the screen on show": stepping to another screen and
+ * coming back finds the first one exactly as it was left — a dialog still open is still open, and
+ * one the visitor put away stays away.
+ */
+export type LayerTrail = Record<string, Layer[]>;
+
+/** the overlays one screen has open, oldest first */
+export const layersIn = (trail: LayerTrail, screenId: string): Layer[] => trail[screenId] ?? [];
+
+/** the trail with one screen's overlays replaced; an unchanged list keeps the trail itself */
+export const withLayers = (trail: LayerTrail, screenId: string, next: Layer[]): LayerTrail =>
+  layersIn(trail, screenId) === next ? trail : { ...trail, [screenId]: next };
+
+/** a per-screen map, or the trail, without the screens a document no longer holds */
+export function forgetScreens<T>(map: Record<string, T>, alive: Set<string>): Record<string, T> {
+  const kept = Object.entries(map).filter(([id]) => alive.has(id));
+  return kept.length === Object.keys(map).length ? map : Object.fromEntries(kept);
+}
+
+/**
+ * Takes the top overlay off the stack. This is the *explicit* close — the scrim tap, or a part
+ * whose rule says "close the overlay" — and it works at every level. A level that refuses the
+ * back key is refusing a *gesture*, not its own contents: a system layer nobody can put away is
+ * a dead end, so the way out of one is a Close of its own. `backTarget` is what asks the back key.
+ */
+export function popLayer(layers: Layer[]): Layer[] {
+  if (layers.length === 0) return layers;
+  return layers.slice(0, -1);
+}
+
+/**
+ * The colour that marks a dialog page while it is being worked on: a warm tone of the author's
+ * choosing, picked to stand apart from every surface a palette offers. Readable ink is derived from
+ * it, the way a part with a colour of its own gets its own ink.
+ */
+export const DIALOG_COLOR = "#e9b69f";
+
+/**
+ * What marks a page as a dialog rather than as one more screen: the frame drawn around it on the
+ * canvas, and its row in the layers panel. It is a mark, not a surface — the page's own background is
+ * left exactly as a screen's, so what the author sees inside the frame is the design. One helper, so
+ * the canvas and the panel can never disagree about which pages are dialogs.
+ */
+export const pageTintOf = (f: Frame, p: Palette): { bg: string; ink: string } | null =>
+  isOverlayFrame(f) && overlayRuleOf(overlayLevelOfFrame(f)).float ? { bg: DIALOG_COLOR, ink: onColorFor(DIALOG_COLOR) } : null;
+
+/** What the back key reaches: the top overlay, the screen stack, or nothing at all. */
+export const backTarget = (layers: Layer[]): "layer" | "screen" | "blocked" => {
+  const top = layers[layers.length - 1];
+  if (!top) return "screen";
+  return overlayRuleOf(top.level).dismissOnBack ? "layer" : "blocked";
+};
 
 /** parts that span the screen edge to edge and follow its width when it changes */
 export const FULL_WIDTH: Kind[] = ["topAppBar", "bottomNav", "tabs"];
@@ -1787,8 +2660,8 @@ export function carryItemSize(it: Item, from: { w: number; h: number }, to: { w:
     else if (cur > contentWidth(to.w) && it.kind !== "box") patch.size = contentWidth(to.w);
   }
   if ((it.kind === "box" || it.kind === "navRail") && (it.size2 ?? spec.h) === from.h) patch.size2 = to.h;
-  /* a camera or map the author gave a height keeps its aspect ratio when its width changes */
-  if ((it.kind === "camera" || it.kind === "map") && it.size2 !== undefined && patch.size !== undefined) {
+  /* an image, camera or map the author gave a height keeps its aspect ratio when its width changes */
+  if ((it.kind === "image" || it.kind === "camera" || it.kind === "map") && it.size2 !== undefined && patch.size !== undefined) {
     const cur = it.size ?? spec.defSize ?? spec.w;
     patch.size2 = Math.round((it.size2 * patch.size) / cur);
   }
@@ -1804,12 +2677,16 @@ export function layoutOf(g: Group, widths: Record<string, number>): Placed[] {
   let off = 0;
   g.items.forEach((it, index) => {
     const sz = sizeOf(it, widths);
+    /* A folded navigation part is drawn at the corner its own button sits in (see foldShift), so the
+       pill stays under the button instead of flying off to the other end. Everything that reads a
+       part's place — the canvas, the export, hit-testing, alignment — comes through here. */
+    const f = foldPlace(it, widths);
     if (g.free) {
       const o = g.pos?.[it.id] ?? { x: 0, y: 0 };
-      out.push({ item: it, index, x: g.x + o.x, y: g.y + o.y, w: sz.w, h: sz.h });
+      out.push({ item: it, index, x: g.x + o.x + f.dx, y: g.y + o.y + f.dy, w: sz.w, h: sz.h });
       return;
     }
-    out.push({ item: it, index, x: g.axis === "x" ? g.x + off : g.x, y: g.axis === "x" ? g.y : g.y + off, w: sz.w, h: sz.h });
+    out.push({ item: it, index, x: (g.axis === "x" ? g.x + off : g.x) + f.dx, y: (g.axis === "x" ? g.y : g.y + off) + f.dy, w: sz.w, h: sz.h });
     off += (g.axis === "x" ? sz.w : sz.h) + GAP;
   });
   return out;
@@ -1874,6 +2751,29 @@ export function runCorners(axis: Axis, first: boolean, last: boolean, outer: num
   return axis === "x" ? { tl: a, bl: a, tr: b, br: b } : { tl: a, tr: a, bl: b, br: b };
 }
 
+/**
+ * One button of a group that reads as a single control — a row of tab buttons, say. The buttons sit
+ * flush against one another: only the two ends of the group are rounded, the shared edge between
+ * neighbours is a single 1px line, and each button but the first is pulled over the one before it.
+ */
+export function connectedButton(i: number, n: number, outer: number, inner: number): { margin: number; radii: Radii } {
+  return { margin: i > 0 ? -1 : 0, radii: runCorners("x", i === 0, i === n - 1, outer, inner) };
+}
+
+/**
+ * The corners of one part of a run: the shape the author gave it wins — a circle stays a circle,
+ * whatever the document's shape scale and the run's neighbours say — then the connected look, then
+ * the kind's own corners. The preview reads this for its parts, so what it draws is what the canvas
+ * draws; a lone part of a run is round all over.
+ */
+export function runPartRadii(it: Item, first: boolean, last: boolean, axis: Axis): Radii {
+  if (it.shape) return baseRadii(it);
+  const conn = connectSpecOf(it);
+  if (!conn) return baseRadii(it);
+  if (first && last) return uniformRadii(conn.outer);
+  return runCorners(axis, first, last, conn.outer, conn.inner);
+}
+
 /** the corner radii of every part across the given runs */
 export function radiiOfRuns(runs: Group[]): Map<string, Radii> {
   const out = new Map<string, Radii>();
@@ -1881,7 +2781,10 @@ export function radiiOfRuns(runs: Group[]): Map<string, Radii> {
     const n = run.items.length;
     run.items.forEach((it, i) => {
       /* a part the author gave a shape of its own (a circle, say) keeps it, even in a run */
-      if (it.shape) return;
+      if (it.shape) {
+        out.set(it.id, baseRadii(it));
+        return;
+      }
       const c = connectSpecOf(it);
       out.set(it.id, c ? runCorners(run.axis, i === 0, i === n - 1, c.outer, c.inner) : baseRadii(it));
     });
@@ -1923,7 +2826,9 @@ export type Group = {
   y: number;
   axis: Axis;
   items: Item[];
-  /** a finished section the author locked from the Layers panel: it cannot be dragged, deleted or tidied, but stays selectable */
+  /** A group the Layers panel used to be able to lock: it cannot be dragged, deleted or tidied, but
+   *  stays selectable. Nothing locks a group any more, so only a document drawn back then carries
+   *  one; `adoptDoc` drops it as the document is read in. */
   locked?: boolean;
   /** a hand-made group: parts keep their own offsets (in `pos`) and move as one layer */
   free?: boolean;
@@ -1961,6 +2866,8 @@ export type Doc = {
   theme?: Theme;
   /** the author's own composite parts: ready-made sets of parts the palette offers */
   customParts?: CustomPart[];
+  /** the values the prototype carries between taps: coins, stamina, what has been claimed */
+  vars?: Var[];
 };
 
 /** A set of parts the author composed once and can drop again and again. On the canvas
@@ -1990,15 +2897,25 @@ export function scaleChildren(kids: PlacedItem[], sx: number, sy: number): Place
   }));
 }
 
-/** The part a composite becomes on a screen: one container box holding a fresh copy of
- *  everything the author composed, so an instance can be moved, edited or deleted whole. */
+/** Whether a part's size is decided by a fold rather than by the author: folded, a navigation bar
+ *  and a rail really are the small pill their own button sits in, while the width and height they
+ *  carry are the ones they want again the moment they are opened. */
+export const foldsToPill = (it: Item) => (it.kind === "bottomNav" && !!it.barFolded) || (it.kind === "navRail" && !!it.railFolded);
+
+/**
+ * The part a composite becomes on a screen. A set of several parts lands as one container box
+ * holding a fresh copy of everything the author composed, so an instance can be moved, edited or
+ * deleted whole — and so does a template that is already one container. A template of a *single*
+ * part lands as that very part: wrapping a bar or a rail in a box of its own size leaves nothing to
+ * grab (a child that fills its container cannot be moved inside it) and stops it behaving like the
+ * part it is.
+ */
 export function compositeInstance(part: CustomPart, id: () => string = uid): Item {
-  /* A template that is one container — a box with parts inside — becomes that very
-   * container: the frame the author saved is the frame that lands, not a second one. */
   const copied = part.items.map((it) => copySubtree(it, id, new Map()) as PlacedItem);
   const only = copied[0];
-  if (copied.length === 1 && only && (only.kind === "box" || (only.children?.length ?? 0) > 0)) {
-    return { ...only, size: part.w, size2: part.h };
+  if (copied.length === 1 && only) {
+    /* a part that folds to a pill keeps the width and height it will want when it opens again */
+    return foldsToPill(only) ? only : { ...only, size: part.w, size2: part.h };
   }
   const box = makeItem("box");
   box.id = id();
@@ -2010,7 +2927,6 @@ export function compositeInstance(part: CustomPart, id: () => string = uid): Ite
   box.fill = "surface";
   box.radiusTop = 0;
   box.radiusBottom = 0;
-  box.checked = false;
   box.children = copied;
   return box;
 }
@@ -2053,27 +2969,50 @@ export function makeItem(kind: Kind): Item {
   if (s.defSupporting !== undefined) it.supporting = text?.supporting ?? s.defSupporting;
   if (s.defIcon2 !== undefined) it.icon2 = s.defIcon2;
   if (s.defSize !== undefined) it.size = s.defSize;
-  if (s.hasChecked) it.checked = kind !== "chip" && kind !== "box";
+  if (s.hasChecked) it.checked = kind !== "chip";
   if (kind === "box") {
     it.size2 = 220;
     it.radiusTop = 28;
     it.radiusBottom = 28;
     it.fill = "surfaceContainerHigh";
   }
+  /* An icon button is a circle: saying so outright keeps it one even where it sits in a run beside
+     a button, which is what its shape switch shows and what the author asked for. */
+  if (kind === "iconButton") it.shape = "round";
   if (kind === "slider") it.value = 40;
+  if (kind === "progressBar") it.value = PROGRESS_DEFAULT;
   if (kind === "bottomNav") {
     it.tabs = defaultTabs();
     it.radiusTop = 0;
     it.radiusBottom = 0;
+    /* The fold button comes with the bar: `false` is "shown, destinations out", `true` is folded,
+       and only a document written before this existed has no button at all. */
+    it.barFolded = false;
   }
   if (kind === "navRail") {
     /* the side rail speaks the game UI's language: inventory, map, party, achievements */
     it.tabs = GAME_NAV_TABS[getLang()].map((tab) => ({ ...tab }));
+    /* the expressive rail, whose header is its own fold button */
     it.railExpanded = false;
   }
   if (kind === "tabs" || kind === "fabMenu" || kind === "select") it.tabs = defaultTabsFor(kind);
   if (kind === "toolbar") it.tabs = defaultTabsFor(kind).slice(0, 4);
   return it;
+}
+
+/** What a fresh progress bar shows, and what a bar with no value falls back to. */
+export const PROGRESS_DEFAULT = 60;
+
+/** A progress bar's share of its track, 0..100: what the author set, never outside the bar. */
+export const progressValue = (it: Item): number => Math.max(0, Math.min(100, Math.round(it.value ?? PROGRESS_DEFAULT)));
+
+/**
+ * What a progress bar draws behind its fill, and the ink that reads on it. A bar starts with no
+ * track at all — the page shows through, so a game bar is just its fill — and the background the
+ * author picks (or leaves out) decides what the words over the empty part are inked with.
+ */
+export function progressTrack(it: Item, p: Palette): { color: string; ink: string } {
+  return it.fill ? { color: p[it.fill], ink: onToken(it.fill, p) } : { color: "transparent", ink: p.onSurface };
 }
 
 /** Content-sized kinds are measured in the DOM; the rest derive from spec + size. */
@@ -2098,7 +3037,7 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
   switch (it.kind) {
     case "switch":
     case "button":
-      return { w: it.size ?? widths[it.id] ?? s.w, h: s.h };
+      return { w: it.size ?? widths[it.id] ?? s.w, h: it.size2 ?? s.h };
     case "extendedFab":
     case "chip":
     case "checkbox":
@@ -2112,15 +3051,17 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
     case "toolbar":
       return { w: toolbarWidth(it), h: s.h };
     case "tabs":
-      return { w: n, h: s.h };
+      return { w: n, h: it.size2 ?? s.h };
     case "text":
       return { w: widths[it.id] ?? 120, h: Math.round(n * 1.3) };
     case "iconButton":
     case "fab":
     case "circularProgress":
     case "loadingIndicator":
-    case "image":
       return { w: n, h: n };
+    case "image":
+      /* square until the author gives it a height, the way a camera preview starts 4:3 */
+      return { w: n, h: it.size2 ?? n };
     case "camera":
       return { w: n, h: it.size2 ?? Math.round((n * 4) / 3) };
     case "map":
@@ -2146,6 +3087,8 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
     case "linearProgress":
     case "divider":
       return { w: n, h: s.h };
+    case "progressBar":
+      return { w: n, h: it.size2 ?? s.h };
     case "card":
       return { w: n, h: it.size2 ?? Math.round(n * 0.5875) };
     case "box":
@@ -2190,8 +3133,10 @@ export function baseRadii(it: Item): Radii {
     case "fabMenu":
       return uniformRadii(0);
     case "iconButton":
+      /* a square is the author asking for one; otherwise an icon button is a circle, and keeps it
+         whatever the document's shape scale says — exactly as a round FAB does */
       if (it.shape === "square") return uniformRadii(scaleR(8));
-      return uniformRadii(scaleR((it.size ?? 48) / 2));
+      return uniformRadii(Math.round((it.size ?? 48) / 2));
     case "chip":
     case "splitButton":
     case "radio":
@@ -2200,6 +3145,9 @@ export function baseRadii(it: Item): Radii {
     case "circularProgress":
     case "loadingIndicator":
       return uniformRadii((it.size ?? 48) / 2);
+    case "progressBar":
+      /* the ends are half the bar's own height, so a slim bar is a pill and a thick one a slab */
+      return uniformRadii(Math.round((it.size2 ?? s.h) / 2));
     case "card":
       if (it.corners) return { ...it.corners };
     // falls through
@@ -2213,8 +3161,9 @@ export function baseRadii(it: Item): Radii {
       return uniformRadii(s.radius);
     case "button":
     case "extendedFab":
-      /* the shape switch: a pill by default, a circle when the author asks for one */
-      if (it.shape === "round") return uniformRadii(Math.round(H / 2));
+      /* The shape switch: a pill by default (M3's medium height), and a round part is that pill at
+         whatever height the author gave it — so a button as tall as it is wide is a true circle. */
+      if (it.shape === "round") return uniformRadii(Math.round((it.size2 ?? H) / 2));
       if (it.shape === "square") return uniformRadii(scaleR(8));
       return uniformRadii(scaleR(s.radius));
     default:
@@ -2253,26 +3202,346 @@ function remapTabActions(actions: Item["actions"], to: (j: number) => number | u
 
 /** the patch that drops entry i: later entries, the selected index and the tap targets move up one; a
  *  dropdown may end with no initial value, a bar or tab row keeps the entry that takes the removed one's place */
-export function removeTabPatch(it: Item, i: number): Pick<Item, "tabs" | "selected" | "actions"> {
+export function removeTabPatch(it: Item, i: number): Pick<Item, "tabs" | "selected" | "actions" | "children"> {
   const tabs = (it.tabs ?? []).filter((_, j) => j !== i);
   const sel = it.selected;
   const last = Math.max(0, tabs.length - 1);
   const selected =
     sel === undefined ? undefined : sel > i ? sel - 1 : sel < i ? sel : it.kind === "select" ? undefined : Math.min(i, last);
-  return { tabs, selected, actions: remapTabActions(it.actions, (j) => (j === i ? undefined : j > i ? j - 1 : j)) };
+  /* a tab row's panels follow the tabs, or the one that was dropped would sit in the document under
+     the name of a tab that no longer exists */
+  const children = it.kind === "tabs" ? withoutPanel(it.children, (j) => j === i) : undefined;
+  return {
+    tabs,
+    selected,
+    actions: remapTabActions(it.actions, (j) => (j === i ? undefined : j > i ? j - 1 : j)),
+    ...(children ? { children } : undefined),
+  };
 }
 
 /** the patch that sets the entry count: extra entries come from the defaults, and the tap targets of dropped entries go */
-export function tabCountPatch(it: Item, n: number, defaults: NavTab[]): Pick<Item, "tabs" | "selected" | "actions"> {
+export function tabCountPatch(it: Item, n: number, defaults: NavTab[]): Pick<Item, "tabs" | "selected" | "actions" | "children"> {
   const cur = it.tabs ?? [];
   const tabs: NavTab[] = [];
   for (let i = 0; i < n; i++) tabs.push(cur[i] ? { ...cur[i] } : { ...defaults[i % defaults.length] });
+  const children = it.kind === "tabs" ? withoutPanel(it.children, (j) => j >= n) : undefined;
   return {
     tabs,
     selected: it.selected !== undefined && it.selected >= n ? undefined : it.selected,
     actions: remapTabActions(it.actions, (j) => (j < n ? j : undefined)),
+    ...(children ? { children } : undefined),
   };
 }
+
+/** Whether a tab row is still short of panels, or of the room to show them. Cheap enough to ask on
+ *  every render: it allocates nothing, unlike the patch that fixes it. */
+export const needsTabPanels = (it: Item) =>
+  it.kind === "tabs" && (it.tabs?.length ?? 0) > 0 && ((it.children?.length ?? 0) < (it.tabs?.length ?? 0) || (it.size2 ?? TAB_ROW_H) < TAB_ROW_H + TAB_PANEL_H);
+
+/**
+ * Where a part lands when it becomes a child: inside the box, pulled in when it sat past the edge, and
+ * raised above everything it carries with it.
+ */
+export function childAt(
+  parent: Item,
+  kid: Item,
+  at: { l: number; t: number },
+  /* where the parent stands on the canvas: a child's offsets are measured from its own box */
+  parentAt: { l: number; t: number },
+  widths: Record<string, number>,
+): PlacedItem {
+  const box = sizeOf(parent, widths);
+  const size = sizeOf(kid, widths);
+  return liftAbove(
+    {
+      ...(kid as PlacedItem),
+      x: Math.round(clamp(at.l - parentAt.l, 0, Math.max(0, box.w - size.w))),
+      y: Math.round(clamp(at.t - parentAt.t, 0, Math.max(0, box.h - size.h))),
+    },
+    layerOf(parent) + 1,
+  );
+}
+
+/** The room a tab row leaves for the panels under its tab strip. */
+const panelArea = (row: Item) => Math.max(TAB_PANEL_H, (row.size2 ?? TAB_ROW_H) - TAB_ROW_H);
+
+/** The empty panel a tab starts with: the row's own width, right under its tab strip. */
+export function freshPanel(label: string, w: number, area: number): PlacedItem {
+  return { ...makeItem("box"), label, x: 0, y: TAB_ROW_H, size: w, size2: area };
+}
+
+/**
+ * The panels a tab row needs: one container per tab, in tab order, filling the area under the row. It
+ * only ever adds what is missing and makes room for it, so pressing it twice changes nothing — and a
+ * panel the author has already filled in is never touched. Panels past the last tab are left alone as
+ * well: dropping one would be dropping the author's work.
+ */
+export function tabPanelsPatch(it: Item): Pick<Item, "children" | "size2"> | null {
+  const tabs = it.tabs ?? [];
+  if (it.kind !== "tabs" || tabs.length === 0) return null;
+  const have = it.children ?? [];
+  const area = panelArea(it);
+  const w = sizeOf(it, {}).w;
+  const children = have.length >= tabs.length ? have : [...have, ...Array.from({ length: tabs.length - have.length }, (_, k) => freshPanel(tabs[have.length + k].label, w, area))];
+  const size2 = TAB_ROW_H + area;
+  const grown = it.size2 === undefined || it.size2 < size2;
+  if (children.length === have.length && !grown) return null;
+  return { children, size2 };
+}
+
+/**
+ * The children a tab row keeps when panels leave it: every vacated slot is filled with the empty
+ * panel of its tab. Panels are known by their place in the row's list, so a slot left open would
+ * slide every later panel one tab back — the author would see one tab wearing its neighbour's
+ * panel, under its neighbour's name. `row` is the row as it stands after they left, and `gone`
+ * names the places that opened up.
+ */
+export function keepPanelSlots(row: Item, gone: number[]): PlacedItem[] {
+  const out = [...(row.children ?? [])];
+  if (row.kind !== "tabs" || gone.length === 0) return out;
+  const w = sizeOf(row, {}).w;
+  const area = panelArea(row);
+  /* from the back, so an insert never moves a place still to be filled */
+  for (const at of [...new Set(gone)].sort((a, b) => b - a)) out.splice(at, 0, freshPanel(row.tabs?.[at]?.label ?? "", w, area));
+  return out;
+}
+
+/**
+ * The panel a box dropped on a tab row takes the place of: the empty panel of the tab the box is
+ * named after, so a panel the author took out of the row goes back to its own tab. Null when no
+ * panel is free — a panel with something in it is the author's work and is never overwritten.
+ */
+export function panelSlotFor(row: Item, part: Item): number | null {
+  if (row.kind !== "tabs" || part.kind !== "box") return null;
+  const label = part.label.trim();
+  if (!label) return null;
+  const kids = row.children ?? [];
+  const at = (row.tabs ?? []).findIndex((tab, i) => tab.label.trim() === label && !kids[i]?.children?.length);
+  return at < 0 ? null : at;
+}
+
+/**
+ * The row's children after a part is put back in the panel named for it: the part takes that slot,
+ * drawn right above its row and refitted to it, with everything it holds. Null when no panel is
+ * free — the part then belongs inside the panel of the tab in front, which is the caller's
+ * fallback.
+ */
+export function restorePanel(row: Item, part: PlacedItem, widths: Record<string, number>): PlacedItem[] | null {
+  const at = panelSlotFor(row, part);
+  if (at === null) return null;
+  const kids = [...(row.children ?? [])];
+  /* the caller makes the row's panels first, so the slot is usually there already; a short list is
+     filled out so the part still lands on the tab it is named after */
+  while (kids.length <= at) kids.push(freshPanel(row.tabs?.[kids.length]?.label ?? "", sizeOf(row, {}).w, panelArea(row)));
+  kids[at] = liftAbove({ ...part, x: 0, y: TAB_ROW_H }, layerOf(row) + 1);
+  const size = sizeOf(row, widths);
+  return fitTabPanels(kids, size.w, size.h);
+}
+
+/** Panels follow their row when it is resized: the row keeps its height and the panels take what is
+ *  left, rather than being stretched away from the row the way proportional scaling would. */
+export const fitTabPanels = (panels: PlacedItem[], w: number, h: number): PlacedItem[] =>
+  panels.map((c) => ({ ...c, x: 0, y: TAB_ROW_H, size: w, size2: Math.max(0, Math.round(h - TAB_ROW_H)) }));
+
+/**
+ * The nearest part among `ids` that holds `id`: the container the author picked in the layers panel.
+ * A drag that lands on something drawn over it belongs to that container, not to whatever the
+ * pointer happens to be over.
+ */
+export function selectedAncestor(groups: Group[], id: string, ids: string[]): Item | null {
+  for (let p = parentOf(groups, id); p; p = parentOf(groups, p.id)) if (ids.includes(p.id)) return p;
+  return null;
+}
+
+/**
+ * Whether a child may be dragged past the edges of the container that holds it. Two cases say yes:
+ * a container that scrolls is a viewport, so its children are content that belongs outside it, and a
+ * child the author picked in the layers panel is the part they said they meant. Everything else keeps
+ * its children inside.
+ */
+export const childDragFree = (parent: Item, picked: boolean): boolean => !!parent.scroll || picked;
+
+/**
+ * How far a child may be moved within its container. A free child has no limit (it may sit past the
+ * viewport, which is what the visitor scrolls to); any other child stays fully inside — and one that
+ * fills the container in both directions has no room at all, which is how a drag comes to move the
+ * container instead.
+ */
+export function childDragRoom(parent: Item, child: Item, widths: Record<string, number>, free: boolean): { w: number; h: number } {
+  if (free) return { w: Infinity, h: Infinity };
+  const box = sizeOf(parent, widths);
+  const sz = sizeOf(child, widths);
+  return { w: Math.max(0, box.w - sz.w), h: Math.max(0, box.h - sz.h) };
+}
+
+/**
+ * The tree without the parts `gone` names, and whether anything went at any depth. A container that
+ * loses one of its own children keeps the rest, and only the containers the pruning actually touched
+ * come back as new objects — so `changed` is what tells a caller that its tree is not the one it
+ * passed in, however deep the removal was.
+ */
+export function pruneParts(items: Item[], gone: Set<string>): { items: Item[]; changed: boolean } {
+  let changed = false;
+  const walk = (list: Item[]): Item[] => {
+    const out: Item[] = [];
+    for (const it of list) {
+      if (gone.has(it.id)) {
+        changed = true;
+        continue;
+      }
+      if (!it.children) {
+        out.push(it);
+        continue;
+      }
+      const kids = walk(it.children);
+      if (!kids.length && it.children.length) changed = true;
+      /* an untouched container comes back as itself, so pruning a deep part does not rebuild the
+         whole tree above it */
+      if (kids.length === it.children.length && kids.every((c, i) => c === it.children![i])) {
+        out.push(it);
+        continue;
+      }
+      out.push(kids.length ? { ...it, children: kids as PlacedItem[] } : { ...it, children: undefined });
+    }
+    return out;
+  };
+  const next = walk(items);
+  return { items: next, changed };
+}
+
+/** Where each part sits: the container that holds it, and its place in that container's list. */
+export function slotsOf(items: Item[], parent: Item | null, out: Map<string, { parent: Item; at: number }>): void {
+  items.forEach((it, at) => {
+    if (parent) out.set(it.id, { parent, at });
+    if (it.children) slotsOf(it.children, it, out);
+  });
+}
+
+/**
+ * The tree with a fresh empty panel back in every slot a tab row has just lost (see keepPanelSlots):
+ * `lost` names the row and the places it lost, so the rows a removal shortened are the only ones
+ * touched.
+ */
+export function refillPanels(items: Item[], lost: Map<string, number[]>): Item[] {
+  return items.map((it) => {
+    const kids = it.children ? refillPanels(it.children, lost) : undefined;
+    const gone = lost.get(it.id);
+    if (!gone?.length) return kids ? { ...it, children: kids as PlacedItem[] } : it;
+    return { ...it, children: keepPanelSlots({ ...it, children: kids as PlacedItem[] }, gone) };
+  });
+}
+
+/**
+ * The children a size patch leaves behind — `undefined` when the patch does not resize anything
+ * or the part holds nothing.
+ *
+ * The children the patch itself carries win over the ones already on the part: a patch that
+ * brings a panel in (adding a tab, say) must not be overruled by the shorter list that was
+ * there before, which is what left a new tab without its panel. A tab row keeps its row height
+ * and hands the rest of the box to its panels; any other container scales what it holds with
+ * the box.
+ */
+export function resizedChildren(before: Item, patch: Partial<Item>, widths: Record<string, number>): PlacedItem[] | undefined {
+  if (!("size" in patch || "size2" in patch)) return undefined;
+  const kids = patch.children ?? before.children;
+  if (!kids?.length) return undefined;
+  /* A scrolling container's size is its viewport: shrinking it hides content, it does not squash it,
+     so its children keep the size they were drawn at. */
+  if (before.scroll) return undefined;
+  const next = { ...before, ...patch };
+  if (before.kind === "tabs") {
+    const now = sizeOf(next, widths);
+    return fitTabPanels(kids, now.w, now.h);
+  }
+  const was = sizeOf(before, widths);
+  const now = sizeOf(next, widths);
+  return scaleChildren(kids, now.w / Math.max(1, was.w), now.h / Math.max(1, was.h));
+}
+
+/** How much room a scrolling container's content takes, measured from its top-left corner. */
+export function scrollContent(it: Item, widths: Record<string, number>): { w: number; h: number } {
+  let w = 0;
+  let h = 0;
+  for (const c of it.children ?? []) {
+    const s = sizeOf(c, widths);
+    /* a folded navigation part inside is drawn at its corner, so its place counts from there */
+    const f = foldPlace(c, widths);
+    w = Math.max(w, c.x + f.dx + s.w);
+    h = Math.max(h, c.y + f.dy + s.h);
+  }
+  return { w, h };
+}
+
+/** How far a scrolling container's content can move on each axis: nothing when it fits. */
+export function scrollRange(it: Item, widths: Record<string, number>): { x: number; y: number } {
+  if (!it.scroll) return { x: 0, y: 0 };
+  const view = sizeOf(it, widths);
+  const content = scrollContent(it, widths);
+  return {
+    x: it.scroll === "x" || it.scroll === "both" ? Math.max(0, Math.round(content.w - view.w)) : 0,
+    y: it.scroll === "y" || it.scroll === "both" ? Math.max(0, Math.round(content.h - view.h)) : 0,
+  };
+}
+
+/**
+ * Where a scrolling container's content is drawn: what the visitor has moved it to when the preview is
+ * live, otherwise the offset the author designed, never negative and never past the content's end.
+ */
+export function scrollOffset(
+  it: Item,
+  widths: Record<string, number>,
+  live?: { x?: number; y?: number },
+): { x: number; y: number } {
+  if (!it.scroll) return { x: 0, y: 0 };
+  const range = scrollRange(it, widths);
+  const at = { ...it.scrollPos, ...live };
+  const clamp = (v: number | undefined, max: number) => Math.max(0, Math.min(max, Math.round(v ?? 0)));
+  return { x: clamp(at.x, range.x), y: clamp(at.y, range.y) };
+}
+
+/** The children patch a tab rename carries: a panel still named after its tab follows it, and one the
+ *  author has named themselves is left alone. */
+export function tabRenamePatch(it: Item, i: number, label: string): Pick<Item, "children"> | null {
+  const panel = it.kind === "tabs" ? it.children?.[i] : undefined;
+  if (!panel || panel.label !== (it.tabs?.[i]?.label ?? "")) return null;
+  return { children: it.children!.map((c, j) => (j === i ? { ...c, label } : c)) };
+}
+
+/** how a tab row reads: M3's underline, or buttons — which is how most games switch pages. */
+export type TabStyle = "underline" | "buttons";
+export const TAB_STYLES: { key: TabStyle; icon: string }[] = [
+  { key: "underline", icon: "border_bottom" },
+  { key: "buttons", icon: "buttons_alt" },
+];
+export const isTabStyle = (v: unknown): v is TabStyle => v === "underline" || v === "buttons";
+export const tabStyleOf = (it: Item): TabStyle => (isTabStyle(it.tabStyle) ? it.tabStyle : "underline");
+
+/** Which tab is in front. A tab row draws one panel, and this is the one. */
+export const tabIndexOf = (it: Item) => Math.min(Math.max(0, it.selected ?? 0), Math.max(0, (it.tabs?.length ?? 1) - 1));
+
+/** The panel of the tab in front, when the row has one. */
+export const tabPanelId = (it: Item): string | null => it.children?.[tabIndexOf(it)]?.id ?? null;
+
+/**
+ * The panels a tab row keeps when the tab at `gone` leaves it. The panel of that tab is the editor's
+ * own scaffolding while it is empty, so it goes with its tab; one the author has already put
+ * something in is kept and moved to the end, where it has no tab to bring it forward and the review
+ * says so — losing the author's work to a tab count would be much worse than an orphan panel.
+ */
+function withoutPanel(kids: PlacedItem[] | undefined, gone: (j: number, count: number) => boolean): PlacedItem[] | undefined {
+  if (!kids?.length) return undefined;
+  const kept: PlacedItem[] = [];
+  const orphans: PlacedItem[] = [];
+  kids.forEach((panel, j) => {
+    if (!gone(j, kids.length)) kept.push(panel);
+    else if ((panel.children?.length ?? 0) > 0) orphans.push(panel);
+  });
+  return [...kept, ...orphans];
+}
+
+/** Whether a container draws a child of its own: a tab row keeps only the panel of the tab in front,
+ *  which is what makes switching tabs switch the page under them. */
+export const childDrawn = (parent: Item, child: Item, index: number) => childShown(parent, child) && (parent.kind !== "tabs" || index === tabIndexOf(parent));
 
 /** how far a scrollable tab row is shifted left so the selected tab is in view with half of the
  *  next one peeking in; the drawing and the preview's hit areas share it, so a tap lands on the tab that is shown */

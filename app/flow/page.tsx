@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toPng } from "html-to-image";
-import { buildFlow, flowMarkdown, FLOW_TEXT, type Flow, type FlowNode } from "@/lib/flow";
+import { buildFlow, flowMarkdown, overlayLevelName, FLOW_TEXT, type Flow, type FlowNode } from "@/lib/flow";
 import { isProject } from "@/lib/project";
 import { paletteOf, type Doc, type Palette } from "@/lib/tokens";
 import { isLang, setGlobalLang, t, type Lang } from "@/lib/i18n";
@@ -276,7 +276,7 @@ export default function FlowPage() {
                       >
                         <div style={{ font: "500 14px Roboto, system-ui, sans-serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{node.label}</div>
                         <div style={{ font: "400 11px Roboto, system-ui, sans-serif", color: on ? p.onSecondaryContainer : p.onSurfaceVariant, marginTop: 2 }}>
-                          {node.kind === "popup" ? text.popup : text.screen} · {text.itemCount(node.rules.length)}
+                          {node.overlay ? overlayLevelName(node.overlay, ui) : node.kind === "popup" ? text.popup : text.screen} · {text.itemCount(node.rules.length)}
                         </div>
                       </button>
                     );
@@ -291,7 +291,7 @@ export default function FlowPage() {
               <>
                 <div style={{ font: "500 18px Roboto, system-ui, sans-serif" }}>{selected.label}</div>
                 <div style={{ font: "400 12px Roboto, system-ui, sans-serif", color: p.onSurfaceVariant, margin: "2px 0 12px" }}>
-                  {selected.kind === "popup" ? text.popup : text.screen} · depth {selected.depth}
+                  {selected.overlay ? overlayLevelName(selected.overlay, ui) : selected.kind === "popup" ? text.popup : text.screen} · depth {selected.depth}
                 </div>
                 <p style={{ font: "400 13px Roboto, system-ui, sans-serif", color: p.onSurfaceVariant, margin: "0 0 16px" }}>{selected.description}</p>
                 {selected.rules.length === 0 ? (

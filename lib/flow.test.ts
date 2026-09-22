@@ -28,6 +28,61 @@ const frames = [frame("home", "Home"), frame("details", "Details", 500), frame("
 
 const nodeOf = (flow: Flow, id: string) => flow.nodes.find((n) => n.id === id)!;
 
+describe("a part's machine", () => {
+  const machine = (patch: Partial<Item>): Item =>
+    item({
+      id: "share",
+      label: "分享",
+      icon: "share",
+      flow: {
+        looks: [
+          { id: "l2", label: "领取", icon: "redeem" },
+          { id: "l3", label: "已领取", icon: "check_circle", disabled: true },
+        ],
+        steps: [
+          { id: "s1", from: ":start", to: "l2", trigger: { kind: "tap" } },
+          { id: "s2", from: "l2", to: "l3", trigger: { kind: "tap" } },
+          { id: "s3", from: "l3", to: ":start", trigger: { kind: "after", seconds: 30 } },
+        ],
+      },
+      ...patch,
+    });
+
+  it("describes every step as the move it makes, naming the look it lands in", () => {
+    const home = frame("home", "Home");
+    const flow = buildFlow(doc([home], [run("g", home, [machine({})])]), "zh");
+    const said = nodeOf(flow, "home").rules.map((r) => r.description);
+    expect(said).toHaveLength(3);
+    /* the first step reaches the second look: the words it shows, and what that look changes */
+    expect(said[0]).toContain("点击后");
+    expect(said[0]).toContain("领取");
+    expect(said[0]).toContain("图标 redeem");
+    /* the drawn look is a target of its own, named rather than left blank */
+    expect(said[2]).toContain("30 秒后");
+    expect(said[2]).toContain(FLOW_TEXT.zh.drawnLook);
+    /* and a look that greys the part out says so */
+    expect(said[1]).toContain(FLOW_TEXT.zh.lookChange.off);
+    expect(flowMarkdown(buildFlow(doc([home], [run("g", home, [machine({})])]), "en"), "en")).toContain("领取");
+  });
+
+  it("reads a step's jump as an edge of the screen flow, like any other tap", () => {
+    const home = frame("home", "Home");
+    const next = frame("next", "Next", 500);
+    const flow = buildFlow(
+      doc(
+        [home, next],
+        [
+          run("g", home, [machine({ flow: { looks: [{ id: "l2", label: "领取" }], steps: [{ id: "s1", from: ":start", to: "l2", trigger: { kind: "tap" }, do: [{ kind: "goto", to: "next", transition: "slide" }] }] } })]),
+          run("g2", next, [item({ id: "back", action: { to: BACK_TARGET, transition: "slide" } })]),
+        ],
+      ),
+      "en",
+    );
+    expect(flow.edges.map((e) => `${e.from}->${e.to}`)).toContain("home->next");
+    expect(nodeOf(flow, "home").rules.map((r) => r.kind)).toContain("jump");
+  });
+});
+
 describe("buildFlow nodes", () => {
   it("makes one node per frame, in frame order, and keeps a frame with no interactions", () => {
     const flow = buildFlow(doc(frames, [run("g", frames[0], [item({ id: "a", label: "Start" })])]), "en");
@@ -42,7 +97,10 @@ describe("buildFlow nodes", () => {
     expect(itemNameOf(item({ label: "Save" }), "en")).toBe("Save");
     expect(itemNameOf(item({ kind: "button", label: "  " }), "en")).toBe(KIND_TEXT.en["button"].noun);
     expect(itemNameOf(item({ kind: "nope" as Item["kind"], label: "" }), "en")).toBeTruthy();
-    expect(itemNameOf(item({ kind: "fab", label: "", icon: "edit" }), "en")).toBe("edit");
+    /* an unnamed icon part reads as its kind's noun, never as its material symbol name */
+    expect(itemNameOf(item({ kind: "fab", label: "", icon: "edit" }), "en")).toBe(KIND_TEXT.en["fab"].noun);
+    expect(itemNameOf(item({ kind: "iconButton", label: "", icon: "edit" }), "en")).toBe(KIND_TEXT.en["iconButton"].noun);
+    expect(itemNameOf(item({ kind: "iconButton", label: "Bag", icon: "edit" }), "en")).toBe("Bag");
     expect(frameNameOf("  ", "en")).toBe(FLOW_TEXT.en.untitled);
   });
 
@@ -265,6 +323,100 @@ describe("an in-page dialog", () => {
     /* the page the dialog lives on still reads as a screen */
     expect(flow.nodes.find((n) => n.id === "home")?.kind).toBe("screen");
     expect(flowMarkdown(flow, "en")).toContain("弹框");
+  });
+});
+
+describe("overlay pages in the flow", () => {
+  /* an overlay page is opened *over* a screen, so it reads as a popup of its own level and
+     the edge into it is a pop-over rather than a jump — even though it is a frame like any
+     other, which is what lets one bag page serve every screen that opens it */
+  const bag: Frame = { ...frame("bag", "Bag", 500), role: "overlay", level: "modal" };
+  const login: Frame = { ...frame("login", "Login", 1000), role: "overlay", level: "system" };
+  const withOverlays = doc(
+    [frames[0], frames[1], bag, login],
+    [
+      run("g1", frames[0], [
+        item({ id: "a", label: "Bag", action: { to: "bag", transition: "expand" } }),
+        item({ id: "b", label: "Sign in", action: { to: "login", transition: "fade" } }),
+      ]),
+      run("g2", frames[1], [item({ id: "c", label: "Bag", action: { to: "bag", transition: "expand" } })]),
+    ],
+  );
+
+  it("makes an overlay a popup node naming its level", () => {
+    const flow = buildFlow(withOverlays, "en");
+    expect(nodeOf(flow, "bag").kind).toBe("popup");
+    expect(nodeOf(flow, "bag").overlay).toBe("modal");
+    expect(nodeOf(flow, "bag").description).toContain("Dialog");
+    expect(nodeOf(flow, "login").overlay).toBe("system");
+    expect(nodeOf(flow, "login").description).toContain("System");
+    /* a plain screen carries no level at all */
+    expect(nodeOf(flow, "home").overlay).toBeUndefined();
+  });
+
+  it("starts the graph at the first screen even when an overlay is listed first", () => {
+    const reordered = doc(
+      [bag, frames[0], frames[1], login],
+      [run("g1", frames[0], [item({ id: "a", label: "Bag", action: { to: "bag", transition: "expand" } })])],
+    );
+    const flow = buildFlow(reordered, "en");
+    expect(nodeOf(flow, "home").kind).toBe("screen");
+    expect(nodeOf(flow, "bag").kind).toBe("popup");
+    /* depth counts from the screen, so the bag is one step away from it */
+    expect(nodeOf(flow, "bag").depth).toBe(1);
+  });
+
+  it("reads the edge into an overlay as a pop-up, once per page that opens it", () => {
+    const flow = buildFlow(withOverlays, "en");
+    const intoBag = flow.edges.find((e) => e.from === "home" && e.to === "bag")!;
+    expect(intoBag.description).toContain(FLOW_TEXT.en.dialogLine("Home", "Bag", "Bag"));
+    /* the same bag page is reachable from two screens: one node, two edges */
+    expect(flow.edges.filter((e) => e.to === "bag")).toHaveLength(2);
+    expect(flow.edges.find((e) => e.from === "details" && e.to === "bag")?.triggers).toHaveLength(1);
+  });
+});
+
+describe("conditional taps in the flow", () => {
+  const vars = [{ id: "st", name: "stamina", kind: "number" as const, initial: 12 }];
+  const gated = (): Doc =>
+    doc(
+      [frames[0], frames[1]],
+      [
+        run("g1", frames[0], [
+          item({
+            id: "fight",
+            label: "Fight",
+            rules: [
+              { id: "r1", when: [{ varId: "st", op: ">=", value: 10 }], do: { kind: "goto", to: "details", transition: "slide" } },
+              { id: "r2", do: { kind: "add", varId: "st", delta: -10 } },
+            ],
+          }),
+        ]),
+      ],
+    );
+
+  it("draws a conditional jump as the same edge, with its condition on it", () => {
+    const d = { ...gated(), vars };
+    const flow = buildFlow(d, "en");
+    const edge = flow.edges.find((e) => e.to === "details")!;
+    expect(edge.from).toBe("home");
+    expect(edge.triggers[0].itemLabel).toContain("stamina ≥ 10");
+    expect(nodeOf(flow, "details").depth).toBe(1);
+  });
+
+  it("reads a rule that writes a variable as a rule of the part", () => {
+    const d = { ...gated(), vars };
+    const flow = buildFlow(d, "en");
+    const state = nodeOf(flow, "home").rules.filter((r) => r.kind === "state");
+    expect(state.map((r) => r.description)).toEqual([FLOW_TEXT.en.ruleWrite("Fight", "", "stamina − 10")]);
+    expect(flowMarkdown(flow, "en")).toContain("stamina − 10");
+  });
+
+  it("says nothing about a rule that names a variable the document does not declare", () => {
+    /* the report is what flags those: the diagram only draws what it can follow */
+    const flow = buildFlow(gated(), "en");
+    expect(flow.edges.filter((e) => e.to === "details")).toHaveLength(1);
+    expect(nodeOf(flow, "home").rules.filter((r) => r.kind === "state")).toEqual([]);
   });
 });
 

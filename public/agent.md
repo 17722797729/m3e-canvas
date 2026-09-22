@@ -113,7 +113,7 @@ Sizes are in dp; `size` is the width unless noted. Content width inside the phon
 | `chip` | chip | `label`, `icon`, `checked` | text-sized × 32 |
 | `card` | card with image area, title, body | `label`, `supporting`, `icon`, `variant` `filled` (default) / `elevated` / `outlined`, `fill` background token, `size` width, `size2` height, `"noImage": true` to drop the image area, `src` an https picture for it, `action` | 380 × 223 |
 | `listItem` | list item | `label`, `supporting`, `icon` leading, `icon2` trailing, or `"switch": true` for a trailing switch with `checked` as its state, `action` | 380 × 72 |
-| `box` | plain container, or a bottom sheet when `checked` | `size` width, `size2` height, `fill` token, `radiusTop`, `radiusBottom` | 412 × 220 |
+| `box` | plain container, or a scrolling viewport with `scroll` | `size` width, `size2` height, `fill` token, `radiusTop`, `radiusBottom`, `scroll` `"x"` / `"y"` / `"both"` for a container whose contents move, `scrollPos` `{x,y}` for where they start | 412 × 220 |
 | `dialog` | dialog | `label` title, `supporting` body, `icon` | 312 × 220, centered |
 | `snackbar` | snackbar | `label`, `supporting` action label | 344 × 48 |
 | `textField` | text field | `label`, `supporting` helper, `icon`, `variant` `outlined / filled` | 380 × 56 |
@@ -130,6 +130,7 @@ Sizes are in dp; `size` is the width unless noted. Content width inside the phon
 | `badge` | badge | `label` (empty for a dot) | |
 | `loadingIndicator` | M3 Expressive loading indicator | `contained` | 48 × 48 |
 | `linearProgress` | linear progress | `value` or omit for indeterminate, `wavy`, `trackThickness` 2 to 16 (omit for 4) | 380 × 24 |
+| `progressBar` | progress bar | `size` width, `size2` height (4 to 64), `value` percent (always determinate, 60 by default), `fill` track colour (transparent when omitted), `label` drawn inside the bar | 380 × 10 |
 | `circularProgress` | circular progress | `value` or omit, `wavy`, `trackThickness` 2 to 16, capped at a sixth of `size` | 48 × 48 |
 
 For `navRail`, `railExpanded` is the initial state; the preview's menu button toggles it. With `railModal: true`, an expanded rail covers the content with a scrim while the body keeps a 96dp navigation slot. Otherwise, reserve the rail's current width beside the content. Keep `tabs`, `selected`, and `actions` on the same item in either state.
@@ -140,6 +141,27 @@ Fields that any part may carry:
 - `note`: what the part does, in your words. It goes into the prompt verbatim, so say what happens on tap, what is saved, what is validated.
 - `action`: `{ "to": "<frame id>" | "back", "transition": "slide" | "slideLeft" | "slideUp" | "slideDown" | "fade" | "expand" | "none" }`, the screen a tap opens.
 - `toggle` (buttons): `{ "icon": "favorite", "variant": "filled", "label": "Saved" }`, the look after a tap flips it on.
+- `flow` (anything a tap can move on): the states the part goes through, drawn as a flow in the editor. Use it instead of `toggle` when the part has more than two states or changes something else on the way.
+
+```json
+"flow": {
+  "looks": [
+    { "id": "l2", "label": "领取", "icon": "redeem" },
+    { "id": "l3", "label": "已领取", "icon": "check_circle", "disabled": true }
+  ],
+  "steps": [
+    { "id": "s1", "from": ":start", "to": "l2", "trigger": { "kind": "tap" } },
+    { "id": "s2", "from": "l2", "to": "l3", "trigger": { "kind": "tap" },
+      "do": [ { "kind": "look", "target": "gift", "icon": "check_circle" } ] }
+  ]
+}
+```
+
+  - `looks` are the appearances the part can take. Each names only what it changes — `label`, `icon` (`null` for none), `color`, `variant`, `disabled`, `grow`, `hidden` — and every field it leaves out stays whatever the part itself is, so the author keeps editing one part rather than three copies.
+  - `:start` is the part exactly as drawn. A step may go back to it.
+  - `steps` move the part between looks. `trigger` is `{ "kind": "tap" }` or `{ "kind": "after", "seconds": 30 }` (counted from the moment the part entered the look it is leaving). `when` is a condition list over `vars`, exactly as in `rules`. `do` is a list of what else the step does on the way: `goto`, `set`, `add`, `toggle`, or `look` (a change latched onto this part or, with `target`, another one).
+  - Steps leaving the same look are tried in order, so the first whose conditions hold is the one taken. When none holds, the part does what `action` says, which is also what happens in a look no step leaves.
+
 
 Icons are Material Symbols names (`home`, `search`, `add`, `favorite`, `settings`, `arrow_back`, `more_vert`, `edit`, `delete`, `share`, `restaurant`, `photo_camera`, …).
 

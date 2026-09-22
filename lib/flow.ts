@@ -1,5 +1,8 @@
-import { BACK_TARGET, KIND_SPEC, actionSlotsOf, actionsOf, frameRect, groupBounds, isWideRail, subtreeOf, type Doc, type Group, type Item, type ItemState, type StateEffect } from "./tokens";
-import { KIND_TEXT, type Lang } from "./i18n";
+import { BACK_TARGET, KIND_SPEC, START_LOOK, actionSlotsOf, actionsOf, frameRect, groupBounds, conditionText, isOverlayFrame, isWideRail, lookItem, overlayLevelOfFrame, subtreeOf, writeText, type Doc, type Group, type Item, type ItemState, type OverlayLevel, type PartFlow, type PartStep, type RuleAction, type StateEffect, type Var } from "./tokens";
+import { KIND_TEXT, overlayLevelText, t, type Lang } from "./i18n";
+
+/** the level's name in the UI language, for the diagram's node captions */
+export const overlayLevelName = overlayLevelText;
 
 /* the kind's own fallback noun, for a document written by a build that knows a
  * kind this one does not */
@@ -23,6 +26,8 @@ export type FlowNode = {
   kind: FlowNodeKind;
   label: string;
   description: string;
+  /** an overlay page's level: how it takes the screen over when a tap opens it */
+  overlay?: OverlayLevel;
   /** interactive parts on this screen, in canvas order */
   rules: FlowRule[];
   /** BFS depth from the first frame, for layout */
@@ -73,10 +78,25 @@ export const FLOW_TEXT: Record<
     /** a rule that opens a dialog screen of its own */
     dialogOpen: (from: string, item: string, to: string) => string;
     dialogLine: (from: string, item: string, to: string) => string;
+    /** a conditional tap that changes a variable: `when` is empty for a rule with no condition */
+    ruleWrite: (item: string, when: string, write: string) => string;
+    /** what a part becomes while a look rule holds */
+    look: (action: { icon?: string; label?: string; color?: string; variant?: string }) => string;
     jump: (from: string, item: string, to: string) => string;
     jumpMarkdown: (from: string, item: string, to: string) => string;
     jumpLine: (from: string, item: string, to: string) => string;
     state: Record<StateEffect, (item: string, value: string, seconds: string) => string>;
+    /** how a step of a part's machine is set off */
+    tapHow: string;
+    afterHow: (seconds: string) => string;
+    /** the look the author drew, named where a step goes back to it */
+    drawnLook: string;
+    /** what separates two changes in one look's description */
+    changeJoin: string;
+    /** the fields one look changes about its part, in words */
+    lookChange: { label: (v: string) => string; icon: (v: string) => string; color: (v: string) => string; variant: (v: string) => string; off: string; grow: string; hide: string };
+    /** one step of it: how it starts, the look it lands in, what that look changes, and the rest */
+    step: (item: string, how: string, to: string, changes: string, extra: string) => string;
   }
 > = {
   ja: {
@@ -106,11 +126,28 @@ export const FLOW_TEXT: Record<
     jumpLine: (from, item, to) => `- ${from} の「${item}」をタップすると ${to} に移動します。`,
     dialogOpen: (from, item, to) => `${from} の「${item}」→ ${to}（ポップアップ）`,
     dialogLine: (from, item, to) => `${from} の「${item}」をタップすると ${to} のポップアップが開きます。`,
+    ruleWrite: (item, when, write) => `「${item}」をタップすると${when ? `${when} のときは` : ""}${write} になります。`,
+    look: (a) => `${a.label ? `表示は「${a.label}」` : ""}${a.icon ? `${a.label ? "、" : ""}アイコンは ${a.icon}` : ""}${a.variant ? `${a.label || a.icon ? "、" : ""}スタイルは ${a.variant}` : ""}${a.color ? `${a.label || a.icon || a.variant ? "、" : ""}色は ${a.color}` : ""}` || "見た目が変わる",
+    tapHow: "タップすると",
+    afterHow: (seconds) => `${seconds} 秒後に`,
+    drawnLook: "最初の見た目",
+    changeJoin: "、",
+    lookChange: {
+      label: (v) => `表示が「${v}」`,
+      icon: (v) => `アイコンは ${v}`,
+      color: (v) => `色は ${v}`,
+      variant: (v) => `スタイルは ${v}`,
+      off: "無効になる",
+      grow: "大きくなる",
+      hide: "隠れる",
+    },
+    step: (item, how, to, changes, extra) => `${how}「${item}」は${to}になります${changes ? `（${changes}）` : ""}${extra ? `。${extra}` : "。"}`,
     state: {
       disable: (item) => `「${item}」をタップすると、この部品は無効になります。`,
       cooldown: (item, _value, seconds) => `「${item}」をタップすると ${seconds} 秒間は灰色になり、カウントダウンが終わると元の見た目に戻ります。`,
       label: (item, value) => `「${item}」をタップすると、表示が「${value}」に変わります。`,
       color: (item, value) => `「${item}」をタップすると、色が ${value} に変わります。`,
+      icon: (item, value) => `「${item}」をタップするとアイコンが ${value} に変わり、もう一度タップすると元に戻ります。`,
       variant: (item, value) => `「${item}」をタップすると、見た目が「${value}」に変わります。`,
       grow: (item) => `「${item}」をタップすると、この部品が大きくなります。`,
       hide: (item) => `「${item}」をタップすると、この部品は隠れます。`,
@@ -143,11 +180,28 @@ export const FLOW_TEXT: Record<
     jumpLine: (from, item, to) => `- Tapping "${item}" on ${from} opens ${to}.`,
     dialogOpen: (from, item, to) => `${from} "${item}" → ${to} (dialog)`,
     dialogLine: (from, item, to) => `Tapping "${item}" on ${from} opens the ${to} dialog.`,
+    ruleWrite: (item, when, write) => `Tapping "${item}"${when ? ` when ${when}` : ""} sets ${write}.`,
+    look: (a) => [a.label && `the label reads "${a.label}"`, a.icon && `the icon is ${a.icon}`, a.variant && `the style is ${a.variant}`, a.color && `the colour is ${a.color}`].filter(Boolean).join(", ") || "its look changes",
+    tapHow: "Tapping",
+    afterHow: (seconds) => `After ${seconds} seconds,`,
+    drawnLook: "the drawn look",
+    changeJoin: ", ",
+    lookChange: {
+      label: (v) => `its words read “${v}”`,
+      icon: (v) => `its icon is ${v}`,
+      color: (v) => `its colour is ${v}`,
+      variant: (v) => `its style is ${v}`,
+      off: "it stops answering",
+      grow: "it grows",
+      hide: "it disappears",
+    },
+    step: (item, how, to, changes, extra) => `${how} ${item} becomes ${to}${changes ? ` (${changes})` : ""}${extra ? `. ${extra}` : "."}`,
     state: {
-      disable: (item) => `After tapping "${item}" the part is disabled.`,
+      disable: (item) => `Tapping「${item}」 greys it out for good.`,
       cooldown: (item, _value, seconds) => `After tapping "${item}" the part is greyed for ${seconds} seconds, then goes back to how it looked.`,
       label: (item, value) => `After tapping "${item}" its text becomes "${value}".`,
       color: (item, value) => `After tapping "${item}" its colour becomes ${value}.`,
+      icon: (item, value) => `Tapping "${item}" swaps its icon to ${value}, and tapping it again swaps it back.`,
       variant: (item, value) => `After tapping "${item}" its style becomes ${value}.`,
       grow: (item) => `After tapping "${item}" the part becomes larger.`,
       hide: (item) => `After tapping "${item}" the part is hidden.`,
@@ -180,11 +234,28 @@ export const FLOW_TEXT: Record<
     jumpLine: (from, item, to) => `- 点击 ${from} 的「${item}」会跳转到 ${to}。`,
     dialogOpen: (from, item, to) => `${from} 的「${item}」→ ${to}（弹框）`,
     dialogLine: (from, item, to) => `点击 ${from} 的「${item}」弹出 ${to} 弹框。`,
+    ruleWrite: (item, when, write) => `点击「${item}」${when ? `且 ${when} 时` : ""}，${write}。`,
+    look: (a) => [a.label && `文字变成「${a.label}」`, a.icon && `图标是 ${a.icon}`, a.variant && `样式是 ${a.variant}`, a.color && `颜色是 ${a.color}`].filter(Boolean).join("，") || "外观改变",
+    tapHow: "点击后",
+    afterHow: (seconds) => `${seconds} 秒后`,
+    drawnLook: "起始外观",
+    changeJoin: "、",
+    lookChange: {
+      label: (v) => `显示为「${v}」`,
+      icon: (v) => `图标 ${v}`,
+      color: (v) => `颜色 ${v}`,
+      variant: (v) => `样式 ${v}`,
+      off: "置灰并停止响应",
+      grow: "放大",
+      hide: "隐藏",
+    },
+    step: (item, how, to, changes, extra) => `${how}，「${item}」变成${to}${changes ? `（${changes}）` : ""}${extra ? `。${extra}` : "。"}`,
     state: {
-      disable: (item) => `点击「${item}」后，该组件变为不可用。`,
+      disable: (item) => `点击「${item}」后置灰，不再响应。`,
       cooldown: (item, _value, seconds) => `点击「${item}」后该组件置灰 ${seconds} 秒并显示倒计时，倒计时结束后恢复原样式。`,
       label: (item, value) => `点击「${item}」后，文字变为「${value}」。`,
       color: (item, value) => `点击「${item}」后，颜色变为 ${value}。`,
+      icon: (item, value) => `点击「${item}」后图标变为 ${value}，再点击一次恢复原样。`,
       variant: (item, value) => `点击「${item}」后，样式变为「${value}」。`,
       grow: (item) => `点击「${item}」后，该组件会变大。`,
       hide: (item) => `点击「${item}」后，该组件隐藏。`,
@@ -217,11 +288,28 @@ export const FLOW_TEXT: Record<
     jumpLine: (from, item, to) => `- ${from}의 "${item}"을(를) 탭하면 ${to}(으)로 이동합니다.`,
     dialogOpen: (from, item, to) => `${from}의 "${item}" → ${to}(팝업)`,
     dialogLine: (from, item, to) => `${from}의 "${item}"을(를) 탭하면 ${to} 팝업이 열립니다.`,
+    ruleWrite: (item, when, write) => `"${item}"을(를) 탭하면${when ? ` ${when}일 때` : ""} ${write}이(가) 됩니다.`,
+    look: (a) => [a.label && `글자는 "${a.label}"`, a.icon && `아이콘은 ${a.icon}`, a.variant && `스타일은 ${a.variant}`, a.color && `색은 ${a.color}`].filter(Boolean).join(", ") || "모양이 바뀐다",
+    tapHow: "탭하면",
+    afterHow: (seconds) => `${seconds}초 뒤에`,
+    drawnLook: "처음 모양",
+    changeJoin: ", ",
+    lookChange: {
+      label: (v) => `글자는 "${v}"`,
+      icon: (v) => `아이콘은 ${v}`,
+      color: (v) => `색은 ${v}`,
+      variant: (v) => `스타일은 ${v}`,
+      off: "회색으로 바뀌고 반응하지 않음",
+      grow: "커짐",
+      hide: "숨겨짐",
+    },
+    step: (item, how, to, changes, extra) => `${how} "${item}"은(는) ${to}이(가) 됩니다${changes ? ` (${changes})` : ""}${extra ? `. ${extra}` : "."}`,
     state: {
       disable: (item) => `"${item}"을(를) 탭하면 이 요소를 사용할 수 없습니다.`,
       cooldown: (item, _value, seconds) => `"${item}"을(를) 탭하면 ${seconds}초 동안 회색으로 바뀌고 카운트다운이 끝나면 원래 모양으로 돌아옵니다.`,
       label: (item, value) => `"${item}"을(를) 탭하면 문구가 "${value}"(으)로 바뀝니다.`,
       color: (item, value) => `"${item}"을(를) 탭하면 색이 ${value}(으)로 바뀝니다.`,
+      icon: (item, value) => `"${item}"을(를) 탭하면 아이콘이 ${value}(으)로 바뀌고, 다시 탭하면 원래대로 돌아옵니다.`,
       variant: (item, value) => `"${item}"을(를) 탭하면 스타일이 ${value}(으)로 바뀝니다.`,
       grow: (item) => `"${item}"을(를) 탭하면 이 요소가 커집니다.`,
       hide: (item) => `"${item}"을(를) 탭하면 이 요소가 숨겨집니다.`,
@@ -234,7 +322,7 @@ export const FLOW_TEXT: Record<
 export function itemNameOf(it: Item, lang: Lang): string {
   const spec = KIND_SPEC[it.kind] ?? KIND_SPEC.box;
   const noun = KIND_TEXT[lang][it.kind]?.noun ?? spec.label;
-  return it.label.trim() || (it.kind === "iconButton" || it.kind === "fab" ? it.icon ?? noun : noun);
+  return it.label.trim() || noun;
 }
 
 /** The name of what was actually tapped. On a bar the tapped thing is a destination or
@@ -267,8 +355,50 @@ export function itemsOf(group: Group): Item[] {
   return out;
 }
 
-/** What a tap rule says: disable, cooldown, label, variant and hide, composed
- *  for the requested language. */
+/** The words a look reads as: what its author called it, or the line it shows while the part is
+ *  in it. */
+function lookWords(it: Item, flow: PartFlow | undefined, id: string, lang: Lang): string {
+  if (id === START_LOOK) return FLOW_TEXT[lang].drawnLook;
+  const look = flow?.looks.find((l) => l.id === id);
+  if (!look) return FLOW_TEXT[lang].drawnLook;
+  return look.name?.trim() || lookItem(it, look).label.trim() || itemNameOf(it, lang);
+}
+
+/** What one look changes about its part, in words. */
+function lookChanges(flow: PartFlow | undefined, id: string, lang: Lang): string {
+  const look = flow?.looks.find((l) => l.id === id);
+  if (!look) return "";
+  const w = FLOW_TEXT[lang].lookChange;
+  const out: string[] = [];
+  if (look.label !== undefined) out.push(w.label(look.label));
+  if (look.icon !== undefined) out.push(w.icon(look.icon ?? "—"));
+  if (look.color !== undefined) out.push(w.color(look.color));
+  if (look.variant !== undefined) out.push(w.variant(look.variant));
+  if (look.disabled) out.push(w.off);
+  if (look.grow) out.push(w.grow);
+  if (look.hidden) out.push(w.hide);
+  return out.join(FLOW_TEXT[lang].changeJoin);
+}
+
+/** One step of a machine as a sentence: how it starts, where it lands, and what else it does. */
+function stepText(it: Item, flow: PartFlow | undefined, step: PartStep, who: string, lang: Lang, when: string): string {
+  const x = FLOW_TEXT[lang];
+  const how = step.trigger.kind === "after" ? x.afterHow(String(step.trigger.seconds)) : x.tapHow;
+  const extra = (step.do ?? []).map((a) => actionWords(a, lang)).filter(Boolean).join(x.changeJoin);
+  const line = x.step(who, how, lookWords(it, flow, step.to, lang), lookChanges(flow, step.to, lang), extra);
+  return when ? `${line}（${when}）` : line;
+}
+
+/** What else a step does, for the actions that are not a jump of their own. */
+function actionWords(a: RuleAction, lang: Lang): string {
+  if (a.kind === "look") return FLOW_TEXT[lang].look(a);
+  if (a.kind === "set" || a.kind === "add" || a.kind === "toggle") return "";
+  return "";
+}
+
+/** What a tap rule says: disable, cooldown, label, variant and hide, composed for the requested
+ *  language. Documents written before a part's machine existed carry these; the editor reads them
+ *  back as flows, so this is only reached by a document that was never opened. */
 export function stateText(st: ItemState, label: string, lang: Lang): string {
   const say = FLOW_TEXT[lang].state[st.effect];
   if (!say) return "";
@@ -278,20 +408,22 @@ export function stateText(st: ItemState, label: string, lang: Lang): string {
 /** One screen's sentence: its kind, how many of its parts react to a tap, and
  *  whether anything on it goes back. Back actions carry no edge, so a screen
  *  tells about them here instead. */
-function describeNode(name: string, popup: boolean, interactive: number, back: string[], lang: Lang): string {
+function describeNode(name: string, popup: boolean, interactive: number, back: string[], lang: Lang, level: OverlayLevel | null = null): string {
   const x = FLOW_TEXT[lang];
-  const head = x.nodeSummary(name, popup ? x.popup : x.screen, x.itemCount(interactive));
+  /* an overlay page reads as its own level — a dialog, a panel, a system layer — rather than
+     as a plain popup, because that word is what tells the reader how a tap behaves */
+  const kind = level ? overlayLevelText(level, lang) : popup ? x.popup : x.screen;
+  const head = x.nodeSummary(name, kind, x.itemCount(interactive));
   return `${head}${back.length ? ` ${x.backLine(name, back.join("、"))}` : ""}`;
 }
 
-/** The frame ids the first frame reaches by jumps, breadth first; a frame in a
+/** The frame ids the home screen reaches by jumps, breadth first; a frame in a
  *  cycle or with no incoming transition is never reached and keeps depth 0. */
-function depthsOf(frames: Doc["frames"], jumps: Map<string, Set<string>>): Map<string, number> {
+function depthsOf(homeId: string | undefined, jumps: Map<string, Set<string>>): Map<string, number> {
   const depth = new Map<string, number>();
-  const first = frames[0];
-  if (!first) return depth;
-  depth.set(first.id, 0);
-  const queue = [first.id];
+  if (!homeId) return depth;
+  depth.set(homeId, 0);
+  const queue = [homeId];
   for (let i = 0; i < queue.length; i++) {
     for (const to of jumps.get(queue[i]) ?? []) {
       if (depth.has(to)) continue;
@@ -334,6 +466,12 @@ export function buildFlow(doc: Doc, lang: Lang): Flow {
   const x = FLOW_TEXT[lang];
   const frames = doc.frames;
   const frameIds = new Set(frames.map((f) => f.id));
+  /* the home screen is the first page that is a screen: an overlay can be listed first on
+     the canvas and is still not where the visitor starts */
+  const homeId = frames.find((f) => !isOverlayFrame(f))?.id;
+  const overlayIds = new Set(frames.filter(isOverlayFrame).map((f) => f.id));
+  /* the declared variables: conditions and writes are named by them, not by id */
+  const vars: Var[] = doc.vars ?? [];
   const nameOf = (id: string) => frameNameOf(frames.find((f) => f.id === id)?.name ?? "", lang);
 
   /* A dialog lives on its own page as a hidden overlay, but the flow still reads it as a
@@ -368,6 +506,10 @@ export function buildFlow(doc: Doc, lang: Lang): Flow {
         }
         const isDialog = dialogs.has(action.to);
         if ((!frameIds.has(action.to) && !isDialog) || action.to === from) continue;
+        /* an overlay page is popped over the screen that tapped it, so the edge reads the
+           same way a dialog does even though the target is a page of its own */
+        const over = overlayIds.has(action.to);
+        const pops = !!action.dialog || over;
         jumps.get(from)?.add(action.to);
         rules.get(from)?.push({
           kind: "jump",
@@ -375,9 +517,57 @@ export function buildFlow(doc: Doc, lang: Lang): Flow {
           itemId: it.id,
           itemLabel: hit,
           toFrameId: action.to,
-          dialog: action.dialog,
-          description: action.dialog ? x.dialogLine(nameOf(from), hit, nodeName(action.to)) : x.jumpMarkdown(nameOf(from), hit, nodeName(action.to)),
+          dialog: pops,
+          description: pops ? x.dialogLine(nameOf(from), hit, nodeName(action.to)) : x.jumpMarkdown(nameOf(from), hit, nodeName(action.to)),
         });
+        reacts = true;
+      }
+      /* Conditional taps: a rule that goes somewhere is an edge like any other, with its
+         condition spelled out on it; a rule that writes a variable is a rule of the part. */
+      const self = triggerNameOf(it, "", lang);
+      for (const rule of it.rules ?? []) {
+        const a = rule.do;
+        const when = (rule.when ?? []).map((c) => conditionText(c, vars)).join(", ");
+        if (a.kind === "back") {
+          back.get(from)?.push(when ? `${self} (${when})` : self);
+          reacts = true;
+          continue;
+        }
+        if (a.kind === "close") {
+          rules.get(from)?.push({ kind: "state", itemId: it.id, itemLabel: self, description: x.ruleWrite(label, when, "close") });
+          reacts = true;
+          continue;
+        }
+        if (a.kind === "goto") {
+          const isDialog = dialogs.has(a.to);
+          if ((!frameIds.has(a.to) && !isDialog) || a.to === from) continue;
+          /* an overlay page is popped over the screen that tapped it, so the edge reads the
+             same way a dialog does even though the target is a page of its own */
+          const pops = isDialog || overlayIds.has(a.to);
+          const named = when ? `${self} · ${when}` : self;
+          jumps.get(from)?.add(a.to);
+          rules.get(from)?.push({
+            kind: "jump",
+            nodeId: from,
+            itemId: it.id,
+            itemLabel: named,
+            toFrameId: a.to,
+            dialog: pops,
+            description: pops ? x.dialogLine(nameOf(from), named, nodeName(a.to)) : x.jumpMarkdown(nameOf(from), named, nodeName(a.to)),
+          });
+          reacts = true;
+          continue;
+        }
+        /* a look rule changes what the part shows while its conditions hold, so it reads as a
+           state of that part rather than as a jump */
+        if (a.kind === "look") {
+          rules.get(from)?.push({ kind: "state", itemId: it.id, itemLabel: label, description: x.ruleWrite(label, when, x.look(a)) });
+          reacts = true;
+          continue;
+        }
+        const written = vars.find((v) => v.id === a.varId);
+        if (!written) continue;
+        rules.get(from)?.push({ kind: "state", itemId: it.id, itemLabel: label, description: x.ruleWrite(label, when, writeText(written, a)) });
         reacts = true;
       }
       /* a bar's own collapse button belongs to the flow too: it is a state change */
@@ -389,16 +579,35 @@ export function buildFlow(doc: Doc, lang: Lang): Flow {
         rules.get(from)?.push({ kind: "state", itemId: it.id, itemLabel: label, description: x.barToggle(label) });
         reacts = true;
       }
-      /* a bar's destinations carry rules of their own: they are named by their label */
-      for (const [slot, list] of Object.entries(it.slotStates ?? {})) {
-        const name = actionSlotsOf(it).find((s2) => s2.key === slot)?.label ?? slot;
-        for (const st of list) {
-          const description = stateText(st, `${label} · ${name}`, lang);
-          if (!description) continue;
-          rules.get(from)?.push({ kind: "state", itemId: it.id, itemLabel: `${label} · ${name}`, description });
+      /* The machine a part runs reads as the moves it makes: one line per step, named after the
+         look it lands in. A step that jumps is an edge of the screen flow like any other tap. */
+      const sayMachine = (machine: PartFlow | undefined, who: string) => {
+        for (const st of machine?.steps ?? []) {
+          const when = (st.when ?? []).map((c) => conditionText(c, vars)).join("、");
+          for (const a of st.do ?? []) {
+            if (a.kind !== "goto" || (!frameIds.has(a.to) && !dialogs.has(a.to)) || a.to === from) continue;
+            jumps.get(from)?.add(a.to);
+            rules.get(from)?.push({
+              kind: "jump",
+              nodeId: from,
+              itemId: it.id,
+              itemLabel: who,
+              toFrameId: a.to,
+              dialog: dialogs.has(a.to) || overlayIds.has(a.to),
+              description: x.jumpMarkdown(nameOf(from), who, nodeName(a.to)),
+            });
+          }
+          rules.get(from)?.push({ kind: "state", itemId: it.id, itemLabel: who, description: stepText(it, machine, st, who, lang, when) });
           reacts = true;
         }
+      };
+      sayMachine(it.flow, label);
+      /* a bar's destinations carry a machine of their own: they are named by their label */
+      for (const [slot, machine] of Object.entries(it.slotFlows ?? {})) {
+        const name = actionSlotsOf(it).find((s2) => s2.key === slot)?.label ?? slot;
+        sayMachine(machine, `${label} · ${name}`);
       }
+      /* the state rules a document was written with, for one that was never opened in the editor */
       for (const st of it.states ?? []) {
         const description = stateText(st, label, lang);
         if (!description) continue;
@@ -409,20 +618,24 @@ export function buildFlow(doc: Doc, lang: Lang): Flow {
     }
   }
 
-  const depth = depthsOf(frames, jumps);
-  const homeId = frames[0]?.id;
+  const depth = depthsOf(homeId, jumps);
 
   const nodes: FlowNode[] = frames.map((f) => {
     const reached = (depth.get(f.id) ?? 0) > 0;
     const opens = (jumps.get(f.id)?.size ?? 0) > 0;
-    const kind: FlowNodeKind = f.id !== homeId && reached && !opens ? "popup" : "screen";
+    /* an overlay page is a popup by definition — it is opened over a screen, whatever it
+       does afterwards — while a screen is a popup only when nothing but its opener leads
+       anywhere from it */
+    const overlay = isOverlayFrame(f) ? overlayLevelOfFrame(f) : null;
+    const kind: FlowNodeKind = overlay || (f.id !== homeId && reached && !opens) ? "popup" : "screen";
     return {
       id: f.id,
       kind,
       label: nameOf(f.id),
-      description: describeNode(nameOf(f.id), kind === "popup", reactions.get(f.id)?.size ?? 0, back.get(f.id) ?? [], lang),
+      description: describeNode(nameOf(f.id), kind === "popup", reactions.get(f.id)?.size ?? 0, back.get(f.id) ?? [], lang, overlay),
       rules: rules.get(f.id) ?? [],
       depth: depth.get(f.id) ?? 0,
+      ...(overlay ? { overlay } : undefined),
     };
   });
 

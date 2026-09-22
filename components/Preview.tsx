@@ -12,7 +12,6 @@ import {
   Frame,
   GAP,
   Group,
-  NAV_BAR_H,
   PHONE_H,
   PHONE_R,
   PHONE_W,
@@ -22,11 +21,12 @@ import {
   SWIPE_DIRS,
   SwipeDir,
   TAPPABLE,
+  TAB_ROW_H,
   Transition,
   baseRadii,
   byLayer,
   childShown,
-  connectSpecOf,
+  childDrawn,
   fontFamilyOf,
   freeRadii,
   frameRadius,
@@ -35,17 +35,62 @@ import {
   isPhoneFrame,
   normalizeTheme,
   resolveStates,
+  firstTapStep,
+  firstDueStep,
+  hasTimedSteps,
+  lookAt,
+  NAV_INDICATOR_R,
+  runPartRadii,
+  scaleR,
   SHAPED,
+  conditionalLook,
   toggleIcon,
-  uniformRadii,
   RAIL_TOP,
   isWideRail,
+  navCell,
+  railCell,
   railMetrics,
   type NavTab,
   sizeOf,
   isScrollableTabs,
   tabScrollOffset,
   SCROLL_TAB_W,
+  /* overlays: a level is a bundle of runtime rules, and the stack is the order they were
+     opened in — the one thing the layer tree cannot tell us */
+  OVERLAY_RULES,
+  backTarget,
+  firstRule,
+  foldPlace,
+  foldShift,
+  forgetScreens,
+  dueAction,
+  hasTimedRules,
+  initialVars,
+  varsInFrames,
+  looksFor,
+  itemsOf,
+  layersIn,
+  NO_FOLD,
+  isOverlayFrame,
+  overlayLevelOf,
+  overlayLevelOfFrame,
+  overlayRuleOf,
+  popLayer,
+  pushLayer,
+  scrollOffset,
+  varText,
+  withLayers,
+  writtenValue,
+  type ItemRule,
+  type MachineAt,
+  type PartFlow,
+  type PartStep,
+  type Layer as OverlayLayer,
+  type LayerTrail,
+  type RuleAction,
+  type OverlayLevel,
+  type Var,
+  type VarValue,
 } from "@/lib/tokens";
 import { Icon, M3Node } from "./M3Node";
 import { IconBtn } from "./ui";
@@ -131,11 +176,18 @@ const TOGGLES = ["switch", "checkbox", "chip"] as const;
 /** A tap no longer swaps a button for a second look: the toggle feature is gone. */
 const flips = (_it: Item) => false;
 
-/** the live effect of every part's own state rules, shared down the screen */
+/** Where every part's own machine is, shared down the screen */
 type StateRuntime = {
-  fired: Record<string, number>;
+  /** the look each part is in and when it got there, keyed the way taps are: `id`, or `id:slot` */
+  at: MachineAt;
+  /** the look a step latched onto a part, by part: a change the machine makes once, on the way past */
+  pinned: Record<string, Partial<Item>>;
   now: number;
-  onFire: (id: string) => void;
+  /** Takes the step a tap calls for; false leaves the tap to the plain action and the rules below.
+   *  `owner` is the part an untargeted look action changes. */
+  onStep: (key: string, flow: PartFlow | undefined, owner: string | null) => boolean;
+  /** Takes one step, whoever asked for it: a tap, or its wait coming round. */
+  take: (key: string, owner: string | null, step: PartStep) => void;
   /** the button the visitor touched last: it stays a size up and highlighted */
   activeId: string | null;
   onActivate: (id: string) => void;
@@ -159,6 +211,31 @@ function flippedLook(it: Item): Item {
   return it;
 }
 
+/** The speeds the preview's clock can run at: ×1 is real time, and ×300 watches an hour in twelve
+ *  seconds — the author's own cheat for a prototype that waits. */
+const TIME_SPEEDS = [1, 10, 60, 300];
+
+/** How far a finger must travel before a drag belongs to the container rather than to a tap. */
+const SCROLL_SLOP = 6;
+
+/**
+ * A scrolling container's live offset in the preview, keyed by the part. The offset lives with the
+ * other runtime values, so a screen that comes back to finds its containers where they were left.
+ */
+type ScrollRuntime = {
+  /** what the visitor has moved this container to, if anything */
+  at: (id: string) => { x?: number; y?: number };
+  /** moves it, in dp */
+  move: (id: string, axis: "x" | "y", value: number) => void;
+  /** takes the drag away from the screen's own swipe, for a drag the container has claimed */
+  claim: () => void;
+  /** Whether this container may take the press: the one nearest the finger wins, so a container
+   *  inside another scrolls without moving the one around it. */
+  arm: (id: string, pointerId: number) => boolean;
+  /** lets the press go again, so the next one can be judged afresh */
+  release: (id: string) => void;
+};
+
 /** A part in the preview: presses down and shows a state layer while the
  *  pointer is on it, then fires its action on release, like a real widget. */
 function Tappable({
@@ -179,6 +256,9 @@ function Tappable({
   states,
   navToggle,
   onNavToggle,
+  scrollRt,
+  looks,
+  onRules,
 }: {
   item: Item;
   p: Palette;
@@ -205,14 +285,27 @@ function Tappable({
   onMenu?: (open: boolean) => void;
   onRailToggle?: (animate: boolean) => void;
   railAnimating?: boolean;
+  /** the live scroll of the containers on screen, for the ones that scroll */
+  scrollRt?: ScrollRuntime;
+  /** the looks the variables ask for, by part: this one, and any a rule aimed here */
+  looks?: Map<string, Item>;
+  /** runs a nested part's conditional rules, the way the screen runs its own */
+  onRules?: (it: Item) => boolean;
 }) {
   const lang = useLang();
   const [pressed, setPressed] = useState(false);
   const [hot, setHot] = useState<string | null>(null);
-  /* the part's own rules, once the visitor has set them off */
-  const own = states ? resolveStates(item, states.fired, states.now) : null;
+  /* What the variables make of this part: "when the reward is ready, show the claim button" is a
+     look the rules ask for — its own, or another part's rule that names it — so it is the part as
+     drawn, and the tap's own effect is resolved on top of it. */
+  const looked = looks?.get(item.id) ?? item;
+  const pin = states?.pinned[item.id];
+  const asked = pin ? { ...looked, ...pin } : looked;
+  /* the machine's own look sits on top of both: the part as drawn, then the looks its rules ask
+     for, then the look its own flow has moved it to */
+  const own = states ? resolveStates(asked, states.at, states.now) : null;
   if (own?.hidden) return null;
-  const view0 = own && own.item !== item ? { ...item, label: own.item.label, variant: own.item.variant } : item;
+  const view0 = own ? own.item : asked;
   const current = !!states && states.activeId === item.id && SHAPED.includes(item.kind) && !own?.disabled && !own?.hidden;
   const view = current && !view0.color ? { ...view0, color: "primaryContainer" } : view0;
   const frozen = !!own?.disabled;
@@ -260,7 +353,53 @@ function Tappable({
     window.addEventListener("pointerup", end);
     window.addEventListener("pointercancel", end);
   };
-  const live = !frozen && (!!onTap || !!onPick || (view.states?.length ?? 0) > 0 || (TAPPABLE.includes(view.kind) && view.kind !== "text"));
+  /* A container scrolls: a drag inside it moves its content, and the screen's own swipe steps aside
+     for a drag the container claims — the one that runs along an axis it can move. The tap that ends
+     such a drag is swallowed, so scrolling never presses a child by accident. */
+  const axes = item.scroll;
+  const at = axes && scrollRt ? scrollOffset(item, widths, scrollRt.at(item.id)) : null;
+  const swallowScrollTap = useRef(false);
+  const scrollDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    swallowScrollTap.current = false;
+    if (!axes || !scrollRt || frozen || e.button !== 0) return;
+    const el = ref.current;
+    if (!el) return;
+    /* the phone is drawn to scale: a finger's travel in pixels is divided by that scale to stay dp */
+    const world = sizeOf(item, widths);
+    const r = el.getBoundingClientRect();
+    const k = world.h > 0 && r.height > 0 ? r.height / world.h : 1;
+    if (!scrollRt.arm(item.id, e.pointerId)) return;
+    const from = { ...scrollOffset(item, widths, scrollRt.at(item.id)) };
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    let mine = false;
+    const move = (ev: PointerEvent) => {
+      const dx = (ev.clientX - x0) / k;
+      const dy = (ev.clientY - y0) / k;
+      if (!mine) {
+        if (Math.hypot(dx, dy) < SCROLL_SLOP) return;
+        const vertical = Math.abs(dy) > Math.abs(dx);
+        const moves = vertical ? axes === "y" || axes === "both" : axes === "x" || axes === "both";
+        /* the axis the container cannot move belongs to the screen: its swipe keeps the gesture */
+        if (!moves) return;
+        mine = true;
+        swallowScrollTap.current = true;
+        scrollRt.claim();
+      }
+      scrollRt.move(item.id, "x", from.x - dx);
+      scrollRt.move(item.id, "y", from.y - dy);
+    };
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      scrollRt.release(item.id);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  };
+  const live = !frozen && (!!onTap || !!onPick || !!view.flow || (TAPPABLE.includes(view.kind) && view.kind !== "text"));
   const ref = useRef<HTMLDivElement>(null);
 
   /* the open menu closes on a tap anywhere else or on Escape */
@@ -299,16 +438,52 @@ function Tappable({
     const n = item.tabs?.length ?? 0;
     for (let i = 0; i < n; i++) slots.push({ key: `tab:${i}`, style: { left: i * SCROLL_TAB_W, width: SCROLL_TAB_W, top: 0, bottom: 0, borderRadius: 16 } });
   }
-  if (onSlot && (item.kind === "bottomNav" || item.kind === "tabs")) {
+  if (onSlot && item.kind === "bottomNav") {
+    /* folded, the bar holds nothing but its own button: there is no destination left to tap */
+    const size = sizeOf(item, widths);
+    const n = item.barFolded ? 0 : item.tabs?.length ?? 0;
+    /* The fold button owns a strip at the trailing edge, so the destinations are laid out in the
+       padded row and the hit areas take the same insets. A bar wraps onto further lines exactly as
+       it is drawn: a line of areas per line of destinations, and a short line packed to the
+       trailing edge. One row of full-width areas put a tap on the second line onto the first
+       line's destinations, which is the whole reason a line is worked out here at all. */
+    const padL = 4;
+    const padR = item.barFolded !== undefined ? 44 : 4;
+    const inner = Math.max(0, size.w - padL - padR);
+    for (let i = 0; i < n; i++) {
+      const cell = navCell(n, item.navPerRow, i);
+      const colW = inner / cell.perLine;
+      const lineH = size.h / cell.lines;
+      slots.push({
+        key: `tab:${i}`,
+        style: {
+          left: padL + (cell.perLine - cell.inLine + cell.at) * colW,
+          width: colW,
+          top: cell.line * lineH,
+          height: lineH,
+          borderRadius: scaleR(NAV_INDICATOR_R),
+        },
+      });
+    }
+  }
+  if (onSlot && item.kind === "tabs" && !scrollTabs) {
     const n = item.tabs?.length ?? 0;
+    /* A tab row is only its row: the rest of the box is the panel of the tab in front, and a tap
+       there belongs to whatever the panel holds, not to the row above it. A row wide enough to
+       scroll has its own areas, measured inside the scrolling layer, so they are not added here. */
     for (let i = 0; i < n; i++)
-      slots.push({ key: `tab:${i}`, style: { left: `${(i / n) * 100}%`, width: `${100 / n}%`, top: 0, bottom: item.kind === "bottomNav" ? NAV_BAR_H : 0, borderRadius: 16 } });
+      slots.push({ key: `tab:${i}`, style: { left: `${(i / n) * 100}%`, width: `${100 / n}%`, top: 0, height: TAB_ROW_H, borderRadius: 16 } });
   }
   if (onSlot && item.kind === "navRail") {
-    const rail = railMetrics(item);
-    const n = item.tabs?.length ?? 0;
-    for (let i = 0; i < n; i++)
-      slots.push({ key: `tab:${i}`, style: { left: rail.inset, width: rail.width - 2 * rail.inset, top: rail.top + i * (rail.itemHeight + rail.gap), height: rail.itemHeight, borderRadius: item.railExpanded ? 28 : 16 } });
+    /* folded, the rail holds nothing but its own button: there is no destination left to tap */
+    const n = item.railFolded ? 0 : item.tabs?.length ?? 0;
+    for (let i = 0; i < n; i++) {
+      const cell = railCell(item, n, i);
+      slots.push({
+        key: `tab:${i}`,
+        style: { left: cell.left, width: cell.width, top: cell.top, height: cell.height, borderRadius: scaleR(NAV_INDICATOR_R) },
+      });
+    }
   }
   if (onSlot && item.kind === "toolbar") {
     const n = item.tabs?.length ?? 0;
@@ -323,8 +498,9 @@ function Tappable({
 
   /* A container's children are tappable in their own right: the one with a target opens
    * that screen, and a toggle inside a container flips just like one on the screen. */
-  const childNodes = (item.children ?? []).filter((c) => childShown(item, c)).sort(byLayer).map((c) => (
-    <div key={c.id} style={{ position: "absolute", left: c.x, top: c.y }}>
+  const childNodes = (item.children ?? []).filter((c, i) => childDrawn(item, c, i)).sort(byLayer).map((c) => (
+    /* a navigation part inside a container folds the same way it does on a screen */
+    <div key={c.id} style={{ position: "absolute", left: c.x + foldPlace(c, widths).dx, top: c.y + foldPlace(c, widths).dy }}>
       <Tappable
         item={c}
         p={p}
@@ -332,15 +508,20 @@ function Tappable({
         widths={widths}
         states={states}
         onTap={
-          c.action || flips(c)
+          c.action || flips(c) || (c.rules?.length ?? 0) > 0
             ? () => {
                 if (flips(c)) onFlip?.(c.id);
+                /* its own "when … then …" lines run first, and win the tap when one holds */
+                if (c.rules?.length && onRules?.(c)) return;
                 if (c.action) onAction?.(c.action);
               }
             : undefined
         }
         onAction={onAction}
         onFlip={onFlip}
+        onRules={onRules}
+        scrollRt={scrollRt}
+        looks={looks}
       />
     </div>
   ));
@@ -350,6 +531,7 @@ function Tappable({
       ref={ref}
       data-rail-animate={railAnimating ? "item" : undefined}
       onPointerDown={(e) => {
+        scrollDown(e);
         if (onValue) {
           e.stopPropagation();
           e.currentTarget.setPointerCapture(e.pointerId);
@@ -365,12 +547,21 @@ function Tappable({
       onPointerUp={() => setPressed(false)}
       onPointerCancel={() => setPressed(false)}
       onPointerLeave={() => !onValue && setPressed(false)}
-      onClick={onPick ? () => onMenu?.(!menu) : () => {
-        /* the part's own rules go off first, then whatever the tap was meant to do */
-        if (view.states?.length) states?.onFire(view.id);
-        if (SHAPED.includes(view.kind)) states?.onActivate(view.id);
-        onTap?.();
-      }}
+      onClick={
+        onPick
+          ? () => onMenu?.(!menu)
+          : () => {
+              /* a click that only finished a scroll is not a tap */
+              if (swallowScrollTap.current) {
+                swallowScrollTap.current = false;
+                return;
+              }
+              /* the part's own machine goes first, then whatever the tap was meant to do */
+              states?.onStep(view.id, view.flow, view.id);
+              if (SHAPED.includes(view.kind)) states?.onActivate(view.id);
+              onTap?.();
+            }
+      }
       style={{
         cursor: live || onValue ? "pointer" : "default",
         display: "flex",
@@ -387,7 +578,34 @@ function Tappable({
         zIndex: current ? OVERLAY_Z + 2 : undefined,
       }}
     >
-      <M3Node item={view} palette={p} widths={widths} radii={radii} interactive={false} pressed={pressed && !onValue} tabScroll={scrollTabs ? tabScroll : undefined} overlay={childNodes} />
+      <M3Node
+        item={view}
+        palette={p}
+        widths={widths}
+        radii={radii}
+        interactive={false}
+        pressed={pressed && !onValue}
+        tabScroll={scrollTabs ? tabScroll : undefined}
+        overlay={childNodes}
+        scroll={at ?? undefined}
+        onWheel={
+          axes && scrollRt
+            ? (e) => {
+                /* a wheel over a container moves it, the way it would in a browser */
+                e.stopPropagation();
+                const now = { ...scrollOffset(item, widths, scrollRt.at(item.id)) };
+                scrollRt.move(item.id, "x", now.x - e.deltaX);
+                scrollRt.move(item.id, "y", now.y - e.deltaY);
+              }
+            : undefined
+        }
+        onClickCapture={(e) => {
+          if (!swallowScrollTap.current) return;
+          swallowScrollTap.current = false;
+          e.stopPropagation();
+          e.preventDefault();
+        }}
+      />
       {/* the navigation's own collapse button: a button of its own, so nothing can cover it */}
       {navToggle && (
         <button
@@ -537,6 +755,7 @@ const ellipsisText: React.CSSProperties = { overflow: "hidden", textOverflow: "e
 
 function Screen({
   active = true,
+  bare = false,
   frame,
   groups,
   widths,
@@ -548,8 +767,15 @@ function Screen({
   onValue,
   runtime,
   dialog,
+  vars,
+  onRules,
+  scrollRt,
+  onRule,
 }: {
   active?: boolean;
+  /** A floating layer's page is only the stage its parts were laid out on: the screen behind it
+   *  shows through, so the page must not paint a background of its own. */
+  bare?: boolean;
   frame: Frame;
   groups: Group[];
   widths: Record<string, number>;
@@ -564,6 +790,14 @@ function Screen({
   runtime: StateRuntime;
   /** the dialog this screen has open, if any: an in-page overlay, not another screen */
   dialog: { openId: string | null; onOpen: (id: string | null) => void };
+  /** what the variables hold now, and what the document declares */
+  vars: { values: Record<string, VarValue>; declared: Var[] };
+  /** runs a part's conditional rules: true when one of them took the tap */
+  onRules: (it: Item) => boolean;
+  /** the live scroll of the containers on this screen */
+  scrollRt?: ScrollRuntime;
+  /** runs one rule action: what a timed rule does when its wait is over */
+  onRule?: (a: RuleAction) => void;
 }) {
   /* the dropdown whose menu is open, if any; its group is lifted above the rest */
   const [menuId, setMenuId] = useState<string | null>(null);
@@ -582,11 +816,61 @@ function Screen({
       ? updateRail(current, [frame], widths, id, patch)
       : current.map((g) => ({ ...g, items: patchTree(g.items, id, patch) }));
   }, constrainModalRails(groups)), [groups, frame, widths, railStates]);
+  /* How long this screen has been on show, on the preview's own (speeded-up) clock: rules that wait
+     count from here, and a screen visited again starts its wait over. */
+  const shownAt = useRef(runtime.now);
+  const seconds = Math.max(0, (runtime.now - shownAt.current) / 1000);
+  const timedFired = useRef(new Set<string>());
+  /* the looks the variables ask for across this screen: a rule can aim at the part it sits on or at
+     another one, so they are worked out for the screen as a whole and then handed to each part */
+  const looked = useMemo(
+    () => looksFor(itemsOf(shownGroups), vars.values, vars.declared, seconds),
+    [shownGroups, vars.values, vars.declared, seconds],
+  );
+  /* a rule that waits runs by itself: the victory that pops ten minutes in, the building that is
+     finished. It runs once per visit, and only when its conditions still hold. */
+  useEffect(() => {
+    if (!onRule) return;
+    for (const it of itemsOf(shownGroups)) {
+      const rule = dueAction(it.rules, vars.values, vars.declared, seconds);
+      if (rule && !timedFired.current.has(rule.id)) {
+        timedFired.current.add(rule.id);
+        onRule(rule.do);
+      }
+    }
+  }, [seconds, shownGroups, vars.values, vars.declared, onRule]);
+  /* A step that waits runs by itself just as a rule does: the part that heals in thirty seconds,
+     the button that goes back to what it said. It counts from the moment the part entered the look
+     it is in — or from this screen being shown, for the look it was drawn in — and each step runs
+     once per visit, so a loop cannot spin on its own clock. */
+  useEffect(() => {
+    for (const it of itemsOf(shownGroups)) {
+      const machines: { key: string; owner: string | null; flow: PartFlow | undefined }[] = [{ key: it.id, owner: it.id, flow: it.flow }];
+      for (const [slot, flow] of Object.entries(it.slotFlows ?? {})) machines.push({ key: `${it.id}:${slot}`, owner: null, flow });
+      for (const { key, owner, flow } of machines) {
+        const entry = runtime.at[key];
+        const elapsed = Math.max(0, (runtime.now - (entry?.since ?? shownAt.current)) / 1000);
+        const step = firstDueStep(flow, lookAt(runtime.at, key), vars.values, vars.declared, elapsed);
+        if (!step || timedFired.current.has(`step:${key}:${step.id}`)) continue;
+        timedFired.current.add(`step:${key}:${step.id}`);
+        runtime.take(key, owner, step);
+      }
+    }
+  }, [seconds, shownGroups, vars.values, vars.declared, runtime]);
   const modalIds = new Set(shownGroups.flatMap((g) => { const rail = modalRailOf(g); return rail ? [rail.id] : []; }));
-  /* a dialog is a group on this very screen: it stays out of the way until a tap opens it */
-  const dialogItemIds = new Set(shownGroups.flatMap((g) => g.items.filter((it) => it.modal).map((it) => it.id)));
+  /* an in-page overlay is a group on this very screen: it stays out of the way until a tap
+     opens it, and the level it was authored with decides how it takes the screen over */
+  const dialogItemIds = new Set(shownGroups.flatMap((g) => g.items.filter((it) => overlayLevelOf(it) !== null).map((it) => it.id)));
   const runAction = (a: Action) => (dialogItemIds.has(a.to) ? dialog.onOpen(a.to) : onAction(a));
   const hasModal = modalIds.size > 0;
+  /* the overlay this screen has open, and the rules its level carries */
+  const openOverlay = dialog.openId ? shownGroups.flatMap((g) => g.items).find((it) => it.id === dialog.openId) : undefined;
+  const openLevel: OverlayLevel | null = openOverlay ? overlayLevelOf(openOverlay) : null;
+  const openRule = openLevel ? overlayRuleOf(openLevel) : null;
+  /** an in-page overlay with an inert background switches the other groups off too */
+  const groupInert = (g: Group) =>
+    (hasModal && !g.items.some((it) => modalIds.has(it.id))) ||
+    (!!openRule?.inertBehind && !g.items.some((it) => it.id === dialog.openId));
   const modalActive = interactive && hasModal;
   /** The rail's own button: it folds every destination away and back, and the width it
    *  takes while open is the expanded one. A rail nested inside a container is patched in
@@ -692,7 +976,17 @@ function Screen({
       /* the scrim and the pointer guard follow the rail itself, so a peek shows the modal
        * state as authored; the root's inert keeps a non-interactive screen from acting on it */
       onPointerDown={(e) => { if (hasModal) e.stopPropagation(); }}
-      style={{ position: "absolute", inset: 0, background: p[frame.bg ?? "surface"], overflow: "hidden", outline: "none" }}
+      style={{
+        position: "absolute",
+        inset: 0,
+        background: bare ? "transparent" : p[frame.bg ?? "surface"],
+        overflow: "hidden",
+        outline: "none",
+        /* A floating layer's page is a stage, not a screen: a tap on its empty part belongs to the
+           screen behind, which is what puts a popover or a dimmed dialog away. What the page draws
+           takes its taps back below. */
+        pointerEvents: bare ? "none" : undefined,
+      }}
     >
       <AnimatePresence>
         {hasModal && <motion.button
@@ -703,23 +997,42 @@ function Screen({
           onClick={(e) => closeRails(e.detail !== 0)}
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           transition={{ duration: reducedMotion ? 0 : 0.18 }}
-          style={{ position: "absolute", inset: 0, border: 0, padding: 0, background: "rgba(0,0,0,0.32)", zIndex: 3 }}
+          style={{ position: "absolute", inset: 0, border: 0, padding: 0, background: "rgba(0,0,0,0.32)", zIndex: 3, pointerEvents: "auto" }}
         />}
       </AnimatePresence>
-      {/* an open dialog sits over the screen, and a tap beside it closes it again */}
-      {dialog.openId && (
+      {/* an open overlay sits over the screen. A scrim dims the screen behind and takes the
+       *  tap that closes it; a popover has no dim, so it uses a bare catcher instead — the
+       *  tap still only puts the bubble away, while the screen behind keeps its looks and
+       *  stays readable to assistive tech. */}
+      {openRule && (openRule.scrim > 0 || openRule.dismissOnOutside) && (
         <button
-          key="dialog-scrim"
+          key="overlay-scrim"
           data-dialog-scrim
-          aria-label={t("close", lang)}
+          data-overlay-scrim={openLevel ?? undefined}
+          aria-label={t("closeOverlay", lang)}
           tabIndex={-1}
           onClick={() => dialog.onOpen(null)}
-          style={{ position: "absolute", inset: 0, border: 0, padding: 0, background: "rgba(0,0,0,0.32)", zIndex: 5 }}
+          style={{
+            position: "absolute",
+            inset: 0,
+            border: 0,
+            padding: 0,
+            background: openRule.scrim > 0 ? `rgba(0,0,0,${openRule.scrim})` : "transparent",
+            zIndex: 5,
+            pointerEvents: "auto",
+          }}
         />
       )}
       {shownGroups.map((g) => {
-        const isDialog = g.items.some((it) => it.modal);
+        const isDialog = g.items.some((it) => overlayLevelOf(it) !== null);
         if (isDialog && !g.items.some((it) => it.id === dialog.openId)) return null;
+        /* A navigation part's fold shrinks it to its own button: the group is drawn where layoutOf
+           would draw the part, so the button stays put (the bar's fold lives in the runtime values,
+           the rail's in the group itself). */
+        const only = g.items.length === 1 ? g.items[0] : null;
+        const raw = only ? values[`fold:${only.id}`] : undefined;
+        const folded = !!only && (only.kind === "bottomNav" ? (raw === undefined ? !!only.barFolded : raw === 1) : !!only.railFolded);
+        const fold = only && folded ? foldShift(only, widths) : NO_FOLD;
         return (
         <div
           key={g.id}
@@ -727,44 +1040,27 @@ function Screen({
           data-preview-group={g.id}
           data-rail-animate={railMotion?.groups.has(g.id) ? "group" : undefined}
           data-rail-modal={g.items.some((it) => modalIds.has(it.id)) ? "true" : undefined}
-          inert={hasModal && !g.items.some((it) => modalIds.has(it.id))}
+          inert={groupInert(g)}
           style={
             g.free
-              ? { position: "absolute", left: g.x - frame.x, top: g.y - frame.y, zIndex: isDialog ? 6 : g.items.some((it) => modalIds.has(it.id)) ? 4 : g.items.some((it) => it.id === menuId) ? 2 : undefined }
+              ? { position: "absolute", left: g.x - frame.x + fold.dx, top: g.y - frame.y + fold.dy, zIndex: isDialog ? 6 : g.items.some((it) => modalIds.has(it.id)) ? 4 : g.items.some((it) => it.id === menuId) ? 2 : undefined, pointerEvents: "auto" }
               : {
                   position: "absolute",
-                  left: g.x - frame.x,
-                  top: g.y - frame.y,
+                  left: g.x - frame.x + fold.dx,
+                  top: g.y - frame.y + fold.dy,
                   zIndex: isDialog ? 6 : g.items.some((it) => modalIds.has(it.id)) ? 4 : g.items.some((it) => it.id === menuId) ? 2 : undefined,
                   display: "flex",
                   flexDirection: g.axis === "x" ? "row" : "column",
                   alignItems: g.axis === "x" ? "center" : "stretch",
                   gap: GAP,
+                  pointerEvents: "auto",
                 }
           }
         >
           {((corners) => g.items.map((it, i) => {
-            const conn = connectSpecOf(it);
             const n = g.free ? 1 : g.items.length;
-            const radii = g.free
-              ? (corners?.get(it.id) ?? baseRadii(it))
-              : conn && n > 1 && !it.shape
-                ? g.axis === "x"
-                  ? {
-                      tl: i === 0 ? conn.outer : conn.inner,
-                      bl: i === 0 ? conn.outer : conn.inner,
-                      tr: i === n - 1 ? conn.outer : conn.inner,
-                      br: i === n - 1 ? conn.outer : conn.inner,
-                    }
-                  : {
-                      tl: i === 0 ? conn.outer : conn.inner,
-                      tr: i === 0 ? conn.outer : conn.inner,
-                      bl: i === n - 1 ? conn.outer : conn.inner,
-                      br: i === n - 1 ? conn.outer : conn.inner,
-                    }
-                : conn
-                  ? uniformRadii(conn.outer)
-                  : baseRadii(it);
+            /* the same rule the canvas uses, so a circle is a circle in both */
+            const radii = g.free ? (corners?.get(it.id) ?? baseRadii(it)) : runPartRadii(it, i === 0, i === n - 1, g.axis);
             const act = it.action;
             let shown = flipped.has(it.id) ? flippedLook(it) : it;
             if (it.kind === "slider" && values[it.id] !== undefined) shown = { ...shown, value: values[it.id] };
@@ -780,19 +1076,32 @@ function Screen({
             /* a row whose selection the author never set shows the destination the visitor tapped to open this screen */
             else if (navKind && it.selected === undefined && values[`${navKey}:opened:${frame.id}`] !== undefined) shown = { ...shown, selected: values[`${navKey}:opened:${frame.id}`] };
             /* a destination's own rules: fired by its tap, read back as its look */
-            const slotOf = (key: string) => it.slotStates?.[key];
+            const flowOf = (key: string) => it.slotFlows?.[key];
             const tabLook = (t: NavTab, i: number) => {
-              const list = slotOf(`tab:${i}`);
-              if (!list?.length) return t;
-              const st = resolveStates({ ...it, id: `${it.id}:tab:${i}`, states: list, label: t.label }, runtime.fired, runtime.now);
+              const flow = flowOf(`tab:${i}`);
+              if (!flow) return t;
+              const st = resolveStates({ ...it, id: `${it.id}:tab:${i}`, flow, label: t.label }, runtime.at, runtime.now);
               return { ...t, label: st.item.label, disabled: st.disabled, grown: st.grown };
             };
-            if (it.slotStates && it.tabs?.length) shown = { ...shown, tabs: it.tabs.map(tabLook) };
+            if (it.slotFlows && it.tabs?.length) shown = { ...shown, tabs: it.tabs.map(tabLook) };
+            /* text that reads a variable shows what it holds now, so a resource line counts
+               down as the visitor spends */
+            if (vars.declared.length) {
+              const decl = vars.declared;
+              const filled = { ...shown };
+              if (shown.label?.includes("{")) filled.label = varText(shown.label, vars.values, decl);
+              if (shown.supporting?.includes("{")) filled.supporting = varText(shown.supporting, vars.values, decl);
+              if (shown.tabs?.some((t) => t.label.includes("{"))) filled.tabs = shown.tabs.map((t) => ({ ...t, label: varText(t.label, vars.values, decl) }));
+              shown = filled;
+            }
             const tap =
-              act || flips(it)
+              act || flips(it) || (it.rules?.length ?? 0) > 0 || it.flow
                 ? () => {
                     if (flips(it)) onFlip(it.id);
-                    if (it.states?.length) runtime.onFire(it.id);
+                    /* the machine takes the tap when it has a step for the look it is in */
+                    if (runtime.onStep(it.id, it.flow, it.id)) return;
+                    /* a conditional tap wins: the plain action is the "otherwise" branch */
+                    if (it.rules?.length && onRules(it)) return;
                     if (act) runAction(act);
                   }
                 : undefined;
@@ -806,9 +1115,14 @@ function Screen({
                 widths={widths}
                 railAnimating={railMotion?.items.has(it.id)}
                 onTap={tap}
-                onAction={onAction}
+                /* runAction, not go: a part inside a container opens an overlay on this page
+                   exactly as a part on the screen does */
+                onAction={runAction}
                 onFlip={onFlip}
                 states={runtime}
+                scrollRt={scrollRt}
+                looks={looked}
+                onRules={onRules}
                 onSlot={
                   slotActions || navKind
                     ? (slot, animate) => {
@@ -820,12 +1134,16 @@ function Screen({
                           onValue(`fold:${it.id}`, shown.barFolded ? 0 : 1);
                           return;
                         }
-                        if (slotOf(slot)?.length) runtime.onFire(`${it.id}:${slot}`);
+                        /* a destination's own machine: the tab that changes what it says when tapped */
+                        if (flowOf(slot) && runtime.onStep(`${it.id}:${slot}`, flowOf(slot), null)) return;
                         if (navKind && slot.startsWith("tab:")) {
                           onValue(navKey, a ? -1 : Number(slot.slice(4)));
                           if (a) onValue(`${navKey}:opened:${a.to}`, Number(slot.slice(4)));
                         }
                         if (modalIds.has(it.id)) closeRails(animate);
+                        /* a bar can be gated as a whole — "not enough stamina" — before the
+                           destination's own action runs */
+                        if (it.rules?.length && onRules(it)) return;
                         if (a) runAction(a);
                       }
                     : undefined
@@ -835,9 +1153,7 @@ function Screen({
                   it.kind === "bottomNav" && it.barFolded !== undefined
                     ? { right: 0, top: 0, bottom: 0, width: 44 }
                     : it.kind === "navRail" && isWideRail(it)
-                      ? it.railFolded
-                        ? { left: 4, top: 4, width: 48, height: 48, borderRadius: 24 }
-                        : { left: railMetrics(it).headerLeft, top: RAIL_TOP, width: 48, height: 48, borderRadius: 24 }
+                      ? { left: railMetrics(it).headerLeft, top: railMetrics(it).headerTop, width: 48, height: 48, borderRadius: 24 }
                       : undefined
                 }
                 onNavToggle={
@@ -901,23 +1217,73 @@ export function Preview({
   const [anim, setAnim] = useState<Anim>({ t: "none", back: false });
   const theme = normalizeTheme(doc.theme);
   const spring = theme.motion === "expressive";
+  const still = useReducedMotion();
   const [scale, setScale] = useState(1);
   const [flipped, setFlipped] = useState<Set<string>>(() => new Set());
   const [values, setValues] = useState<Record<string, number>>({});
   /* when each part's own state rules were set off, and a clock that runs while any
      cooldown is counting down */
-  const [fired, setFired] = useState<Record<string, number>>({});
+  const [at, setAt] = useState<MachineAt>({});
+  /** the look a step latched onto a part, which stays until another step changes it */
+  const [pinned, setPinned] = useState<Record<string, Partial<Item>>>({});
   const [now, setNow] = useState(() => Date.now());
+  /* how much faster than real time the preview runs: 1 is ordinary, and the control in the bar
+     raises it so a ten-minute wait can be watched in seconds */
+  const [speed, setSpeed] = useState(1);
+  const speedRef = useRef(1);
+  speedRef.current = speed;
+  const nowRef = useRef(now);
+  nowRef.current = now;
+  const lastTick = useRef(Date.now());
+  /* whether any part in the document is waiting on a clock, so the ticker knows to run at all */
+  const timed = useMemo(() => hasTimedRules(itemsOf(doc.groups)) || hasTimedSteps(itemsOf(doc.groups)), [doc.groups]);
+  const timedRef = useRef(timed);
+  timedRef.current = timed;
   /* the button the visitor touched last: it reads as the screen's current choice */
   const [activeId, setActiveId] = useState<string | null>(null);
-  /* the in-page dialog this screen has open, if any */
-  const [openDialogId, setOpenDialogId] = useState<string | null>(null);
+  /* the in-page overlay each screen has open, keyed by the screen that owns it: two screens can
+     each hold a dialog of their own, and stepping away and back finds each one as it was left */
+  const [dialogs, setDialogs] = useState<Record<string, string | null>>({});
+  /* the overlays each screen has open, keyed the same way: a dialog belongs to the screen that
+     popped it, so it is still open when the visitor comes back to that screen */
+  const [trail, setTrail] = useState<LayerTrail>({});
+  const screenId = stack[stack.length - 1]?.id ?? frames[0]?.id ?? "";
+  /* the screen the layer setters write to, kept in a ref so the callbacks around them stay stable */
+  const hereRef = useRef(screenId);
+  hereRef.current = screenId;
+  /* the overlays of the screen on show, oldest first */
+  const layers = layersIn(trail, screenId);
+  const setLayers = useCallback((next: OverlayLayer[] | ((cur: OverlayLayer[]) => OverlayLayer[])) => {
+    setTrail((t) => {
+      const cur = layersIn(t, hereRef.current);
+      return withLayers(t, hereRef.current, typeof next === "function" ? next(cur) : next);
+    });
+  }, []);
+  /* what the variables hold: the preview opens on the values the author set, and every rule
+     that writes one changes what the screens after it show */
+  const [vars, setVars] = useState<Record<string, VarValue>>(() => initialVars(doc.vars));
+  const varsRef = useRef(vars);
+  varsRef.current = vars;
+  const declared = useMemo(() => doc.vars ?? [], [doc.vars]);
   const [peek, setPeek] = useState<Peek | null>(null);
   const stackRef = useRef(stack);
   stackRef.current = stack;
   const peekRef = useRef(peek);
   peekRef.current = peek;
+  const layerRef = useRef(layers);
+  layerRef.current = layers;
+  /* the box of the top overlay: it takes the keyboard while it is up */
+  const layerFocus = useRef<HTMLDivElement | null>(null);
   const swiped = useRef(false);
+  /* the scrolling container the finger went down on, until it lets go */
+  const scrollArmed = useRef<{ id: string; pointer: number } | null>(null);
+
+  useEffect(() => {
+    if (!layers.length) return;
+    const el = layerFocus.current;
+    if (!el || el.contains(document.activeElement)) return;
+    el.focus();
+  }, [layers]);
 
   const flip = (id: string) =>
     setFlipped((s) => {
@@ -927,19 +1293,37 @@ export function Preview({
       return n;
     });
 
-  /** sets a part's own rules off; a second tap starts a cooldown over */
-  const fire = (id: string) => setFired((f) => ({ ...f, [id]: Date.now() }));
-  /* a cooldown is a clock, so the countdown ticks while any rule is running */
+  /* The preview's own clock: the wall clock, speeded up by the cheat control. Every countdown —
+     a tap's cooldown, and a rule that waits ten minutes — reads this one, so "skip the wait" is a
+     single number rather than something every document has to wire up for itself. */
   useEffect(() => {
-    if (Object.keys(fired).length === 0) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    if (Object.keys(at).length === 0 && !timedRef.current) return;
+    lastTick.current = Date.now();
+    const timer = window.setInterval(() => {
+      const real = Date.now();
+      const step = real - lastTick.current;
+      lastTick.current = real;
+      setNow((prev) => prev + step * speedRef.current);
+    }, 250);
     return () => window.clearInterval(timer);
-  }, [fired]);
+  }, [at, timed]);
 
-  /* moving to another screen leaves the last screen's dialog behind */
-  useEffect(() => setOpenDialogId(null), [stack[stack.length - 1]?.id]);
   const top = stack[stack.length - 1];
   const current = frames.find((f) => f.id === top?.id) ?? frames[0];
+  /* A screen the document no longer holds takes the overlays it left behind with it. Everything
+     else is remembered: leaving a screen is a step aside, not a reason to forget what was open. */
+  const aliveFrames = frames.map((f) => f.id).join("|");
+  useEffect(() => {
+    const alive = new Set(aliveFrames.split("|"));
+    setDialogs((m) => forgetScreens(m, alive));
+    setTrail((t) => forgetScreens(t, alive));
+  }, [aliveFrames]);
+  /* What the tester watches here: the variables of the pages in play — this screen and whatever is
+     popped over it — plus the shared ones. Another page's variables are not on screen, and a long
+     list of them is noise; a page with none of its own falls back to the whole list, so nothing is
+     ever out of reach. */
+  const onShow = varsInFrames(declared, [current?.id ?? "", ...layers.map((l) => l.frameId)]);
+  const watched = onShow.length ? onShow : declared;
   const peekFrame = peek ? frames.find((f) => f.id === peek.frameId) : undefined;
   const { w: frameW, h: frameH } = current ? frameSizeOf(current) : { w: PHONE_W, h: PHONE_H };
   const phone = current ? isPhoneFrame(current) : true;
@@ -1015,14 +1399,34 @@ export function Preview({
     [frames],
   );
 
+  /** closes the top overlay, if the level it was opened with allows it */
+  const closeLayer = useCallback(() => {
+    setLayers((ls) => {
+      const next = popLayer(ls);
+      /* the top layer refused the back key: a system layer has to be dealt with */
+      if (next.length === ls.length) return ls;
+      const top = ls[ls.length - 1];
+      if (top) setAnim({ t: top.t, back: true, spring });
+      return next;
+    });
+  }, [spring, setLayers]);
+
   const back = useCallback(() => {
+    if (peekRef.current) return;
+    /* an overlay is in front of the screen stack: the back key closes it first */
+    const where = backTarget(layerRef.current);
+    if (where === "blocked") return;
+    if (where === "layer") {
+      closeLayer();
+      return;
+    }
     const s = stackRef.current;
-    if (s.length < 2 || peekRef.current) return;
+    if (s.length < 2) return;
     const from = s[s.length - 1];
     const to = s[s.length - 2];
     setAnim({ t: sameSize(from.id, to.id) ? from.t : "fade", back: true, spring });
     setStack(s.slice(0, -1));
-  }, [spring, sameSize]);
+  }, [spring, sameSize, closeLayer]);
 
   const go = useCallback(
     (a: Action) => {
@@ -1031,28 +1435,145 @@ export function Preview({
         back();
         return;
       }
-      if (!frames.some((f) => f.id === a.to)) return;
+      const target = frames.find((f) => f.id === a.to);
+      if (!target) return;
+      /* An overlay page opens over the screen that tapped it rather than replacing it, and
+         the level it carries decides what happens to the layers already open. */
+      if (isOverlayFrame(target)) {
+        const level = overlayLevelOfFrame(target);
+        /* an in-page overlay on this screen steps aside when the level clears popovers: two
+           overlays at once would leave the back key with no single answer */
+        if (overlayRuleOf(level).clears !== "none") {
+          const here = stackRef.current[stackRef.current.length - 1]?.id;
+          if (here) setDialogs((m) => (m[here] ? { ...m, [here]: null } : m));
+        }
+        setLayers((ls) => pushLayer(ls, { frameId: target.id, level, t: a.transition }));
+        return;
+      }
       const s = stackRef.current;
       const t = sameSize(s[s.length - 1].id, a.to) ? a.transition : "fade";
       setAnim({ t, back: false, spring });
       setStack((cur) => [...cur, { id: a.to, t }]);
     },
-    [frames, back, spring, sameSize],
+    [frames, back, spring, sameSize, setLayers],
+  );
+
+  /**
+   * A part's conditional rules: the first one whose conditions hold takes the tap. Runs of
+   * `goto`, `back` and `close` reuse the very paths a plain tap uses, so an overlay page
+   * opened by a rule behaves exactly like one opened by a button.
+   */
+  /** Runs one rule action, down the very paths a tap takes, so a rule that waits lands exactly
+   *  where the same rule would land if the visitor had tapped. `latched` marks the actions a step
+   *  carries out: a look one of them asks for is a change the machine makes once, not a look that
+   *  holds while a condition does, so it is recorded on the part rather than read off the rules. */
+  const runRuleAction = useCallback(
+    (a: RuleAction, latched = false, owner: string | null = null) => {
+      if (a.kind === "goto") {
+        go({ to: a.to, transition: a.transition });
+        return;
+      }
+      if (a.kind === "back") {
+        back();
+        return;
+      }
+      if (a.kind === "close") {
+        if (layerRef.current.length) closeLayer();
+        else {
+          const here = stackRef.current[stackRef.current.length - 1]?.id;
+          if (here) setDialogs((m) => (m[here] ? { ...m, [here]: null } : m));
+        }
+        return;
+      }
+      if (a.kind === "look") {
+        /* a rule's look is already on screen while its conditions hold: only a step latches one */
+        const target = a.target ?? owner;
+        if (!latched || !target) return;
+        const patch: Partial<Item> = {};
+        if (a.icon !== undefined) patch.icon = a.icon || null;
+        if (a.label !== undefined) patch.label = a.label;
+        if (a.color !== undefined) patch.color = a.color;
+        if (a.variant !== undefined) patch.variant = a.variant;
+        setPinned((m) => ({ ...m, [target]: { ...m[target], ...patch } }));
+        return;
+      }
+      const v = declared.find((d) => d.id === a.varId);
+      if (v) setVars((cur) => ({ ...cur, [a.varId]: writtenValue(v, a, cur[a.varId]) }));
+    },
+    [declared, go, back, closeLayer],
+  );
+
+  const runRules = useCallback(
+    (it: Item): boolean => {
+      const rule = firstRule(it.rules, varsRef.current, declared);
+      if (!rule) return false;
+      const a = rule.do;
+      if (a.kind === "goto") {
+        go({ to: a.to, transition: a.transition });
+        return true;
+      }
+      if (a.kind === "back") {
+        back();
+        return true;
+      }
+      if (a.kind === "close") {
+        /* An explicit close puts away whatever overlay the part stands in: the top layer for a
+           part on a page, or the screen's own in-page overlay for a part inside one. */
+        if (layerRef.current.length) closeLayer();
+        else {
+          const here = stackRef.current[stackRef.current.length - 1]?.id;
+          if (here) setDialogs((m) => (m[here] ? { ...m, [here]: null } : m));
+        }
+        return true;
+      }
+      /* a look is already on screen while its conditions hold: the tap only says this branch is the
+         one that wins, so the part's plain action — the "otherwise" branch — stays out of it */
+      if (a.kind === "look") return true;
+      /* a write changes what every screen after it reads, and the screens repaint on their own */
+      const v = declared.find((d) => d.id === a.varId);
+      if (v) setVars((cur) => ({ ...cur, [a.varId]: writtenValue(v, a, cur[a.varId]) }));
+      return true;
+    },
+    [declared, go, back, closeLayer],
+  );
+
+  /** Takes one step of a part's machine: the part lands in the look the step names, and whatever
+   *  else the step asks for happens on the way — a jump, a value written, another part's look. */
+  const take = useCallback(
+    (key: string, owner: string | null, step: PartStep) => {
+      setAt((m) => ({ ...m, [key]: { look: step.to, since: nowRef.current } }));
+      for (const a of step.do ?? []) runRuleAction(a, true, owner);
+    },
+    [runRuleAction],
+  );
+  /** Takes the step a tap calls for, when the machine has one for the look the part is in. */
+  const stepOnTap = useCallback(
+    (key: string, flow: PartFlow | undefined, owner: string | null) => {
+      const step = firstTapStep(flow, lookAt(at, key), values, declared);
+      if (!step) return false;
+      take(key, owner, step);
+      return true;
+    },
+    [at, values, declared, take],
   );
 
   const [picker, setPicker] = useState(false);
+  const [varsOpen, setVarsOpen] = useState(false);
+  const [speedOpen, setSpeedOpen] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        /* an open menu is the thing Escape dismisses */
+        /* an open menu is the thing Escape dismisses, then the top overlay, then the preview */
         if (picker) setPicker(false);
+        else if (speedOpen) setSpeedOpen(false);
+        else if (backTarget(layerRef.current) === "layer") closeLayer();
         else onClose();
       }
       if (e.key === "Backspace" || e.key === "ArrowLeft") back();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [back, onClose, picker]);
+  }, [back, onClose, picker, speedOpen, closeLayer]);
   /* The control that opened the preview gets the keyboard back when it closes, whichever
    * screens were shown in between; a screen's own restore only covers its modal rail. Read
    * during the first render, before a screen's effect moves focus onto its rail. */
@@ -1086,7 +1607,8 @@ export function Preview({
   } | null>(null);
 
   const onScreenPointerDown = (e: React.PointerEvent) => {
-    if (peekRef.current || e.button !== 0) return;
+    /* swiping a screen away while an overlay is up would take the overlay with it */
+    if (peekRef.current || layerRef.current.length > 0 || e.button !== 0) return;
     gesture.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, phase: "idle", size: frameW, last: 0, lastT: e.timeStamp, vel: 0 };
     swiped.current = false;
   };
@@ -1188,7 +1710,9 @@ export function Preview({
     return null;
   }
 
-  const screenProps = {
+  /* A screen's own state, so the current screen and every overlay page each get their own
+     in-page overlay slot instead of sharing one. */
+  const screenPropsFor = (f: Frame) => ({
     widths,
     p,
     onAction: go,
@@ -1196,9 +1720,38 @@ export function Preview({
     onFlip: flip,
     values,
     onValue: (id: string, v: number) => setValues((m) => ({ ...m, [id]: v })),
-    runtime: { fired, now, onFire: fire, activeId, onActivate: setActiveId },
-    dialog: { openId: openDialogId, onOpen: setOpenDialogId },
-  };
+    runtime: { at, pinned, now, onStep: stepOnTap, take, activeId, onActivate: setActiveId },
+    vars: { values: vars, declared },
+    onRules: runRules,
+    onRule: runRuleAction,
+    /* a container's scroll is a runtime value like a slider's position: what the visitor moved it
+       to is remembered per part, and the screen's own swipe gives way to a drag a container claims */
+    scrollRt: {
+      at: (id: string) => ({ x: values[`scroll:x:${id}`], y: values[`scroll:y:${id}`] }),
+      move: (id: string, axis: "x" | "y", value: number) => setValues((m) => ({ ...m, [`scroll:${axis}:${id}`]: value })),
+      claim: () => {
+        gesture.current = null;
+      },
+      /* the innermost scrolling container under the finger takes the press; the ones around it
+         leave it alone, so a list inside a list does not move both at once */
+      arm: (id: string, pointerId: number) => {
+        const cur = scrollArmed.current;
+        if (cur && cur.pointer === pointerId) return cur.id === id;
+        scrollArmed.current = { id, pointer: pointerId };
+        return true;
+      },
+      release: (id: string) => {
+        if (scrollArmed.current?.id === id) scrollArmed.current = null;
+      },
+    },
+    dialog: {
+      openId: dialogs[f.id] ?? null,
+      onOpen: (id: string | null) => setDialogs((m) => ({ ...m, [f.id]: id })),
+    },
+  });
+  /* the top layer's rules decide whether the screen under it is still live */
+  const topLayer = layers[layers.length - 1];
+  const behind = topLayer ? overlayRuleOf(topLayer.level) : null;
 
   const barBtn: React.CSSProperties = {
     height: 40,
@@ -1217,6 +1770,8 @@ export function Preview({
     width: wide ? "100%" : undefined,
     minWidth: 0,
   };
+  /* the back key closes the top overlay first, so the button is live for that too */
+  const canBack = stack.length >= 2 || backTarget(layers) === "layer";
   const label: React.CSSProperties = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 };
 
   return (
@@ -1300,7 +1855,7 @@ export function Preview({
                   exit="exit"
                   style={{ position: "absolute", inset: 0 }}
                 >
-                  <Screen frame={current} groups={groups} {...screenProps} />
+                  <Screen frame={current} groups={groups} {...screenPropsFor(current)} active={!behind?.inertBehind} />
                 </motion.div>
               </AnimatePresence>
             </motion.div>
@@ -1315,9 +1870,92 @@ export function Preview({
                   pointerEvents: "none",
                 }}
               >
-                <Screen {...screenProps} active={false} frame={peekFrame} groups={peekGroups} />
+                <Screen {...screenPropsFor(peekFrame)} active={false} frame={peekFrame} groups={peekGroups} />
               </motion.div>
             )}
+            {/* The overlays opened over this screen, oldest at the bottom. Each one is a page
+              * of its own, so the same bag opens from any screen without being copied, and it
+              * keeps its own size: a dialog floats at its own box, a full-screen layer covers
+              * the phone on its own. */}
+            <AnimatePresence initial={false}>
+              {layers.map((l, i) => {
+                const lf = frames.find((f) => f.id === l.frameId);
+                if (!lf) return null;
+                const rule = overlayRuleOf(l.level);
+                const { w, h } = frameSizeOf(lf);
+                const isTop = i === layers.length - 1;
+                /* closing a layer also drops anything opened on top of it */
+                const close = () => setLayers((ls) => ls.slice(0, i));
+                return (
+                  <motion.div
+                    key={l.frameId}
+                    data-overlay={l.frameId}
+                    data-overlay-level={l.level}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: still ? 0 : 0.18, ease: EASE }}
+                    style={{ position: "absolute", inset: 0, zIndex: 10 + i }}
+                  >
+                    {(rule.scrim > 0 || rule.dismissOnOutside) && (
+                      <button
+                        data-overlay-scrim={l.level}
+                        aria-label={t("closeOverlay", lang)}
+                        tabIndex={-1}
+                        onClick={close}
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          border: 0,
+                          padding: 0,
+                          /* a popover has no dim, so its catcher is invisible: the tap it
+                             swallows only puts the bubble away */
+                          background: rule.scrim > 0 ? `rgba(0,0,0,${rule.scrim})` : "transparent",
+                        }}
+                      />
+                    )}
+                    <div
+                      ref={isTop && rule.focusTrap ? layerFocus : undefined}
+                      tabIndex={isTop && rule.focusTrap ? -1 : undefined}
+                      inert={!isTop || undefined}
+                      role={rule.inertBehind ? "dialog" : undefined}
+                      aria-modal={rule.inertBehind || undefined}
+                      aria-label={lf.name || t("roleOverlay", lang)}
+                      style={{
+                        position: "absolute",
+                        left: (frameW - w) / 2,
+                        top: (frameH - h) / 2,
+                        width: w,
+                        height: h,
+                        /* A floating layer draws its parts and nothing else: its page is the stage the
+                           dialog was laid out on, so a background or a rounded corner there would be a
+                           second screen over the first one. What fills the screen is the screen. */
+                        borderRadius: rule.float ? undefined : frameRadius(lf),
+                        overflow: "hidden",
+                        background: rule.float ? "transparent" : p[lf.bg ?? "surface"],
+                        boxShadow: !rule.float && rule.inertBehind ? "0 20px 60px rgba(0,0,0,0.28)" : undefined,
+                        outline: "none",
+                      }}
+                    >
+                      {/* The stage's own empty area is the dimmed screen the visitor sees, so a tap
+                          there puts the layer away exactly as a tap on the scrim does. Without this a
+                          page-sized dialog would cover the scrim and stop answering taps. */}
+                      {rule.float && (rule.scrim > 0 || rule.dismissOnOutside) && (
+                        <button
+                          data-overlay-outside={l.level}
+                          aria-label={t("closeOverlay", lang)}
+                          tabIndex={-1}
+                          onClick={close}
+                          style={{ position: "absolute", inset: 0, border: 0, padding: 0, background: "transparent" }}
+                        />
+                      )}
+                      {/* a floating layer shows the screen behind it: its page paints nothing */}
+                      <Screen frame={lf} groups={groupsFor(lf)} {...screenPropsFor(lf)} active={isTop} bare={rule.float} />
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
           </motion.div>
         </motion.div>
       </div>
@@ -1346,13 +1984,13 @@ export function Preview({
         >
           <button
             onClick={back}
-            disabled={stack.length < 2}
+            disabled={!canBack}
             title={t("back", lang)}
             className="m3-press"
             style={{
               ...barBtn,
-              color: stack.length < 2 ? p.outlineVariant : p.onSurfaceVariant,
-              cursor: stack.length < 2 ? "default" : "pointer",
+              color: canBack ? p.onSurfaceVariant : p.outlineVariant,
+              cursor: canBack ? "pointer" : "default",
             }}
           >
             <Icon name="arrow_back" size={20} />
@@ -1442,6 +2080,121 @@ export function Preview({
               )}
             </AnimatePresence>
           </div>
+          {/* The cheat: the preview's own clock, speeded up. Every countdown reads it — a tap's
+              cooldown and a rule that waits ten minutes alike — so a long wait can be watched in
+              seconds without the document carrying a skip button of its own. */}
+          <div style={{ position: "relative", minWidth: 0 }}>
+            <button
+              onClick={() => {
+                setSpeedOpen((v) => !v);
+                setPicker(false);
+              }}
+              title={t("timeSpeedHint", lang)}
+              aria-expanded={speedOpen}
+              className="m3-press"
+              style={{ ...barBtn, color: speed > 1 ? p.primary : p.onSurfaceVariant }}
+            >
+              <Icon name="speed" size={20} />
+              <span style={label}>{speed > 1 ? `×${speed}` : t("timeSpeed", lang)}</span>
+            </button>
+            <AnimatePresence>
+              {speedOpen && (
+                <motion.div
+                  role="menu"
+                  initial={{ opacity: 0, y: 6, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 6, scale: 0.96 }}
+                  transition={{ duration: 0.16, ease: EASE }}
+                  style={{
+                    position: "absolute",
+                    ...(wide ? { right: "calc(100% + 14px)", bottom: 0 } : { bottom: 48, left: 0 }),
+                    padding: 6,
+                    borderRadius: 18,
+                    background: p.surfaceContainerLow,
+                    boxShadow: "0 6px 20px rgba(0,0,0,0.16), 0 0 0 1px rgba(0,0,0,0.04)",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 2,
+                    transformOrigin: wide ? "bottom right" : "bottom left",
+                  }}
+                >
+                  {TIME_SPEEDS.map((v) => (
+                    <button
+                      key={v}
+                      role="menuitemradio"
+                      aria-checked={speed === v}
+                      onClick={() => {
+                        setSpeed(v);
+                        setSpeedOpen(false);
+                      }}
+                      className="m3-press"
+                      style={{ height: 40, padding: "0 14px 0 10px", borderRadius: 12, border: "none", background: speed === v ? p.secondaryContainer : "transparent", color: speed === v ? p.onSecondaryContainer : p.onSurface, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 10, whiteSpace: "nowrap", textAlign: "left" }}
+                    >
+                      <span style={{ width: 18, display: "inline-flex" }}>{speed === v ? <Icon name="check" size={18} /> : null}</span>
+                      ×{v}
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+          {/* what the variables hold right now: a prototype is only as good as the state it
+              carries, and this is the one place the author can watch it change */}
+          {watched.length > 0 && (
+            <div style={{ position: "relative", minWidth: 0 }}>
+              <button
+                onClick={() => setVarsOpen((v) => !v)}
+                title={t("variables", lang)}
+                aria-expanded={varsOpen}
+                className="m3-press"
+                style={{ ...barBtn, color: p.onSurfaceVariant, maxWidth: wide ? undefined : 120 }}
+              >
+                <Icon name="data_object" size={20} />
+                <span style={label}>{t("variables", lang)}</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: p.primary }}>{declared.length}</span>
+              </button>
+              <AnimatePresence>
+                {varsOpen && (
+                  <motion.div
+                    role="menu"
+                    initial={{ opacity: 0, y: 6, scale: 0.96 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 6, scale: 0.96 }}
+                    transition={{ duration: 0.16, ease: EASE }}
+                    style={{
+                      position: "absolute",
+                      ...(wide ? { right: "calc(100% + 14px)", bottom: 0 } : { bottom: 48, left: "50%", transform: "translateX(-50%)" }),
+                      minWidth: 220,
+                      maxHeight: "50vh",
+                      overflowY: "auto",
+                      padding: 10,
+                      borderRadius: 18,
+                      background: p.surfaceContainerLow,
+                      boxShadow: "0 6px 20px rgba(0,0,0,0.16), 0 0 0 1px rgba(0,0,0,0.04)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 6,
+                    }}
+                  >
+                    {watched.map((v) => (
+                      <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: p.onSurfaceVariant }}>{`{${v.name}}`}</span>
+                        <span style={{ fontWeight: 700, color: p.onSurface }}>{String(vars[v.id] ?? "")}</span>
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => setVars(initialVars(declared))}
+                      className="m3-press"
+                      style={{ height: 36, borderRadius: 12, border: "none", background: p.secondaryContainer, color: p.onSecondaryContainer, fontSize: 12, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                    >
+                      <Icon name="restart_alt" size={18} />
+                      {t("resetVars", lang)}
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
           <button onClick={onClose} title={t("close", lang)} className="m3-press" style={{ ...barBtn, color: p.onSurfaceVariant }}>
             <Icon name="close" size={20} />
             <span style={label}>{t("closeBtn", lang)}</span>

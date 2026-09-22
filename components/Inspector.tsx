@@ -9,7 +9,6 @@ import {
   FramePreset,
   HALF_W,
   Item,
-  ItemState,
   KIND_SPEC,
   PHONE_H,
   PHONE_W,
@@ -19,6 +18,7 @@ import {
   SWIPE_DIRS,
   SwipeDir,
   BUTTON_SHAPES,
+  roundByNature,
   ButtonShape,
   SHAPED,
   TAPPABLE,
@@ -26,8 +26,7 @@ import {
   Transition,
   VARIANTS,
   Variant,
-  STATE_EFFECTS,
-  StateEffect,
+  ROUND_SHAPES,
   actionSlotsOf,
   isVariant,
   uid,
@@ -52,6 +51,9 @@ import {
   cardTextColorOf,
   CARD_IMAGE_MIN,
   frameSizeOf,
+  scrollRange,
+  sizeOf,
+  type ScrollAxis,
   halfWidth,
   isPhoneFrame,
   isWideRail,
@@ -67,14 +69,53 @@ import {
   scaleR,
   Place,
   AlignKind,
+  CustomPart,
+  FRAME_ROLES,
+  OVERLAY_LEVELS,
+  OVERLAY_LEVEL_ICONS,
+  DEFAULT_OVERLAY_LEVEL,
+  FrameRole,
+  OverlayLevel,
+  isOverlayFrame,
+  isOverlayItem,
+  overlayLevelOf,
+  overlayLevelOfFrame,
+  /* variables and the conditional taps that read them */
+  CONDITION_OPS,
+  TAB_STYLES,
+  tabPanelsPatch,
+  needsTabPanels,
+  tabStyleOf,
+  type TabStyle,
+  CONDITION_SYMBOLS,
+  overlayRuleOf,
+  NUMERIC_OPS,
+  RULE_ACTIONS,
+  isTimedRule,
+  /* the state machine a part runs, and the flow the inspector draws it as */
+  START_LOOK,
+  lookItem,
+  stepsFrom,
+  type PartFlow,
+  type PartLook,
+  type PartStep,
+  VAR_KINDS,
+  varInitial,
+  type Condition,
+  type ConditionOp,
+  type ItemRule,
+  type RuleAction,
+  type Var,
+  type VarValue,
 } from "@/lib/tokens";
 import { IconPicker } from "./IconPicker";
 import { Popover } from "./Menus";
-import { Icon } from "./M3Node";
-import { ButtonRun, CardLayoutPicker, CornerIcon, Field, IconBtn, ItemColorChips, Section, Segmented, SizePresets, Slider, TextTokenChips, TidyButton, TidyState, Toggle, TokenChips } from "./ui";
+import { Icon, M3Static } from "./M3Node";
+import { ButtonRun, CardLayoutPicker, CornerIcon, CustomColorDisc, Field, IconBtn, ItemColorChips, Pick, Section, Segmented, SizePresets, Slider, TextTokenChips, Toggle, TokenChips } from "./ui";
 import { AiWriteBtn } from "./AiPanel";
 import { popHistory } from "@/lib/ai";
-import { KIND_TEXT, Lang, SWIPE_TEXT, TRANSITION_TEXT, UIKey, t, useLang } from "@/lib/i18n";
+import { KIND_TEXT, Lang, SWIPE_TEXT, TRANSITION_TEXT, UIKey, overlayLevelText, t, useLang } from "@/lib/i18n";
+import type { DialogRef } from "@/lib/pages";
 
 /** A text field for a web address: what is typed stays in the box, and only a complete
  *  http(s) address (or an emptied box) reaches the part. */
@@ -453,9 +494,6 @@ export function FrameInspector({
   prompt,
   onSaveImage,
   frames,
-  tidy,
-  onTidy,
-  onPlace,
   ai,
   onSize,
 }: {
@@ -468,11 +506,6 @@ export function FrameInspector({
   prompt: string;
   onSaveImage: () => Promise<void>;
   frames: Frame[];
-  /** what the tidy button offers: tidy the screen, undo the last tidy, or nothing (already tidy) */
-  tidy: TidyState;
-  onTidy: () => void;
-  /** sets where Tidy puts the body of this screen, and tidies */
-  onPlace: (place: Place) => void;
   ai: AiHooks;
   onSize: (preset: FramePreset) => void;
 }) {
@@ -480,6 +513,8 @@ export function FrameInspector({
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [swipeDir, setSwipeDir] = useState<SwipeDir>("left");
+  /* an overlay page: its level rules only show once it is one */
+  const overlay = isOverlayFrame(frame);
   useEffect(() => {
     if (!copied) return;
     const t = setTimeout(() => setCopied(false), 1400);
@@ -554,14 +589,40 @@ export function FrameInspector({
       <Section id="frame-name" icon="label" title={t("name", lang)} p={p}>
         <Field value={frame.name} onChange={(name) => onChange({ name })} placeholder={t("screenName", lang)} p={p} icon={isPhoneFrame(frame) ? "smartphone" : "desktop_windows"} />
       </Section>
+      {/* what this page is: somewhere the visitor goes, or something popped over a screen */}
+      <Section id="frame-role" icon="picture_in_picture_alt" title={t("pageRole", lang)} p={p}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <Segmented<FrameRole>
+            options={FRAME_ROLES.map((r2) => ({ key: r2.key, icon: r2.icon, title: r2.key === "overlay" ? t("roleOverlay", lang) : t("roleScreen", lang) }))}
+            value={frame.role ?? "screen"}
+            onChange={(role) => onChange({ role: role === "screen" ? undefined : role })}
+            p={p}
+            height={36}
+          />
+          {overlay && (
+            <>
+              <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("overlayLevel", lang)}</div>
+              <Segmented<OverlayLevel>
+                options={OVERLAY_LEVELS.map((l) => ({ key: l, icon: OVERLAY_LEVEL_ICONS[l], title: overlayLevelText(l, lang) }))}
+                value={overlayLevelOfFrame(frame)}
+                onChange={(level) => onChange({ level })}
+                p={p}
+                height={36}
+              />
+              <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("overlayHint", lang)}</div>
+            </>
+          )}
+        </div>
+      </Section>
       <Section id="frame-note" icon="notes" title={t("description", lang)} p={p}>
         <AiField ai={ai} history={frame.noteHistory} onRestore={() => onChange(popHistory(frame.note, frame.noteHistory, "note", "noteHistory"))} p={p} value={frame.note ?? ""} onChange={(note) => onChange({ note: note || undefined })} placeholder={t("screenDescription", lang)} />
       </Section>
       <Section id="frame-bg" icon="format_color_fill" title={t("background", lang)} p={p}>
-        <TokenChips value={frame.bg ?? "surface"} onChange={(bg) => onChange({ bg })} p={p} />
-      </Section>
-      <Section id="frame-tidy" icon="align_space_even" title={t("tidy", lang)} p={p}>
-        <TidyButton state={tidy} onClick={onTidy} p={p} place={frame.place} onPlace={onPlace} />
+        {overlay && overlayRuleOf(overlayLevelOfFrame(frame)).float ? (
+          <div style={{ fontSize: 11, lineHeight: 1.6, color: p.outline }}>{t("overlayNoBg", lang)}</div>
+        ) : (
+          <TokenChips value={frame.bg ?? "surface"} onChange={(bg) => onChange({ bg })} p={p} />
+        )}
       </Section>
       {frames.length > 1 && (
         <Section id="frame-swipe" icon="swipe" title={t("swipeTo", lang)} p={p}>
@@ -727,10 +788,13 @@ export function Inspector({
   onAlign,
   onContainerize,
   onUnlink,
-  onDialog,
+  dialog,
   onSaveComposite,
   childCount = 0,
   inContainer = false,
+  vars = [],
+  widths = {},
+  lookTargets = [],
 }: {
   /** the AI button beside the behavior field */
   ai: AiHooks;
@@ -757,14 +821,20 @@ export function Inspector({
   onAdopt?: () => void;
   /** takes the selection back out of the container that holds it */
   onUnlink?: () => void;
-  /** makes, or finds, the dialog screen a tap pops over the page */
-  onDialog?: () => void;
+  /** what a tap can open as a dialog, and what it can be made of */
+  dialog?: DialogChoices;
   /** keeps this part and everything it holds as a composite part */
   onSaveComposite?: () => void;
   /** how many parts the selected container holds */
   childCount?: number;
   /** the selected part sits inside a container */
   inContainer?: boolean;
+  /** the variables a condition can test, and a rule can write */
+  vars?: Var[];
+  /** measured widths, so a scrolling container's content measures the way the canvas measures it */
+  widths?: Record<string, number>;
+  /** the other parts on this page, so a rule can aim a look at one of them */
+  lookTargets?: { id: string; name: string }[];
 }) {
   const lang = useLang();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -855,6 +925,9 @@ export function Inspector({
 
   const spec = KIND_SPEC[item.kind];
   const frameSize = frame ? frameSizeOf(frame) : { w: PHONE_W, h: PHONE_H };
+  /* how much room a scrolling container has to move in: its content, and its own viewport */
+  const scroll = item.scroll ? scrollRange(item, widths) : { x: 0, y: 0 };
+  const scrollView = sizeOf(item, widths);
   const mapWidthPreset = (v: number) =>
     v === PHONE_W ? frameSize.w : v === CONTENT_W ? contentWidth(frameSize.w) : v === HALF_W ? halfWidth(frameSize.w) : v;
   const mapHeightPreset = (v: number) => (v === PHONE_H ? frameSize.h : v === PHONE_H / 2 ? frameSize.h / 2 : v);
@@ -918,7 +991,17 @@ export function Inspector({
   const tabs: NavTab[] = item.tabs ?? [];
   const variants = spec.hasVariant ? variantsOf(item.kind) : [];
 
-  const setTabCount = (n: number) => onChange(tabCountPatch(item, n, defaultTabsFor(item.kind)));
+  const setTabCount = (n: number, select?: number) => {
+    const patch = tabCountPatch(item, n, defaultTabsFor(item.kind));
+    /* a tab row carries one panel per tab, so every change to the list of tabs syncs them:
+     * a row that still has no panels gets its whole set here, and a new tab brings its
+     * own panel along instead of leaving the row short of one */
+    const withPanels = item.kind === "tabs" ? tabPanelsPatch({ ...item, ...patch }) : null;
+    const merged = withPanels ? { ...patch, ...withPanels } : patch;
+    /* a tab that has just been added comes forward, so the panel that arrived with it is
+     * the one on the canvas rather than one the author has to go looking for */
+    onChange(select === undefined ? merged : { ...merged, selected: select });
+  };
   /** entries of a tab row have no icon; toolbar buttons have no label */
   const tabIcons = item.kind !== "tabs" && item.kind !== "select";
   const tabLabels = item.kind !== "toolbar";
@@ -1051,6 +1134,23 @@ export function Inspector({
 
       {spec.hasTabs && !editOn && (
         <Section id="tabs" icon={isSelect ? "list" : "view_column"} title={t(isSelect ? "options" : "tabs", lang)} p={p} onToggle={(open) => { if (!open && activeSlot?.key.startsWith("tab:")) setPickerOpen(false); }}>
+          {/* how the row reads, and the panels it switches between */}
+          {item.kind === "tabs" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("tabStyle", lang)}</div>
+              <Segmented<TabStyle>
+                options={TAB_STYLES.map((o) => ({ key: o.key, icon: o.icon, title: t(o.key === "buttons" ? "tabStyleButtons" : "tabStyleUnderline", lang) }))}
+                value={tabStyleOf(item)}
+                onChange={(tabStyle) => onChange({ tabStyle })}
+                p={p}
+                height={36}
+              />
+              {/* panels are made with the tabs themselves: there is nothing extra to press, so the
+                  section only explains how the panels work — and, while a row is still short of
+                  them, that adding a tab is what brings the missing ones in */}
+              <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t(needsTabPanels(item) ? "tabPanelsAuto" : "tabPanelsHint", lang)}</div>
+            </div>
+          )}
           {!growsFreely && (item.kind === "bottomNav" || item.kind === "navRail") ? (
             /* a navigation bar or rail takes exactly as many destinations as it is asked for */
             <Slider
@@ -1126,7 +1226,7 @@ export function Inspector({
           </div>
           {growsFreely && (
             <button
-              onClick={() => onChange({ tabs: [...tabs, { ...defaultTabsFor(item.kind)[tabs.length % defaultTabsFor(item.kind).length] }] })}
+              onClick={() => setTabCount(tabs.length + 1, item.kind === "tabs" ? tabs.length : undefined)}
               className="m3-press"
               style={{ marginTop: 8, height: 40, width: "100%", borderRadius: 20, border: `1px solid ${p.outline}`, background: "transparent", color: p.primary, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
             >
@@ -1304,25 +1404,33 @@ export function Inspector({
         </Section>
       )}
 
-      {SHAPED.includes(item.kind) && !editOn && (
-        <Section id="button-shape" icon="category" title={t("buttonShape", lang)} p={p}>
-          <Segmented<ButtonShape>
-            options={BUTTON_SHAPES.map((sh) => ({ key: sh.key, icon: sh.icon, title: t(`shape_${sh.key}` as UIKey, lang) }))}
-            value={item.shape ?? "default"}
-            onChange={(shape) =>
-              onChange(
-                shape === "round"
-                  ? { shape, size: item.kind === "iconButton" ? 48 : item.kind === "fab" ? 56 : H }
-                  : shape === "square"
-                    ? { shape }
-                    : { shape: undefined, ...(item.kind === "button" || item.kind === "extendedFab" ? { size: undefined } : undefined) },
-              )
-            }
-            p={p}
-          />
-          <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant }}>{t("buttonShapeHint", lang)}</div>
-        </Section>
-      )}
+      {SHAPED.includes(item.kind) && !editOn && (() => {
+        /* An icon button and a FAB are circles by nature, so the shapes they can take are the circle
+         * and the rounded square — the pill is a button's own. The switch also *shows* which one the
+         * part wears, so the round one never looks like it did nothing. */
+        const round = roundByNature(item.kind);
+        const shapes = round ? ROUND_SHAPES : BUTTON_SHAPES;
+        const value: ButtonShape = round ? (item.shape === "square" ? "square" : "round") : item.shape ?? "default";
+        return (
+          <Section id="button-shape" icon="category" title={t("buttonShape", lang)} p={p}>
+            <Segmented<ButtonShape>
+              options={shapes.map((sh) => ({ key: sh.key, icon: sh.icon, title: t(`shape_${sh.key}` as UIKey, lang) }))}
+              value={value}
+              onChange={(shape) =>
+                onChange(
+                  shape === "round"
+                    ? { shape, ...(round ? undefined : { size: H }) }
+                    : shape === "square"
+                      ? { shape }
+                      : { shape: undefined, ...(round ? undefined : { size: undefined }) },
+                )
+              }
+              p={p}
+            />
+            <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant }}>{t("buttonShapeHint", lang)}</div>
+          </Section>
+        );
+      })()}
 
       {/* a container's colour comes from its own colour control, so its fill row is gone */}
       {spec.hasFill && item.kind !== "box" && !editOn && (
@@ -1331,8 +1439,9 @@ export function Inspector({
             value={item.kind === "card" ? cardFillOf(item) : (item.fill ?? "surfaceContainerLow")}
             onChange={(fill) => onChange({ fill })}
             p={p}
-            none={item.kind === "card"}
-            noneOn={item.kind === "card" && !item.fill}
+            /* a card's fallback is its own tonal colour; a progress bar's track is simply not there */
+            none={item.kind === "card" || item.kind === "progressBar"}
+            noneOn={(item.kind === "card" || item.kind === "progressBar") && !item.fill}
             onNone={() => onChange({ fill: undefined })}
             noneColor={item.kind === "card" ? p[cardDefaultFillOf(item.variant)] : undefined}
             noneTextColor={item.kind === "card" ? onToken(cardDefaultFillOf(item.variant), p) : undefined}
@@ -1398,7 +1507,24 @@ export function Inspector({
         </Section>
       )}
 
-      {(spec.hasChecked || spec.hasValue || spec.hasWavy || spec.hasContained || item.kind === "listItem") && !editOn && (
+      {/* an in-page overlay is graded the same way an overlay page is: the level decides the
+          scrim, whether the screen behind stays live, and what the back key closes */}
+      {isOverlayItem(item) && !editOn && (
+        <Section id="overlay" icon="picture_in_picture_alt" title={t("roleOverlay", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <Segmented<OverlayLevel>
+              options={OVERLAY_LEVELS.map((l) => ({ key: l, icon: OVERLAY_LEVEL_ICONS[l], title: overlayLevelText(l, lang) }))}
+              value={overlayLevelOf(item) ?? DEFAULT_OVERLAY_LEVEL}
+              onChange={(overlay) => onChange({ overlay })}
+              p={p}
+              height={36}
+            />
+            <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("overlayHint", lang)}</div>
+          </div>
+        </Section>
+      )}
+
+      {(spec.hasChecked || spec.hasValue || spec.hasWavy || spec.hasContained || spec.hasScroll || item.kind === "listItem") && !editOn && (
         <Section id="state" icon="tune" title={t("state", lang)} p={p}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "2px 0" }}>
             {item.kind === "listItem" && (
@@ -1413,8 +1539,8 @@ export function Inspector({
                 on={!!item.checked}
                 onChange={(checked) => onChange({ checked })}
                 p={p}
-                icon={item.kind === "chip" ? "check_circle" : item.kind === "box" ? "drag_handle" : "toggle_on"}
-                label={item.kind === "chip" ? t("selected", lang) : item.kind === "box" ? t("handle", lang) : t("on", lang)}
+                icon={item.kind === "chip" ? "check_circle" : "toggle_on"}
+                label={item.kind === "chip" ? t("selected", lang) : t("on", lang)}
                 grow
               />
             )}
@@ -1434,7 +1560,60 @@ export function Inspector({
             {spec.hasWavy && (
               <Toggle on={!!item.wavy} onChange={(wavy) => onChange({ wavy })} p={p} icon="airwave" label={t("wavy", lang)} grow />
             )}
-            {spec.hasValue && item.kind !== "slider" && (
+            {spec.hasScroll && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("scroll", lang)}</div>
+                <Segmented<string>
+                  options={[
+                    { key: "none", icon: "block", label: t("scrollNone", lang), title: t("scrollNone", lang) },
+                    { key: "y", icon: "swap_vert", label: t("scrollY", lang), title: t("scrollY", lang) },
+                    { key: "x", icon: "swap_horiz", label: t("scrollX", lang), title: t("scrollX", lang) },
+                    { key: "both", icon: "open_with", label: t("scrollBoth", lang), title: t("scrollBoth", lang) },
+                  ]}
+                  value={item.scroll ?? "none"}
+                  /* what the visitor can move along; nothing to move when it is turned off */
+                  onChange={(k) => onChange({ scroll: k === "none" ? undefined : (k as ScrollAxis), scrollPos: undefined })}
+                  p={p}
+                  height={36}
+                />
+                {item.scroll &&
+                  (["y", "x"] as const)
+                    /* only an axis with room to move gets a slider: a slider that cannot move is a
+                       slider the author drags and watches snap back */
+                    .filter((axis) => item.scroll === axis || item.scroll === "both")
+                    .filter((axis) => (axis === "y" ? scroll.y : scroll.x) > 0)
+                    .map((axis) => (
+                      <Slider
+                        key={axis}
+                        icon={axis === "y" ? "swap_vert" : "swap_horiz"}
+                        title={t(axis === "y" ? "scrollY" : "scrollX", lang)}
+                        /* where the content starts: the state the author designs, and where the
+                           visitor finds it */
+                        value={(axis === "y" ? item.scrollPos?.y : item.scrollPos?.x) ?? 0}
+                        min={0}
+                        max={axis === "y" ? scroll.y : scroll.x}
+                        step={4}
+                        onChange={(v) => onChange({ scrollPos: { ...item.scrollPos, [axis]: v || undefined } })}
+                        p={p}
+                        unit="dp"
+                      />
+                    ))}
+                {item.scroll && (
+                  <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>
+                    {(() => {
+                      const content = Math.round(item.scroll === "x" ? scrollView.w + scroll.x : scrollView.h + scroll.y);
+                      const view = Math.round(item.scroll === "x" ? scrollView.w : scrollView.h);
+                      /* an empty container and one whose content fits both leave the slider with
+                         nothing to move, and each says which of the two it is */
+                      if (!(item.children?.length ?? 0)) return t("scrollEmpty", lang);
+                      const room = (item.scroll === "x" ? scroll.x : scroll.y) > 0;
+                      return t(room ? "scrollHint" : "scrollFits", lang).replace("{c}", String(content)).replace("{v}", String(view));
+                    })()}
+                  </div>
+                )}
+              </div>
+            )}
+            {spec.hasValue && item.kind !== "slider" && item.kind !== "progressBar" && (
               <Toggle
                 on={item.value !== undefined}
                 onChange={(on) => onChange({ value: on ? 60 : undefined })}
@@ -1444,7 +1623,8 @@ export function Inspector({
                 grow
               />
             )}
-            {spec.hasValue && (item.kind === "slider" || item.value !== undefined) && (
+            {/* a progress bar always shows a share of its track: it has no looping state to be in */}
+            {spec.hasValue && (item.kind === "slider" || item.kind === "progressBar" || item.value !== undefined) && (
               <Slider
                 icon="percent"
                 value={item.value ?? 40}
@@ -1512,8 +1692,8 @@ export function Inspector({
                 />
                 {spec.size.presets && (
                   <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    {(item.kind === "button" || item.kind === "switch") && (
-                      /* these two are as wide as their text unless a width was set; this chip goes back to that */
+                    {(item.kind === "button" || item.kind === "switch" || item.kind === "badge") && (
+                      /* these are as wide as their text unless a width was set; this chip goes back to that */
                       <button
                         onClick={() => onChange({ size: undefined })}
                         aria-pressed={item.size === undefined}
@@ -1551,7 +1731,9 @@ export function Inspector({
                 <Slider
                   icon={spec.size2.icon}
                   title={t("height", lang)}
-                  value={item.size2 ?? spec.h}
+                  /* the height it draws when the author has set none: a badge with no number is the
+                     small dot, not the numbered pill */
+                  value={item.size2 ?? (item.kind === "badge" && !item.label.trim() ? 6 : spec.h)}
                   min={spec.size2.min}
                   max={heightMax(spec.size2.max)}
                   step={spec.size2.step}
@@ -1688,10 +1870,12 @@ export function Inspector({
             lang={lang}
             onChange={onChange}
             frames={frames}
-            onDialog={onDialog}
+            dialog={dialog}
             slots={actionSlots}
+            lookTargets={lookTargets}
             slot={actionSlot}
             onSlot={setActionSlot}
+            vars={vars}
           />
         </Section>
       )}
@@ -1699,17 +1883,723 @@ export function Inspector({
   );
 }
 
+/** the i18n key each rule action's label lives under */
+const RULE_LABEL: Record<RuleAction["kind"], UIKey> = {
+  goto: "ruleGoto",
+  back: "ruleBack",
+  close: "ruleClose",
+  set: "ruleSet",
+  add: "ruleAdd",
+  toggle: "ruleToggle",
+  look: "ruleLook",
+};
+
+/** The two things a tap can do about a dialog: make one, or open one that is already there. */
+export type DialogChoice = { kind: "new" } | { kind: "existing"; id: string };
+export type DialogChoices = {
+  /** every dialog already in the document */
+  dialogs: DialogRef[];
+  /** Binds the chosen dialog to one tap: `target` is the destination of a bar the tap belongs to,
+   *  and null when the tap is the part's own. */
+  choose: (choice: DialogChoice, target: string | null) => void;
+};
+
+/**
+ * What a tap opens as a dialog: a new one, or one the document already has. Two choices, and that is
+ * all — the author asked for exactly that, and anything more turned a one-tap decision into a menu.
+ */
+function DialogBody({
+  dialog,
+  boundId,
+  onChoose,
+  p,
+}: {
+  /** every dialog the document already has, and what a new one is made of */
+  dialog: DialogChoices;
+  /** the dialog this tap opens now, if any */
+  boundId: string | null;
+  /** binds the chosen dialog to the tap the author is working on */
+  onChoose: (choice: DialogChoice) => void;
+  p: Palette;
+}) {
+  const lang = useLang();
+  const [pick, setPick] = useState(false);
+  const [q, setQ] = useState("");
+  const s2 = q.trim().toLowerCase();
+  const name = (d: DialogRef) => d.label.trim() || t("dialog", lang);
+  const list = s2 ? dialog.dialogs.filter((d) => name(d).toLowerCase().includes(s2)) : dialog.dialogs;
+  const row: React.CSSProperties = {
+    height: 40,
+    borderRadius: 12,
+    border: "none",
+    textAlign: "left",
+    padding: "0 12px",
+    background: "transparent",
+    color: p.onSurface,
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    overflow: "hidden",
+    whiteSpace: "nowrap",
+  };
+  if (!pick) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <button type="button" onClick={() => onChoose({ kind: "new" })} className="m3-press" style={{ ...row, background: p.secondaryContainer, color: p.onSecondaryContainer }}>
+          <Icon name="add" size={20} />
+          {t("dialogNew", lang)}
+        </button>
+        <button
+          type="button"
+          onClick={() => setPick(true)}
+          disabled={dialog.dialogs.length === 0}
+          className="m3-press"
+          style={{ ...row, border: `1px solid ${p.outlineVariant}`, opacity: dialog.dialogs.length ? 1 : 0.5, cursor: dialog.dialogs.length ? "pointer" : "default" }}
+        >
+          <Icon name="layers" size={18} />
+          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{t("dialogExisting", lang)}</span>
+          <Icon name="chevron_right" size={16} />
+        </button>
+        {dialog.dialogs.length === 0 && <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("dialogNone", lang)}</div>}
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <IconBtn
+          icon="arrow_back"
+          p={p}
+          size={30}
+          title={t("back", lang)}
+          onClick={() => {
+            setPick(false);
+            setQ("");
+          }}
+        />
+        <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: 1, minWidth: 0 }}>{t("dialogExisting", lang)}</span>
+      </div>
+      <Field value={q} onChange={setQ} placeholder={t("search", lang)} p={p} icon="search" height={40} />
+      <div className="no-scrollbar" style={{ display: "flex", flexDirection: "column", gap: 2, maxHeight: 240, overflowY: "auto" }}>
+        {list.map((d) => (
+          <button
+            key={d.id}
+            type="button"
+            onClick={() => onChoose({ kind: "existing", id: d.id })}
+            className="m3-press"
+            style={{ ...row, background: d.id === boundId ? p.secondaryContainer : "transparent", color: d.id === boundId ? p.onSecondaryContainer : p.onSurface }}
+          >
+            <Icon name={d.page ? "picture_in_picture_alt" : "chat_bubble"} size={18} />
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", fontWeight: 400 }}>{name(d)}</span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: p.onSurfaceVariant }}>{overlayLevelText(d.level, lang)}</span>
+          </button>
+        ))}
+        {list.length === 0 && <div style={{ padding: 12, fontSize: 12, color: p.outline, textAlign: "center" }}>{t("searchOff", lang)}</div>}
+      </div>
+    </div>
+  );
+}
+
+/** a labelled dropdown for a short list: variables, comparisons and rule actions all need one */
+
+/** A field whose shape follows the variable's kind: a number counts, a switch flips, text is text. */
+function VarValueField({ v, value, onChange, p }: { v: Var; value: VarValue; onChange: (v: VarValue) => void; p: Palette }) {
+  const lang = useLang();
+  if (v.kind === "boolean") return <Toggle on={value === true || value === "true"} onChange={onChange} p={p} icon="toggle_on" label={t("ruleValue", lang)} grow />;
+  return (
+    <Field
+      value={String(value ?? "")}
+      onChange={(raw) => onChange(v.kind === "number" ? Number(raw.replace(/[^0-9.-]/g, "")) || 0 : raw)}
+      placeholder={t("ruleValue", lang)}
+      p={p}
+      icon={v.kind === "number" ? "tag" : "text_fields"}
+      height={36}
+    />
+  );
+}
+
+/** the "add one more" button these panels share: a dashed line that reads as an empty slot */
+const dashedStyle = (p: Palette): React.CSSProperties => ({
+  minHeight: 32,
+  padding: "0 10px",
+  borderRadius: 16,
+  border: `1px dashed ${p.outline}`,
+  background: "transparent",
+  color: p.onSurfaceVariant,
+  fontSize: 12,
+  fontWeight: 600,
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
+});
+
+/** the card one rule, one node or one step of a flow is drawn in */
+const cardStyle = (p: Palette, background?: string): React.CSSProperties => ({
+  display: "flex",
+  flexDirection: "column",
+  gap: 8,
+  padding: 10,
+  borderRadius: 14,
+  background: background ?? p.surfaceContainerLow,
+});
+
+/**
+ * The action a picker asks for, keeping what still applies and seeding what does not: switching to a
+ * jump keeps the page it went to, switching to a look starts from the part as it is drawn now. A
+ * variable action with no variable to write returns null, so the choice is simply not taken.
+ */
+function seededAction(kind: RuleAction["kind"], from: RuleAction, item: Item, vars: Var[], frames: Frame[]): RuleAction | null {
+  if (kind === "goto") return { kind, to: from.kind === "goto" ? from.to : frames[0]?.id ?? "", transition: "slide" };
+  if (kind === "back" || kind === "close") return { kind };
+  if (kind === "look") return { kind, icon: item.icon ?? undefined, variant: item.variant };
+  if (vars.length === 0) return null;
+  const v = vars[0];
+  return kind === "add" ? { kind, varId: v.id, delta: -1 } : kind === "set" ? { kind, varId: v.id, value: varInitial(v) } : { kind, varId: v.id };
+}
+
+/** The conditions one rule — or one step of a part's machine — tests before it runs. */
+function ConditionsEditor({
+  when,
+  onChange,
+  vars,
+  p,
+}: {
+  when: Condition[];
+  onChange: (when: Condition[] | undefined) => void;
+  vars: Var[];
+  p: Palette;
+}) {
+  const lang = useLang();
+  const patch = (i: number, next: Partial<Condition>) => onChange(when.map((c, j) => (j === i ? { ...c, ...next } : c)));
+  const drop = (i: number) => {
+    const rest = when.filter((_, j) => j !== i);
+    onChange(rest.length ? rest : undefined);
+  };
+  return (
+    <>
+      {when.map((c, i) => {
+        const v = vars.find((x) => x.id === c.varId);
+        /* a numeric comparison says nothing about text or a switch, so those operators are not
+           offered for them */
+        const ops = (v?.kind ?? "number") === "number" ? CONDITION_OPS : CONDITION_OPS.filter((o) => !NUMERIC_OPS.includes(o));
+        return (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {vars.length > 1 ? (
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Pick
+                  options={vars.map((x) => ({ key: x.id, label: x.name, icon: VAR_KINDS.find((k) => k.key === x.kind)?.icon }))}
+                  value={c.varId}
+                  onChange={(varId) => patch(i, { varId })}
+                  p={p}
+                  title={t("varName", lang)}
+                />
+              </div>
+            ) : (
+              <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v?.name ?? c.varId}</span>
+            )}
+            <div style={{ flex: "0 0 64px" }}>
+              <Pick options={ops.map((op) => ({ key: op, label: CONDITION_SYMBOLS[op] }))} value={c.op} onChange={(op) => patch(i, { op })} p={p} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>{v && <VarValueField v={v} value={c.value} onChange={(value) => patch(i, { value })} p={p} />}</div>
+            <IconBtn icon="close" p={p} title={t("removeRule", lang)} size={30} onClick={() => drop(i)} />
+          </div>
+        );
+      })}
+      {vars.length > 0 && (
+        <button onClick={() => onChange([...when, { varId: vars[0].id, op: ">=" as ConditionOp, value: 1 }])} className="m3-press" style={dashedStyle(p)}>
+          <Icon name="add" size={16} />
+          {t("addCondition", lang)}
+        </button>
+      )}
+    </>
+  );
+}
+
+/** The fields one rule action needs, under the picker that chose it. */
+function ActionFields({
+  action,
+  onChange,
+  vars,
+  frames,
+  item,
+  lookTargets = [],
+  p,
+}: {
+  action: RuleAction;
+  onChange: (a: RuleAction) => void;
+  vars: Var[];
+  frames: Frame[];
+  /** the part the action belongs to: a look starts from what it shows now */
+  item: Item;
+  /** the other parts on the page, for a look aimed at one of them */
+  lookTargets?: { id: string; name: string }[];
+  p: Palette;
+}) {
+  const lang = useLang();
+  const a = action;
+  const written = a.kind === "set" || a.kind === "add" || a.kind === "toggle" ? vars.find((v) => v.id === a.varId) : undefined;
+  const varOptions = vars.map((v) => ({ key: v.id, label: v.name, icon: VAR_KINDS.find((k) => k.key === v.kind)?.icon }));
+  return (
+    <>
+      {a.kind === "goto" && (
+        <>
+          <FrameSelect frames={frames} value={a.to || null} onChange={(to) => to && onChange({ ...a, to })} p={p} />
+          {a.to !== BACK_TARGET && <TransitionPicker value={a.transition} onChange={(transition) => onChange({ ...a, transition })} p={p} />}
+        </>
+      )}
+      {a.kind === "look" && (
+        <>
+          {/* what the part looks like: the same choices a look elsewhere offers, and it can be aimed
+              at another part of the same page — the gift a claim button marks as claimed */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: "0 0 auto" }}>{t("lookTarget", lang)}</span>
+            <Pick
+              options={[{ key: "", label: t("lookSelf", lang) }, ...lookTargets.map((x) => ({ key: x.id, label: x.name }))]}
+              value={a.target ?? ""}
+              onChange={(target) => onChange({ ...a, target: target || undefined })}
+              p={p}
+              title={t("lookTarget", lang)}
+            />
+          </div>
+          <IconPicker value={a.icon ?? null} onChange={(icon) => onChange({ ...a, icon: icon ?? "" })} onClose={() => {}} palette={p} />
+          {/* each field says what it is: a look changes one thing, and a title is cheaper than
+              guessing which row the text field is */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("lookText", lang)}</div>
+            <Field value={a.label ?? ""} onChange={(label) => onChange({ ...a, label })} p={p} placeholder={t("label", lang)} icon="edit" />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("lookColor", lang)}</div>
+            {/* the one colour, not a palette to choose from alongside it: a look recolours a part,
+                it does not restyle the scheme */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <CustomColorDisc value={a.color} onChange={(color) => onChange({ ...a, color })} p={p} />
+              {a.color !== undefined && (
+                <button
+                  type="button"
+                  onClick={() => onChange({ ...a, color: undefined })}
+                  className="m3-press"
+                  style={{ height: 30, padding: "0 12px", borderRadius: 15, border: `1px solid ${p.outlineVariant}`, background: "transparent", color: p.onSurfaceVariant, fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+                >
+                  {t("autoColor", lang)}
+                </button>
+              )}
+            </div>
+          </div>
+          <Segmented<Variant>
+            options={VARIANTS.map((v) => ({ key: v.key, title: t(v.key, lang) }))}
+            value={isVariant(a.variant) ? a.variant : "filled"}
+            onChange={(variant) => onChange({ ...a, variant })}
+            p={p}
+            height={36}
+          />
+          <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("ruleLookHint", lang)}</div>
+        </>
+      )}
+      {(a.kind === "set" || a.kind === "add" || a.kind === "toggle") && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <Pick
+            options={varOptions}
+            value={a.varId}
+            onChange={(varId) => {
+              const v = vars.find((x) => x.id === varId);
+              if (!v) return;
+              onChange(a.kind === "set" ? { ...a, varId, value: varInitial(v) } : { ...a, varId });
+            }}
+            p={p}
+            title={t("varName", lang)}
+          />
+          {a.kind === "add" && (
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Field
+                value={String(a.delta)}
+                onChange={(raw) => {
+                  const n = Number(raw.replace(/[^0-9.-]/g, ""));
+                  if (Number.isFinite(n)) onChange({ ...a, delta: n });
+                }}
+                placeholder={t("ruleValue", lang)}
+                p={p}
+                icon="exposure"
+                height={36}
+              />
+            </div>
+          )}
+          {a.kind === "set" && written && (
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <VarValueField v={written} value={a.value} onChange={(value) => onChange({ ...a, value })} p={p} />
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * Conditional taps. Each rule is one "when … then …" line, tried in order; the plain action
+ * above is what happens when none of them holds, which is why a rule may carry no condition at
+ * all and still be useful as the last branch.
+ */
+function RuleList({
+  rules,
+  onChange,
+  vars,
+  frames,
+  item,
+  lookTargets = [],
+  p,
+}: {
+  rules: ItemRule[];
+  onChange: (rules: ItemRule[]) => void;
+  vars: Var[];
+  frames: Frame[];
+  /** the part the rules belong to: a look rule starts from what it shows now */
+  item: Item;
+  /** the other parts on the page, for a look aimed at one of them */
+  lookTargets?: { id: string; name: string }[];
+  p: Palette;
+}) {
+  const lang = useLang();
+  const write = (id: string, next: Partial<ItemRule>) => onChange(rules.map((r) => (r.id === id ? { ...r, ...next } : r)));
+  /* a new rule lands as a jump to the first page, the place almost every rule wants to go */
+  const add = () => onChange([...rules, { id: uid(), do: { kind: "goto", to: frames[0]?.id ?? "", transition: "slide" } }]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {rules.map((rule) => {
+        const a = rule.do;
+        return (
+          <div key={rule.id} style={cardStyle(p)}>
+            {/* a rule waits for a tap, or for the clock: "ten minutes later the battle is won" */}
+            <Toggle on={isTimedRule(rule)} onChange={(on) => write(rule.id, { after: on ? 60 : undefined })} p={p} icon="timer" label={t("ruleAfter", lang)} grow />
+            {isTimedRule(rule) && (
+              <>
+                <Slider icon="timer" title={t("ruleAfter", lang)} value={rule.after ?? 60} min={1} max={3600} step={1} onChange={(after) => write(rule.id, { after })} p={p} unit="s" />
+                <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("ruleAfterHint", lang)}</div>
+              </>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: 1, minWidth: 0 }}>{t("ruleWhen", lang)}</span>
+              <IconBtn icon="delete" p={p} danger title={t("removeRule", lang)} size={30} onClick={() => onChange(rules.filter((r) => r.id !== rule.id))} />
+            </div>
+            <ConditionsEditor when={rule.when ?? []} onChange={(when) => write(rule.id, { when })} vars={vars} p={p} />
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: "0 0 auto" }}>{t("ruleThen", lang)}</span>
+              <Pick
+                options={RULE_ACTIONS.map((r2) => ({ key: r2.key, icon: r2.icon, label: t(RULE_LABEL[r2.key], lang) }))}
+                value={a.kind}
+                onChange={(kind) => {
+                  const next = seededAction(kind, a, item, vars, frames);
+                  if (next) write(rule.id, { do: next });
+                }}
+                p={p}
+                title={t("ruleThen", lang)}
+              />
+            </div>
+            <ActionFields action={a} onChange={(do2) => write(rule.id, { do: do2 })} vars={vars} frames={frames} item={item} lookTargets={lookTargets} p={p} />
+          </div>
+        );
+      })}
+      <button onClick={add} className="m3-press" style={{ ...dashedStyle(p), height: 40, borderRadius: 20, fontSize: 13 }}>
+        <Icon name="add" size={20} />
+        {t("addCondRule", lang)}
+      </button>
+      {vars.length === 0 && <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("ruleNoVars", lang)}</div>}
+      {rules.length > 0 && <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("ruleFallback", lang)}</div>}
+    </div>
+  );
+}
+
+/* ---------- the state machine, drawn as a flow ---------- */
+
+/** The fields a look may change about the part. Everything else follows the part itself, so an
+ *  author editing the button still moves every node that never overrode that field. */
+const LOOK_FIELDS: { key: "label" | "icon" | "color" | "variant" | "disabled" | "grow" | "hidden"; icon: string; title: UIKey }[] = [
+  { key: "label", icon: "edit", title: "state_label" },
+  { key: "icon", icon: "emoji_symbols", title: "state_icon" },
+  { key: "color", icon: "format_color_fill", title: "state_color" },
+  { key: "variant", icon: "category", title: "state_variant" },
+  { key: "disabled", icon: "block", title: "state_disable" },
+  { key: "grow", icon: "open_in_full", title: "state_grow" },
+  { key: "hidden", icon: "visibility_off", title: "state_hide" },
+];
+
+/** The value a field starts with when an author turns it on: the part's own, so switching a field on
+ *  never changes what the node looks like until the author edits it. */
+const lookSeed = (key: (typeof LOOK_FIELDS)[number]["key"], item: Item): PartLook[keyof PartLook] =>
+  key === "label" ? item.label : key === "icon" ? item.icon : key === "color" ? item.color ?? "primary" : key === "variant" ? item.variant : true;
+
+/** A living preview of the part as one of its looks draws it: a node shows the thing itself rather
+ *  than describing it. */
+function LookPreview({ item, look, p }: { item: Item; look?: PartLook; p: Palette }) {
+  const drawn = lookItem(item, look);
+  const size = sizeOf(drawn, {});
+  const k = Math.min(1, 132 / Math.max(1, size.w), 44 / Math.max(1, size.h));
+  return (
+    <div style={{ width: 132, height: 44, borderRadius: 10, background: p.surfaceContainerHigh, display: "grid", placeItems: "center", overflow: "hidden", flex: "0 0 auto" }}>
+      <div style={{ transform: `scale(${k})`, pointerEvents: "none" }}>
+        <M3Static item={drawn} palette={p} />
+      </div>
+    </div>
+  );
+}
+
+/** One step of the machine: what sets it off, where it lands, what it tests, and what else it does. */
+function StepRow({
+  step,
+  targets,
+  onChange,
+  onRemove,
+  item,
+  vars,
+  frames,
+  lookTargets,
+  extra,
+  p,
+}: {
+  step: PartStep;
+  /** the looks a step can land in, the drawn one included */
+  targets: { key: string; label: string }[];
+  onChange: (next: Partial<PartStep>) => void;
+  onRemove: () => void;
+  item: Item;
+  vars: Var[];
+  frames: Frame[];
+  lookTargets: { id: string; name: string }[];
+  /** the action a new line of the list starts from, or null when there is nothing to seed it with */
+  extra: RuleAction | null;
+  p: Palette;
+}) {
+  const lang = useLang();
+  const timed = step.trigger.kind === "after";
+  const seconds = step.trigger.kind === "after" ? step.trigger.seconds : 3;
+  const do2 = step.do ?? [];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 8, borderRadius: 12, border: `1px solid ${p.outlineVariant}`, background: p.surface }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <Icon name={timed ? "timer" : "touch_app"} size={16} color={p.onSurfaceVariant} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Pick
+            options={[
+              { key: "tap", icon: "touch_app", label: t("onTap", lang) },
+              { key: "after", icon: "timer", label: t("ruleAfterShort", lang) },
+            ]}
+            value={step.trigger.kind}
+            onChange={(kind) => onChange({ trigger: kind === "after" ? { kind: "after", seconds } : { kind: "tap" } })}
+            p={p}
+            title={t("ruleWhen", lang)}
+          />
+        </div>
+        <IconBtn icon="delete" p={p} danger title={t("removeRule", lang)} size={28} onClick={onRemove} />
+      </div>
+      {timed && <Slider icon="timer" title={t("ruleAfter", lang)} value={seconds} min={1} max={3600} step={1} onChange={(s) => onChange({ trigger: { kind: "after", seconds: s } })} p={p} unit="s" />}
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: "0 0 auto" }}>{t("flowTo", lang)}</span>
+        <Pick options={targets} value={step.to} onChange={(to) => onChange({ to })} p={p} title={t("flowTo", lang)} />
+      </div>
+      <ConditionsEditor when={step.when ?? []} onChange={(when) => onChange({ when })} vars={vars} p={p} />
+      {do2.map((a, i) => (
+        <div key={i} style={{ display: "flex", flexDirection: "column", gap: 8, padding: 8, borderRadius: 12, background: p.surfaceContainerHigh }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <Pick
+              options={RULE_ACTIONS.map((r2) => ({ key: r2.key, icon: r2.icon, label: t(RULE_LABEL[r2.key], lang) }))}
+              value={a.kind}
+              onChange={(kind) => {
+                const next = seededAction(kind, a, item, vars, frames);
+                if (next) onChange({ do: do2.map((x, j) => (j === i ? next : x)) });
+              }}
+              p={p}
+              title={t("ruleThen", lang)}
+            />
+            <IconBtn icon="close" p={p} title={t("removeRule", lang)} size={28} onClick={() => onChange({ do: do2.filter((_, j) => j !== i) })} />
+          </div>
+          <ActionFields action={a} onChange={(next) => onChange({ do: do2.map((x, j) => (j === i ? next : x)) })} vars={vars} frames={frames} item={item} lookTargets={lookTargets} p={p} />
+        </div>
+      ))}
+      {extra && (
+        <button onClick={() => onChange({ do: [...do2, extra] })} className="m3-press" style={dashedStyle(p)}>
+          <Icon name="add" size={16} />
+          {t("flowAddDo", lang)}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The state machine a part runs, drawn as the flow its author thinks in: every look the part can be
+ * in, one under the other, with the steps that leave each of them drawn between. A tap that moves it
+ * on is one line, a loop back is a line to a node above, and a step that waits says how long. Two
+ * steps leaving the same look are read in order, so that is the only order an author thinks about —
+ * and it is local to one node instead of to the whole part.
+ */
+function FlowEditor({
+  item,
+  flow,
+  onFlow,
+  vars,
+  frames,
+  lookTargets = [],
+  p,
+}: {
+  item: Item;
+  /** the machine as it stands; undefined for a part that never moves */
+  flow: PartFlow | undefined;
+  onFlow: (flow: PartFlow | undefined) => void;
+  vars: Var[];
+  frames: Frame[];
+  lookTargets?: { id: string; name: string }[];
+  p: Palette;
+}) {
+  const lang = useLang();
+  const [openId, setOpenId] = useState<string | null>(null);
+  const looks = flow?.looks ?? [];
+  const steps = flow?.steps ?? [];
+  const put = (nextLooks: PartLook[], nextSteps: PartStep[]) => onFlow(nextLooks.length || nextSteps.length ? { looks: nextLooks, steps: nextSteps } : undefined);
+  const patchLook = (id: string, next: Partial<PartLook>) => put(looks.map((l) => (l.id === id ? { ...l, ...next } : l)), steps);
+  const dropLook = (id: string) => put(looks.filter((l) => l.id !== id), steps.filter((s) => s.from !== id && s.to !== id));
+  const patchStep = (id: string, next: Partial<PartStep>) => put(looks, steps.map((s) => (s.id === id ? { ...s, ...next } : s)));
+  const dropStep = (id: string) => put(looks, steps.filter((s) => s.id !== id));
+  /** the name a node reads as: what its author called it, or the words it shows while in it */
+  const nodeName = (l: PartLook) => l.name?.trim() || lookItem(item, l).label.trim() || t("flowNewState", lang);
+  const targets = [{ key: START_LOOK, label: t("flowStart", lang) }, ...looks.map((l) => ({ key: l.id, label: nodeName(l) }))];
+  /* a new state lands with a step into it: a node nothing reaches is a node nobody meant to draw */
+  const addState = (from: string) => {
+    const made: PartLook = { id: uid() };
+    put([...looks, made], [...steps, { id: uid(), from, to: made.id, trigger: { kind: "tap" } }]);
+    setOpenId(made.id);
+  };
+  const link = (from: string, to: string) => put(looks, [...steps, { id: uid(), from, to, trigger: { kind: "tap" } }]);
+  /* the action a new line of a step's list starts from: a jump when there are pages to jump to, a
+     switch when there is something to switch, and nothing at all when the document has neither */
+  const extra: RuleAction | null = frames.length ? { kind: "goto", to: frames[0].id, transition: "slide" } : vars.length ? { kind: "toggle", varId: vars[0].id } : null;
+  const nodes: { id: string; look?: PartLook }[] = [{ id: START_LOOK }, ...looks.map((l) => ({ id: l.id, look: l }))];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ fontSize: 11, lineHeight: 1.6, color: p.onSurfaceVariant }}>{t("flowHint", lang)}</div>
+      {nodes.map((node) => {
+        const mine = steps.filter((s) => s.from === node.id);
+        const changed = node.look ? LOOK_FIELDS.filter((f) => node.look?.[f.key] !== undefined) : [];
+        const title = node.look ? nodeName(node.look) : t("flowStart", lang);
+        return (
+          <div key={node.id} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ ...cardStyle(p), flexDirection: "row", alignItems: "center" }}>
+              <LookPreview item={item} look={node.look} p={p} />
+              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+                {node.look ? (
+                  <Field value={node.look.name ?? ""} onChange={(name) => patchLook(node.id, { name })} placeholder={title} p={p} icon="label" height={34} />
+                ) : (
+                  <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurface }}>{title}</span>
+                )}
+                <div style={{ fontSize: 11, lineHeight: 1.4, color: p.outline }}>
+                  {changed.length > 0 ? changed.map((f) => t(f.title, lang)).join(" · ") : t(node.look ? "flowNoChange" : "flowStartHint", lang)}
+                </div>
+              </div>
+              {node.look && (
+                <>
+                  <IconBtn icon="tune" p={p} on={openId === node.id} title={t("flowChange", lang)} size={30} onClick={() => setOpenId(openId === node.id ? null : node.id)} />
+                  <IconBtn icon="delete" p={p} danger title={t("delete", lang)} size={30} onClick={() => dropLook(node.id)} />
+                </>
+              )}
+            </div>
+            {node.look && openId === node.id && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 8, borderRadius: 12, border: `1px solid ${p.outlineVariant}` }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {LOOK_FIELDS.map((f) => {
+                    const on = node.look?.[f.key] !== undefined;
+                    return (
+                      <button
+                        key={f.key}
+                        type="button"
+                        className="m3-press"
+                        onClick={() => patchLook(node.id, { [f.key]: on ? undefined : lookSeed(f.key, item) } as Partial<PartLook>)}
+                        style={{
+                          height: 28,
+                          padding: "0 8px",
+                          borderRadius: 14,
+                          border: "none",
+                          background: on ? p.secondaryContainer : p.surfaceContainerHigh,
+                          color: on ? p.onSecondaryContainer : p.onSurfaceVariant,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 4,
+                        }}
+                      >
+                        <Icon name={on ? "check" : "add"} size={14} />
+                        {t(f.title, lang)}
+                      </button>
+                    );
+                  })}
+                </div>
+                {node.look.label !== undefined && <Field value={node.look.label} onChange={(label) => patchLook(node.id, { label })} p={p} placeholder={t("lookText", lang)} icon="edit" height={36} />}
+                {node.look.icon !== undefined && <IconPicker value={node.look.icon} onChange={(icon) => patchLook(node.id, { icon })} onClose={() => {}} palette={p} />}
+                {node.look.color !== undefined && <ItemColorChips value={node.look.color} onChange={(color) => patchLook(node.id, { color })} p={p} />}
+                {node.look.variant !== undefined && (
+                  <Segmented<Variant>
+                    options={VARIANTS.map((v) => ({ key: v.key, title: t(v.key, lang) }))}
+                    value={node.look.variant}
+                    onChange={(variant) => patchLook(node.id, { variant })}
+                    p={p}
+                    height={36}
+                  />
+                )}
+              </div>
+            )}
+            {mine.map((s) => (
+              <StepRow
+                key={s.id}
+                step={s}
+                targets={targets}
+                onChange={(next) => patchStep(s.id, next)}
+                onRemove={() => dropStep(s.id)}
+                item={item}
+                vars={vars}
+                frames={frames}
+                lookTargets={lookTargets}
+                extra={extra}
+                p={p}
+              />
+            ))}
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <button type="button" onClick={() => addState(node.id)} className="m3-press" style={dashedStyle(p)}>
+                <Icon name="add" size={16} />
+                {t("flowAddState", lang)}
+              </button>
+              {looks.length > 0 && (
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Pick options={[{ key: "", label: t("flowLink", lang) }, ...targets]} value="" onChange={(to) => to && link(node.id, to)} p={p} title={t("flowLink", lang)} />
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** The state rules hung on one part: each says what a tap changes about the part itself. */
+
 function StateRules({
   item,
   p,
   lang,
   onChange,
   frames,
-  onDialog,
+  dialog,
   slots = [],
   slot = "",
   onSlot,
+  vars,
+  lookTargets = [],
 }: {
   item: Item;
   p: Palette;
@@ -1717,27 +2607,42 @@ function StateRules({
   onChange: (patch: Partial<Item>) => void;
   frames: Frame[];
   /** makes, or finds, the dialog screen this part pops over the page */
-  onDialog?: () => void;
+  /** what a tap can open as a dialog, and what it can be made of */
+  dialog?: DialogChoices;
   /** the destinations a bar offers; empty for a plain part */
   slots?: { key: string; label: string; value: string | null }[];
   /** the destination the rules below belong to */
   slot?: string;
   onSlot?: (key: string) => void;
+  /** the other parts on the page, for a look that changes one of them */
+  lookTargets?: { id: string; name: string }[];
+  /** the variables a condition can test, and a rule can write */
+  vars: Var[];
 }) {
   /* a bar's rules belong to one destination; a plain part keeps them on itself */
   const target = slots.length > 0 ? slot || slots[0].key : "";
   const perSlot = slots.length > 0;
-  const rules = perSlot ? item.slotStates?.[target] ?? [] : item.states ?? [];
-  const writeRules = (next: ItemState[]) => (perSlot ? onChange({ slotStates: { ...(item.slotStates ?? {}), [target]: next } }) : onChange({ states: next }));
+  /* the machine this part — or this destination of a bar — runs */
+  const flow = perSlot ? item.slotFlows?.[target] : item.flow;
+  const writeFlow = (next: PartFlow | undefined) => {
+    if (!perSlot) {
+      onChange({ flow: next });
+      return;
+    }
+    const slots = { ...(item.slotFlows ?? {}) };
+    if (next) slots[target] = next;
+    else delete slots[target];
+    onChange({ slotFlows: Object.keys(slots).length ? slots : undefined });
+  };
   const action = perSlot ? item.actions?.[target] : item.action;
+  /* the dialog a tap opens belongs to the destination that tap is on, so the choice above is made
+     for `target` rather than for the bar as a whole */
+  const chooseDialog = (choice: DialogChoice) => dialog?.choose(choice, perSlot ? target : null);
   const writeAction = (a: Action | undefined) =>
     perSlot
       ? onChange({ actions: { ...(item.actions ?? {}), [target]: a as Action } })
       : onChange({ action: a });
   const card: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 8, padding: 10, borderRadius: 14, background: p.surfaceContainerLow };
-  const patch = (id: string, next: Partial<ItemState>) => writeRules(rules.map((r) => (r.id === id ? { ...r, ...next } : r)));
-  const remove = (id: string) => writeRules(rules.filter((r) => r.id !== id));
-  const add = () => writeRules([...rules, { id: uid(), trigger: "tap", effect: "disable" }]);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {/* a bar's destinations are buttons of their own: pick the one the rules below belong to */}
@@ -1772,72 +2677,63 @@ function StateRules({
         </div>
       )}
 
-      {/* a tap can pop a dialog screen of its own; one is made the first time and reused after */}
-      {onDialog && (
+      {/* A tap can pop a dialog of its own. Which component that dialog is made of is the author's
+          choice: a fresh one, one of their own composites, or something already on the page. */}
+      {dialog && (
         <div style={card}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Icon name="picture_in_picture_alt" size={18} color={p.onSurfaceVariant} />
             <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: 1, minWidth: 0 }}>{t("ruleDialog", lang)}</span>
             {action?.dialog && <IconBtn icon="delete" p={p} danger title={t("removeRule", lang)} size={30} onClick={() => writeAction(undefined)} />}
           </div>
-          <button
-            onClick={onDialog}
-            className="m3-press"
-            style={{ height: 40, borderRadius: 20, border: "none", background: p.secondaryContainer, color: p.onSecondaryContainer, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }}
-          >
-            <Icon name={action?.dialog ? "open_in_new" : "add"} size={20} />
-            {action?.dialog ? t("openBoundDialog", lang) : t("makeDialog", lang)}
-          </button>
-          <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>
-            {action?.dialog
-              ? `${t("dialogBound", lang)}${frames.find((f) => f.id === action?.to)?.name ?? ""}`
-              : t("dialogHint", lang)}
-          </div>
+          <DialogBody dialog={dialog} boundId={action?.dialog ? action.to : null} onChoose={chooseDialog} p={p} />
+          {action?.dialog ? (
+            /* what it opens now, and a way to go and edit it: the choice above is the tap, this is
+               the dialog itself */
+            <button
+              type="button"
+              onClick={() => chooseDialog({ kind: "existing", id: action.to })}
+              className="m3-press"
+              style={{ height: 32, borderRadius: 16, border: "none", background: "transparent", color: p.onSurfaceVariant, fontSize: 11, lineHeight: 1.5, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, padding: "0 8px", textAlign: "left" }}
+            >
+              <Icon name="open_in_new" size={16} />
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {t("dialogBound", lang)}
+                {dialog.dialogs.find((d) => d.id === action.to)?.label.trim() || t("dialog", lang)}
+              </span>
+            </button>
+          ) : (
+            <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("dialogHint", lang)}</div>
+          )}
         </div>
       )}
 
-      {(rules.length === 0 || perSlot) && <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant }}>{t("transitionsHint", lang)}</div>}
-      {rules.map((rule) => (
-        <div key={rule.id} style={{ display: "flex", flexDirection: "column", gap: 8, padding: 10, borderRadius: 14, background: p.surfaceContainerLow }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Icon name="touch_app" size={18} color={p.onSurfaceVariant} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: 1, minWidth: 0 }}>{t("onTap", lang)}</span>
-            <IconBtn icon="delete" p={p} danger title={t("removeRule", lang)} size={30} onClick={() => remove(rule.id)} />
-          </div>
-          <Segmented<StateEffect>
-            options={STATE_EFFECTS.map((e) => ({ key: e.key, icon: e.icon, title: t(`state_${e.key}` as UIKey, lang) }))}
-            value={rule.effect}
-            onChange={(effect) => patch(rule.id, { effect })}
-            p={p}
-            height={36}
-          />
-          <div style={{ fontSize: 12, color: p.onSurfaceVariant }}>{t(`state_${rule.effect}` as UIKey, lang)}</div>
-          {rule.effect === "cooldown" && (
-            <Slider icon="timer" title={t("cooldownSeconds", lang)} value={rule.seconds ?? 3} min={1} max={60} step={1} onChange={(seconds) => patch(rule.id, { seconds })} p={p} unit="s" />
-          )}
-          {rule.effect === "label" && (
-            <Field value={rule.value ?? ""} onChange={(value) => patch(rule.id, { value })} p={p} placeholder={t("label", lang)} icon="edit" />
-          )}
-          {rule.effect === "color" && <ItemColorChips value={rule.value} onChange={(value) => patch(rule.id, { value })} p={p} />}
-          {rule.effect === "variant" && (
-            <Segmented<Variant>
-              options={VARIANTS.map((v) => ({ key: v.key, title: t(v.key, lang) }))}
-              value={(isVariant(rule.value) ? rule.value : "tonal") as Variant}
-              onChange={(variant) => patch(rule.id, { value: variant })}
-              p={p}
-              height={36}
-            />
-          )}
+      {/* conditional taps: they run before the plain action above, which is their fallback */}
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Icon name="rule" size={18} color={p.onSurfaceVariant} />
+          <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: 1, minWidth: 0 }}>{t("condRules", lang)}</span>
         </div>
-      ))}
-      <button
-        onClick={add}
-        className="m3-press"
-        style={{ height: 40, borderRadius: 20, border: `1px dashed ${p.outline}`, background: "transparent", color: p.onSurfaceVariant, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }}
-      >
-        <Icon name="add" size={20} />
-        {t("addRule", lang)}
-      </button>
+        <RuleList
+          rules={item.rules ?? []}
+          onChange={(next) => onChange({ rules: next.length ? next : undefined })}
+          vars={vars}
+          frames={frames}
+          item={item}
+          lookTargets={lookTargets}
+          p={p}
+        />
+      </div>
+
+      {(flow?.looks.length ?? 0) === 0 && <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant }}>{t("transitionsHint", lang)}</div>}
+      {/* the state machine itself: the looks the part can be in, and what moves it between them */}
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Icon name="change_circle" size={18} color={p.onSurfaceVariant} />
+          <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: 1, minWidth: 0 }}>{t("onTap", lang)}</span>
+        </div>
+        <FlowEditor item={item} flow={flow} onFlow={writeFlow} vars={vars} frames={frames} lookTargets={lookTargets} p={p} />
+      </div>
     </div>
   );
 }

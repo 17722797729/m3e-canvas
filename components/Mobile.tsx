@@ -324,8 +324,8 @@ export function MobileInspector({
             on={!!item.checked}
             onChange={(checked) => onChange({ checked })}
             p={p}
-            icon={item.kind === "chip" ? "check_circle" : item.kind === "box" ? "drag_handle" : "toggle_on"}
-            label={item.kind === "chip" ? t("selected", lang) : item.kind === "box" ? t("handle", lang) : t("on", lang)}
+            icon={item.kind === "chip" ? "check_circle" : "toggle_on"}
+            label={item.kind === "chip" ? t("selected", lang) : t("on", lang)}
           />
         </Row>
       )}
