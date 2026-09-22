@@ -43,7 +43,6 @@ import {
   runPartRadii,
   scaleR,
   SHAPED,
-  conditionalLook,
   toggleIcon,
   RAIL_TOP,
   isWideRail,
@@ -59,15 +58,9 @@ import {
      opened in — the one thing the layer tree cannot tell us */
   OVERLAY_RULES,
   backTarget,
-  firstRule,
   foldPlace,
   foldShift,
   forgetScreens,
-  dueAction,
-  hasTimedRules,
-  initialVars,
-  varsInFrames,
-  looksFor,
   itemsOf,
   layersIn,
   NO_FOLD,
@@ -78,10 +71,7 @@ import {
   popLayer,
   pushLayer,
   scrollOffset,
-  varText,
   withLayers,
-  writtenValue,
-  type ItemRule,
   type MachineAt,
   type PartFlow,
   type PartStep,
@@ -89,8 +79,6 @@ import {
   type LayerTrail,
   type RuleAction,
   type OverlayLevel,
-  type Var,
-  type VarValue,
 } from "@/lib/tokens";
 import { Icon, M3Node } from "./M3Node";
 import { IconBtn } from "./ui";
@@ -258,7 +246,6 @@ function Tappable({
   onNavToggle,
   scrollRt,
   looks,
-  onRules,
 }: {
   item: Item;
   p: Palette;
@@ -287,10 +274,8 @@ function Tappable({
   railAnimating?: boolean;
   /** the live scroll of the containers on screen, for the ones that scroll */
   scrollRt?: ScrollRuntime;
-  /** the looks the variables ask for, by part: this one, and any a rule aimed here */
-  looks?: Map<string, Item>;
-  /** runs a nested part's conditional rules, the way the screen runs its own */
-  onRules?: (it: Item) => boolean;
+  /** the looks the machine latched onto parts of this screen, by part */
+  looks?: Record<string, Partial<Item>>;
 }) {
   const lang = useLang();
   const [pressed, setPressed] = useState(false);
@@ -298,11 +283,10 @@ function Tappable({
   /* What the variables make of this part: "when the reward is ready, show the claim button" is a
      look the rules ask for — its own, or another part's rule that names it — so it is the part as
      drawn, and the tap's own effect is resolved on top of it. */
-  const looked = looks?.get(item.id) ?? item;
   const pin = states?.pinned[item.id];
-  const asked = pin ? { ...looked, ...pin } : looked;
-  /* the machine's own look sits on top of both: the part as drawn, then the looks its rules ask
-     for, then the look its own flow has moved it to */
+  const asked = pin ? { ...item, ...pin } : item;
+  /* the machine's own look sits on top: the part as drawn, then whatever a step latched onto it,
+     then the look its own flow has moved it to */
   const own = states ? resolveStates(asked, states.at, states.now) : null;
   if (own?.hidden) return null;
   const view0 = own ? own.item : asked;
@@ -508,18 +492,17 @@ function Tappable({
         widths={widths}
         states={states}
         onTap={
-          c.action || flips(c) || (c.rules?.length ?? 0) > 0
+          c.action || flips(c) || c.flow
             ? () => {
                 if (flips(c)) onFlip?.(c.id);
-                /* its own "when … then …" lines run first, and win the tap when one holds */
-                if (c.rules?.length && onRules?.(c)) return;
+                /* the machine takes the tap when it has a step for the look it is in */
+                if (states?.onStep(c.id, c.flow, c.id)) return;
                 if (c.action) onAction?.(c.action);
               }
             : undefined
         }
         onAction={onAction}
         onFlip={onFlip}
-        onRules={onRules}
         scrollRt={scrollRt}
         looks={looks}
       />
@@ -767,8 +750,6 @@ function Screen({
   onValue,
   runtime,
   dialog,
-  vars,
-  onRules,
   scrollRt,
   onRule,
 }: {
@@ -790,10 +771,6 @@ function Screen({
   runtime: StateRuntime;
   /** the dialog this screen has open, if any: an in-page overlay, not another screen */
   dialog: { openId: string | null; onOpen: (id: string | null) => void };
-  /** what the variables hold now, and what the document declares */
-  vars: { values: Record<string, VarValue>; declared: Var[] };
-  /** runs a part's conditional rules: true when one of them took the tap */
-  onRules: (it: Item) => boolean;
   /** the live scroll of the containers on this screen */
   scrollRt?: ScrollRuntime;
   /** runs one rule action: what a timed rule does when its wait is over */
@@ -823,23 +800,7 @@ function Screen({
   const timedFired = useRef(new Set<string>());
   /* the looks the variables ask for across this screen: a rule can aim at the part it sits on or at
      another one, so they are worked out for the screen as a whole and then handed to each part */
-  const looked = useMemo(
-    () => looksFor(itemsOf(shownGroups), vars.values, vars.declared, seconds),
-    [shownGroups, vars.values, vars.declared, seconds],
-  );
-  /* a rule that waits runs by itself: the victory that pops ten minutes in, the building that is
-     finished. It runs once per visit, and only when its conditions still hold. */
-  useEffect(() => {
-    if (!onRule) return;
-    for (const it of itemsOf(shownGroups)) {
-      const rule = dueAction(it.rules, vars.values, vars.declared, seconds);
-      if (rule && !timedFired.current.has(rule.id)) {
-        timedFired.current.add(rule.id);
-        onRule(rule.do);
-      }
-    }
-  }, [seconds, shownGroups, vars.values, vars.declared, onRule]);
-  /* A step that waits runs by itself just as a rule does: the part that heals in thirty seconds,
+  /* A step that waits runs by itself: the part that heals in thirty seconds,
      the button that goes back to what it said. It counts from the moment the part entered the look
      it is in — or from this screen being shown, for the look it was drawn in — and each step runs
      once per visit, so a loop cannot spin on its own clock. */
@@ -850,13 +811,13 @@ function Screen({
       for (const { key, owner, flow } of machines) {
         const entry = runtime.at[key];
         const elapsed = Math.max(0, (runtime.now - (entry?.since ?? shownAt.current)) / 1000);
-        const step = firstDueStep(flow, lookAt(runtime.at, key), vars.values, vars.declared, elapsed);
+        const step = firstDueStep(flow, lookAt(runtime.at, key), elapsed);
         if (!step || timedFired.current.has(`step:${key}:${step.id}`)) continue;
         timedFired.current.add(`step:${key}:${step.id}`);
         runtime.take(key, owner, step);
       }
     }
-  }, [seconds, shownGroups, vars.values, vars.declared, runtime]);
+  }, [seconds, shownGroups, runtime]);
   const modalIds = new Set(shownGroups.flatMap((g) => { const rail = modalRailOf(g); return rail ? [rail.id] : []; }));
   /* an in-page overlay is a group on this very screen: it stays out of the way until a tap
      opens it, and the level it was authored with decides how it takes the screen over */
@@ -1084,24 +1045,12 @@ function Screen({
               return { ...t, label: st.item.label, disabled: st.disabled, grown: st.grown };
             };
             if (it.slotFlows && it.tabs?.length) shown = { ...shown, tabs: it.tabs.map(tabLook) };
-            /* text that reads a variable shows what it holds now, so a resource line counts
-               down as the visitor spends */
-            if (vars.declared.length) {
-              const decl = vars.declared;
-              const filled = { ...shown };
-              if (shown.label?.includes("{")) filled.label = varText(shown.label, vars.values, decl);
-              if (shown.supporting?.includes("{")) filled.supporting = varText(shown.supporting, vars.values, decl);
-              if (shown.tabs?.some((t) => t.label.includes("{"))) filled.tabs = shown.tabs.map((t) => ({ ...t, label: varText(t.label, vars.values, decl) }));
-              shown = filled;
-            }
             const tap =
-              act || flips(it) || (it.rules?.length ?? 0) > 0 || it.flow
+              act || flips(it) || it.flow
                 ? () => {
                     if (flips(it)) onFlip(it.id);
                     /* the machine takes the tap when it has a step for the look it is in */
                     if (runtime.onStep(it.id, it.flow, it.id)) return;
-                    /* a conditional tap wins: the plain action is the "otherwise" branch */
-                    if (it.rules?.length && onRules(it)) return;
                     if (act) runAction(act);
                   }
                 : undefined;
@@ -1121,8 +1070,7 @@ function Screen({
                 onFlip={onFlip}
                 states={runtime}
                 scrollRt={scrollRt}
-                looks={looked}
-                onRules={onRules}
+                looks={runtime.pinned}
                 onSlot={
                   slotActions || navKind
                     ? (slot, animate) => {
@@ -1141,9 +1089,6 @@ function Screen({
                           if (a) onValue(`${navKey}:opened:${a.to}`, Number(slot.slice(4)));
                         }
                         if (modalIds.has(it.id)) closeRails(animate);
-                        /* a bar can be gated as a whole — "not enough stamina" — before the
-                           destination's own action runs */
-                        if (it.rules?.length && onRules(it)) return;
                         if (a) runAction(a);
                       }
                     : undefined
@@ -1236,7 +1181,7 @@ export function Preview({
   nowRef.current = now;
   const lastTick = useRef(Date.now());
   /* whether any part in the document is waiting on a clock, so the ticker knows to run at all */
-  const timed = useMemo(() => hasTimedRules(itemsOf(doc.groups)) || hasTimedSteps(itemsOf(doc.groups)), [doc.groups]);
+  const timed = useMemo(() => hasTimedSteps(itemsOf(doc.groups)), [doc.groups]);
   const timedRef = useRef(timed);
   timedRef.current = timed;
   /* the button the visitor touched last: it reads as the screen's current choice */
@@ -1259,12 +1204,6 @@ export function Preview({
       return withLayers(t, hereRef.current, typeof next === "function" ? next(cur) : next);
     });
   }, []);
-  /* what the variables hold: the preview opens on the values the author set, and every rule
-     that writes one changes what the screens after it show */
-  const [vars, setVars] = useState<Record<string, VarValue>>(() => initialVars(doc.vars));
-  const varsRef = useRef(vars);
-  varsRef.current = vars;
-  const declared = useMemo(() => doc.vars ?? [], [doc.vars]);
   const [peek, setPeek] = useState<Peek | null>(null);
   const stackRef = useRef(stack);
   stackRef.current = stack;
@@ -1322,8 +1261,6 @@ export function Preview({
      popped over it — plus the shared ones. Another page's variables are not on screen, and a long
      list of them is noise; a page with none of its own falls back to the whole list, so nothing is
      ever out of reach. */
-  const onShow = varsInFrames(declared, [current?.id ?? "", ...layers.map((l) => l.frameId)]);
-  const watched = onShow.length ? onShow : declared;
   const peekFrame = peek ? frames.find((f) => f.id === peek.frameId) : undefined;
   const { w: frameW, h: frameH } = current ? frameSizeOf(current) : { w: PHONE_W, h: PHONE_H };
   const phone = current ? isPhoneFrame(current) : true;
@@ -1493,48 +1430,11 @@ export function Preview({
         if (a.icon !== undefined) patch.icon = a.icon || null;
         if (a.label !== undefined) patch.label = a.label;
         if (a.color !== undefined) patch.color = a.color;
-        if (a.variant !== undefined) patch.variant = a.variant;
         setPinned((m) => ({ ...m, [target]: { ...m[target], ...patch } }));
         return;
       }
-      const v = declared.find((d) => d.id === a.varId);
-      if (v) setVars((cur) => ({ ...cur, [a.varId]: writtenValue(v, a, cur[a.varId]) }));
     },
-    [declared, go, back, closeLayer],
-  );
-
-  const runRules = useCallback(
-    (it: Item): boolean => {
-      const rule = firstRule(it.rules, varsRef.current, declared);
-      if (!rule) return false;
-      const a = rule.do;
-      if (a.kind === "goto") {
-        go({ to: a.to, transition: a.transition });
-        return true;
-      }
-      if (a.kind === "back") {
-        back();
-        return true;
-      }
-      if (a.kind === "close") {
-        /* An explicit close puts away whatever overlay the part stands in: the top layer for a
-           part on a page, or the screen's own in-page overlay for a part inside one. */
-        if (layerRef.current.length) closeLayer();
-        else {
-          const here = stackRef.current[stackRef.current.length - 1]?.id;
-          if (here) setDialogs((m) => (m[here] ? { ...m, [here]: null } : m));
-        }
-        return true;
-      }
-      /* a look is already on screen while its conditions hold: the tap only says this branch is the
-         one that wins, so the part's plain action — the "otherwise" branch — stays out of it */
-      if (a.kind === "look") return true;
-      /* a write changes what every screen after it reads, and the screens repaint on their own */
-      const v = declared.find((d) => d.id === a.varId);
-      if (v) setVars((cur) => ({ ...cur, [a.varId]: writtenValue(v, a, cur[a.varId]) }));
-      return true;
-    },
-    [declared, go, back, closeLayer],
+    [go, back, closeLayer],
   );
 
   /** Takes one step of a part's machine: the part lands in the look the step names, and whatever
@@ -1549,16 +1449,15 @@ export function Preview({
   /** Takes the step a tap calls for, when the machine has one for the look the part is in. */
   const stepOnTap = useCallback(
     (key: string, flow: PartFlow | undefined, owner: string | null) => {
-      const step = firstTapStep(flow, lookAt(at, key), values, declared);
+      const step = firstTapStep(flow, lookAt(at, key));
       if (!step) return false;
       take(key, owner, step);
       return true;
     },
-    [at, values, declared, take],
+    [at, take],
   );
 
   const [picker, setPicker] = useState(false);
-  const [varsOpen, setVarsOpen] = useState(false);
   const [speedOpen, setSpeedOpen] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1721,8 +1620,6 @@ export function Preview({
     values,
     onValue: (id: string, v: number) => setValues((m) => ({ ...m, [id]: v })),
     runtime: { at, pinned, now, onStep: stepOnTap, take, activeId, onActivate: setActiveId },
-    vars: { values: vars, declared },
-    onRules: runRules,
     onRule: runRuleAction,
     /* a container's scroll is a runtime value like a slider's position: what the visitor moved it
        to is remembered per part, and the screen's own swipe gives way to a drag a container claims */
@@ -2138,63 +2035,6 @@ export function Preview({
               )}
             </AnimatePresence>
           </div>
-          {/* what the variables hold right now: a prototype is only as good as the state it
-              carries, and this is the one place the author can watch it change */}
-          {watched.length > 0 && (
-            <div style={{ position: "relative", minWidth: 0 }}>
-              <button
-                onClick={() => setVarsOpen((v) => !v)}
-                title={t("variables", lang)}
-                aria-expanded={varsOpen}
-                className="m3-press"
-                style={{ ...barBtn, color: p.onSurfaceVariant, maxWidth: wide ? undefined : 120 }}
-              >
-                <Icon name="data_object" size={20} />
-                <span style={label}>{t("variables", lang)}</span>
-                <span style={{ fontSize: 11, fontWeight: 700, color: p.primary }}>{declared.length}</span>
-              </button>
-              <AnimatePresence>
-                {varsOpen && (
-                  <motion.div
-                    role="menu"
-                    initial={{ opacity: 0, y: 6, scale: 0.96 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 6, scale: 0.96 }}
-                    transition={{ duration: 0.16, ease: EASE }}
-                    style={{
-                      position: "absolute",
-                      ...(wide ? { right: "calc(100% + 14px)", bottom: 0 } : { bottom: 48, left: "50%", transform: "translateX(-50%)" }),
-                      minWidth: 220,
-                      maxHeight: "50vh",
-                      overflowY: "auto",
-                      padding: 10,
-                      borderRadius: 18,
-                      background: p.surfaceContainerLow,
-                      boxShadow: "0 6px 20px rgba(0,0,0,0.16), 0 0 0 1px rgba(0,0,0,0.04)",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 6,
-                    }}
-                  >
-                    {watched.map((v) => (
-                      <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-                        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: p.onSurfaceVariant }}>{`{${v.name}}`}</span>
-                        <span style={{ fontWeight: 700, color: p.onSurface }}>{String(vars[v.id] ?? "")}</span>
-                      </div>
-                    ))}
-                    <button
-                      onClick={() => setVars(initialVars(declared))}
-                      className="m3-press"
-                      style={{ height: 36, borderRadius: 12, border: "none", background: p.secondaryContainer, color: p.onSecondaryContainer, fontSize: 12, fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
-                    >
-                      <Icon name="restart_alt" size={18} />
-                      {t("resetVars", lang)}
-                    </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          )}
           <button onClick={onClose} title={t("close", lang)} className="m3-press" style={{ ...barBtn, color: p.onSurfaceVariant }}>
             <Icon name="close" size={20} />
             <span style={label}>{t("closeBtn", lang)}</span>

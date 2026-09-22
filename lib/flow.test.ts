@@ -28,6 +28,16 @@ const frames = [frame("home", "Home"), frame("details", "Details", 500), frame("
 
 const nodeOf = (flow: Flow, id: string) => flow.nodes.find((n) => n.id === id)!;
 
+describe("naming a part", () => {
+  it("prefers the name its author gave the row over the text it shows", () => {
+    const badge = item({ id: "b", kind: "badge", label: "3", name: "未读消息" });
+    expect(itemNameOf(badge, "zh")).toBe("未读消息");
+    /* an unnamed part is still named by its text, and a textless one by its kind */
+    expect(itemNameOf(item({ id: "b2", kind: "badge", label: "3" }), "zh")).toBe("3");
+    expect(itemNameOf(item({ id: "b3", kind: "badge", label: "" }), "zh")).toBe("徽标");
+  });
+});
+
 describe("a part's machine", () => {
   const machine = (patch: Partial<Item>): Item =>
     item({
@@ -373,50 +383,6 @@ describe("overlay pages in the flow", () => {
     /* the same bag page is reachable from two screens: one node, two edges */
     expect(flow.edges.filter((e) => e.to === "bag")).toHaveLength(2);
     expect(flow.edges.find((e) => e.from === "details" && e.to === "bag")?.triggers).toHaveLength(1);
-  });
-});
-
-describe("conditional taps in the flow", () => {
-  const vars = [{ id: "st", name: "stamina", kind: "number" as const, initial: 12 }];
-  const gated = (): Doc =>
-    doc(
-      [frames[0], frames[1]],
-      [
-        run("g1", frames[0], [
-          item({
-            id: "fight",
-            label: "Fight",
-            rules: [
-              { id: "r1", when: [{ varId: "st", op: ">=", value: 10 }], do: { kind: "goto", to: "details", transition: "slide" } },
-              { id: "r2", do: { kind: "add", varId: "st", delta: -10 } },
-            ],
-          }),
-        ]),
-      ],
-    );
-
-  it("draws a conditional jump as the same edge, with its condition on it", () => {
-    const d = { ...gated(), vars };
-    const flow = buildFlow(d, "en");
-    const edge = flow.edges.find((e) => e.to === "details")!;
-    expect(edge.from).toBe("home");
-    expect(edge.triggers[0].itemLabel).toContain("stamina ≥ 10");
-    expect(nodeOf(flow, "details").depth).toBe(1);
-  });
-
-  it("reads a rule that writes a variable as a rule of the part", () => {
-    const d = { ...gated(), vars };
-    const flow = buildFlow(d, "en");
-    const state = nodeOf(flow, "home").rules.filter((r) => r.kind === "state");
-    expect(state.map((r) => r.description)).toEqual([FLOW_TEXT.en.ruleWrite("Fight", "", "stamina − 10")]);
-    expect(flowMarkdown(flow, "en")).toContain("stamina − 10");
-  });
-
-  it("says nothing about a rule that names a variable the document does not declare", () => {
-    /* the report is what flags those: the diagram only draws what it can follow */
-    const flow = buildFlow(gated(), "en");
-    expect(flow.edges.filter((e) => e.to === "details")).toHaveLength(1);
-    expect(nodeOf(flow, "home").rules.filter((r) => r.kind === "state")).toEqual([]);
   });
 });
 

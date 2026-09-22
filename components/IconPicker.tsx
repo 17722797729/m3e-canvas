@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Palette } from "@/lib/tokens";
 import { t, useLang } from "@/lib/i18n";
+import { inputBox } from "./ui";
 import { IconBtn } from "./ui";
 
 type IconMeta = { n: string; p: number; t: string };
@@ -267,13 +268,11 @@ export function IconPicker({
             onChange={(e) => setQ(e.target.value)}
             placeholder={icons ? t("searchIcons", lang) : "…"}
             style={{
+              ...inputBox(palette, 20),
               width: "100%",
               height: 40,
               paddingLeft: 40,
               paddingRight: 12,
-              borderRadius: 20,
-              border: "none",
-              background: palette.surfaceContainerHigh,
               color: palette.onSurface,
               fontSize: 14,
               outline: "none",

@@ -6,6 +6,7 @@ import { Doc, Palette } from "@/lib/tokens";
 import { shareLink } from "@/lib/share";
 import { Icon } from "./M3Node";
 import { t, useLang } from "@/lib/i18n";
+import { inputBox } from "./ui";
 
 const BASE = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
@@ -197,11 +198,9 @@ export function ShareDialog({
               autoFocus
               spellCheck={false}
               style={{
+                ...inputBox(p, 14),
                 width: "100%",
                 padding: "10px 14px",
-                borderRadius: 14,
-                border: "none",
-                background: p.surface,
                 color: p.onSurface,
                 font: "inherit",
                 fontSize: 14,

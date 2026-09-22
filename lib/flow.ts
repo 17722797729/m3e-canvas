@@ -1,4 +1,4 @@
-import { BACK_TARGET, KIND_SPEC, START_LOOK, actionSlotsOf, actionsOf, frameRect, groupBounds, conditionText, isOverlayFrame, isWideRail, lookItem, overlayLevelOfFrame, subtreeOf, writeText, type Doc, type Group, type Item, type ItemState, type OverlayLevel, type PartFlow, type PartStep, type RuleAction, type StateEffect, type Var } from "./tokens";
+import { BACK_TARGET, KIND_SPEC, START_LOOK, actionSlotsOf, actionsOf, frameRect, groupBounds, isOverlayFrame, isWideRail, lookItem, overlayLevelOfFrame, subtreeOf, type Doc, type Group, type Item, type ItemState, type OverlayLevel, type PartFlow, type PartStep, type RuleAction, type StateEffect } from "./tokens";
 import { KIND_TEXT, overlayLevelText, t, type Lang } from "./i18n";
 
 /** the level's name in the UI language, for the diagram's node captions */
@@ -322,7 +322,8 @@ export const FLOW_TEXT: Record<
 export function itemNameOf(it: Item, lang: Lang): string {
   const spec = KIND_SPEC[it.kind] ?? KIND_SPEC.box;
   const noun = KIND_TEXT[lang][it.kind]?.noun ?? spec.label;
-  return it.label.trim() || noun;
+  /* the name its author gave the row wins: a badge showing "3" is the "unread count" */
+  return it.name?.trim() || it.label.trim() || noun;
 }
 
 /** The name of what was actually tapped. On a bar the tapped thing is a destination or
@@ -381,19 +382,16 @@ function lookChanges(flow: PartFlow | undefined, id: string, lang: Lang): string
 }
 
 /** One step of a machine as a sentence: how it starts, where it lands, and what else it does. */
-function stepText(it: Item, flow: PartFlow | undefined, step: PartStep, who: string, lang: Lang, when: string): string {
+function stepText(it: Item, flow: PartFlow | undefined, step: PartStep, who: string, lang: Lang): string {
   const x = FLOW_TEXT[lang];
   const how = step.trigger.kind === "after" ? x.afterHow(String(step.trigger.seconds)) : x.tapHow;
   const extra = (step.do ?? []).map((a) => actionWords(a, lang)).filter(Boolean).join(x.changeJoin);
-  const line = x.step(who, how, lookWords(it, flow, step.to, lang), lookChanges(flow, step.to, lang), extra);
-  return when ? `${line}（${when}）` : line;
+  return x.step(who, how, lookWords(it, flow, step.to, lang), lookChanges(flow, step.to, lang), extra);
 }
 
 /** What else a step does, for the actions that are not a jump of their own. */
 function actionWords(a: RuleAction, lang: Lang): string {
-  if (a.kind === "look") return FLOW_TEXT[lang].look(a);
-  if (a.kind === "set" || a.kind === "add" || a.kind === "toggle") return "";
-  return "";
+  return a.kind === "look" ? FLOW_TEXT[lang].look(a) : "";
 }
 
 /** What a tap rule says: disable, cooldown, label, variant and hide, composed for the requested
@@ -470,8 +468,6 @@ export function buildFlow(doc: Doc, lang: Lang): Flow {
      the canvas and is still not where the visitor starts */
   const homeId = frames.find((f) => !isOverlayFrame(f))?.id;
   const overlayIds = new Set(frames.filter(isOverlayFrame).map((f) => f.id));
-  /* the declared variables: conditions and writes are named by them, not by id */
-  const vars: Var[] = doc.vars ?? [];
   const nameOf = (id: string) => frameNameOf(frames.find((f) => f.id === id)?.name ?? "", lang);
 
   /* A dialog lives on its own page as a hidden overlay, but the flow still reads it as a
@@ -522,54 +518,6 @@ export function buildFlow(doc: Doc, lang: Lang): Flow {
         });
         reacts = true;
       }
-      /* Conditional taps: a rule that goes somewhere is an edge like any other, with its
-         condition spelled out on it; a rule that writes a variable is a rule of the part. */
-      const self = triggerNameOf(it, "", lang);
-      for (const rule of it.rules ?? []) {
-        const a = rule.do;
-        const when = (rule.when ?? []).map((c) => conditionText(c, vars)).join(", ");
-        if (a.kind === "back") {
-          back.get(from)?.push(when ? `${self} (${when})` : self);
-          reacts = true;
-          continue;
-        }
-        if (a.kind === "close") {
-          rules.get(from)?.push({ kind: "state", itemId: it.id, itemLabel: self, description: x.ruleWrite(label, when, "close") });
-          reacts = true;
-          continue;
-        }
-        if (a.kind === "goto") {
-          const isDialog = dialogs.has(a.to);
-          if ((!frameIds.has(a.to) && !isDialog) || a.to === from) continue;
-          /* an overlay page is popped over the screen that tapped it, so the edge reads the
-             same way a dialog does even though the target is a page of its own */
-          const pops = isDialog || overlayIds.has(a.to);
-          const named = when ? `${self} · ${when}` : self;
-          jumps.get(from)?.add(a.to);
-          rules.get(from)?.push({
-            kind: "jump",
-            nodeId: from,
-            itemId: it.id,
-            itemLabel: named,
-            toFrameId: a.to,
-            dialog: pops,
-            description: pops ? x.dialogLine(nameOf(from), named, nodeName(a.to)) : x.jumpMarkdown(nameOf(from), named, nodeName(a.to)),
-          });
-          reacts = true;
-          continue;
-        }
-        /* a look rule changes what the part shows while its conditions hold, so it reads as a
-           state of that part rather than as a jump */
-        if (a.kind === "look") {
-          rules.get(from)?.push({ kind: "state", itemId: it.id, itemLabel: label, description: x.ruleWrite(label, when, x.look(a)) });
-          reacts = true;
-          continue;
-        }
-        const written = vars.find((v) => v.id === a.varId);
-        if (!written) continue;
-        rules.get(from)?.push({ kind: "state", itemId: it.id, itemLabel: label, description: x.ruleWrite(label, when, writeText(written, a)) });
-        reacts = true;
-      }
       /* a bar's own collapse button belongs to the flow too: it is a state change */
       if (it.kind === "navRail" && isWideRail(it)) {
         rules.get(from)?.push({ kind: "state", itemId: it.id, itemLabel: label, description: x.railToggle(label) });
@@ -583,7 +531,6 @@ export function buildFlow(doc: Doc, lang: Lang): Flow {
          look it lands in. A step that jumps is an edge of the screen flow like any other tap. */
       const sayMachine = (machine: PartFlow | undefined, who: string) => {
         for (const st of machine?.steps ?? []) {
-          const when = (st.when ?? []).map((c) => conditionText(c, vars)).join("、");
           for (const a of st.do ?? []) {
             if (a.kind !== "goto" || (!frameIds.has(a.to) && !dialogs.has(a.to)) || a.to === from) continue;
             jumps.get(from)?.add(a.to);
@@ -597,7 +544,7 @@ export function buildFlow(doc: Doc, lang: Lang): Flow {
               description: x.jumpMarkdown(nameOf(from), who, nodeName(a.to)),
             });
           }
-          rules.get(from)?.push({ kind: "state", itemId: it.id, itemLabel: who, description: stepText(it, machine, st, who, lang, when) });
+          rules.get(from)?.push({ kind: "state", itemId: it.id, itemLabel: who, description: stepText(it, machine, st, who, lang) });
           reacts = true;
         }
       };

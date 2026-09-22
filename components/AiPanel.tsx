@@ -5,6 +5,7 @@ import { Palette } from "@/lib/tokens";
 import { t, useLang } from "@/lib/i18n";
 import { AiSettings, PROVIDERS, Provider, providerSpec } from "@/lib/ai";
 import { Icon } from "./M3Node";
+import { inputBox } from "./ui";
 
 /** the message shown for a failed request, mapped from the error codes lib/ai throws */
 export function aiErrorText(e: unknown, lang: ReturnType<typeof useLang>): string {
@@ -63,12 +64,10 @@ export function AiWriteBtn({ p, busy, disabled, onClick, onCancel, label, title 
 const BASE = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
 const field = (p: Palette): React.CSSProperties => ({
+  ...inputBox(p),
   width: "100%",
   height: 44,
   padding: "0 14px",
-  borderRadius: 22,
-  border: `1px solid ${p.outlineVariant}`,
-  background: p.surface,
   color: p.onSurface,
   fontSize: 13,
   fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",

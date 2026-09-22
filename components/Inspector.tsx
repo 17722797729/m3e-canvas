@@ -81,17 +81,13 @@ import {
   overlayLevelOf,
   overlayLevelOfFrame,
   /* variables and the conditional taps that read them */
-  CONDITION_OPS,
   TAB_STYLES,
   tabPanelsPatch,
   needsTabPanels,
   tabStyleOf,
   type TabStyle,
-  CONDITION_SYMBOLS,
   overlayRuleOf,
-  NUMERIC_OPS,
   RULE_ACTIONS,
-  isTimedRule,
   /* the state machine a part runs, and the flow the inspector draws it as */
   START_LOOK,
   lookItem,
@@ -99,14 +95,7 @@ import {
   type PartFlow,
   type PartLook,
   type PartStep,
-  VAR_KINDS,
-  varInitial,
-  type Condition,
-  type ConditionOp,
-  type ItemRule,
   type RuleAction,
-  type Var,
-  type VarValue,
 } from "@/lib/tokens";
 import { IconPicker } from "./IconPicker";
 import { Popover } from "./Menus";
@@ -792,7 +781,6 @@ export function Inspector({
   onSaveComposite,
   childCount = 0,
   inContainer = false,
-  vars = [],
   widths = {},
   lookTargets = [],
 }: {
@@ -829,8 +817,6 @@ export function Inspector({
   childCount?: number;
   /** the selected part sits inside a container */
   inContainer?: boolean;
-  /** the variables a condition can test, and a rule can write */
-  vars?: Var[];
   /** measured widths, so a scrolling container's content measures the way the canvas measures it */
   widths?: Record<string, number>;
   /** the other parts on this page, so a rule can aim a look at one of them */
@@ -1875,7 +1861,6 @@ export function Inspector({
             lookTargets={lookTargets}
             slot={actionSlot}
             onSlot={setActionSlot}
-            vars={vars}
           />
         </Section>
       )}
@@ -1888,9 +1873,6 @@ const RULE_LABEL: Record<RuleAction["kind"], UIKey> = {
   goto: "ruleGoto",
   back: "ruleBack",
   close: "ruleClose",
-  set: "ruleSet",
-  add: "ruleAdd",
-  toggle: "ruleToggle",
   look: "ruleLook",
 };
 
@@ -2003,24 +1985,6 @@ function DialogBody({
   );
 }
 
-/** a labelled dropdown for a short list: variables, comparisons and rule actions all need one */
-
-/** A field whose shape follows the variable's kind: a number counts, a switch flips, text is text. */
-function VarValueField({ v, value, onChange, p }: { v: Var; value: VarValue; onChange: (v: VarValue) => void; p: Palette }) {
-  const lang = useLang();
-  if (v.kind === "boolean") return <Toggle on={value === true || value === "true"} onChange={onChange} p={p} icon="toggle_on" label={t("ruleValue", lang)} grow />;
-  return (
-    <Field
-      value={String(value ?? "")}
-      onChange={(raw) => onChange(v.kind === "number" ? Number(raw.replace(/[^0-9.-]/g, "")) || 0 : raw)}
-      placeholder={t("ruleValue", lang)}
-      p={p}
-      icon={v.kind === "number" ? "tag" : "text_fields"}
-      height={36}
-    />
-  );
-}
-
 /** the "add one more" button these panels share: a dashed line that reads as an empty slot */
 const dashedStyle = (p: Palette): React.CSSProperties => ({
   minHeight: 32,
@@ -2038,93 +2002,28 @@ const dashedStyle = (p: Palette): React.CSSProperties => ({
   gap: 6,
 });
 
-/** the card one rule, one node or one step of a flow is drawn in */
-const cardStyle = (p: Palette, background?: string): React.CSSProperties => ({
+/** the card one node or one step of a flow is drawn in */
+const cardStyle = (p: Palette): React.CSSProperties => ({
   display: "flex",
   flexDirection: "column",
   gap: 8,
   padding: 10,
   borderRadius: 14,
-  background: background ?? p.surfaceContainerLow,
+  background: p.surfaceContainerLow,
 });
 
-/**
- * The action a picker asks for, keeping what still applies and seeding what does not: switching to a
- * jump keeps the page it went to, switching to a look starts from the part as it is drawn now. A
- * variable action with no variable to write returns null, so the choice is simply not taken.
- */
-function seededAction(kind: RuleAction["kind"], from: RuleAction, item: Item, vars: Var[], frames: Frame[]): RuleAction | null {
+/** The action a picker asks for, keeping what still applies: switching to a jump keeps the page it
+ *  went to, and switching to a look starts from the part as it is drawn now. */
+function seededAction(kind: RuleAction["kind"], from: RuleAction, item: Item, frames: Frame[]): RuleAction {
   if (kind === "goto") return { kind, to: from.kind === "goto" ? from.to : frames[0]?.id ?? "", transition: "slide" };
-  if (kind === "back" || kind === "close") return { kind };
-  if (kind === "look") return { kind, icon: item.icon ?? undefined, variant: item.variant };
-  if (vars.length === 0) return null;
-  const v = vars[0];
-  return kind === "add" ? { kind, varId: v.id, delta: -1 } : kind === "set" ? { kind, varId: v.id, value: varInitial(v) } : { kind, varId: v.id };
-}
-
-/** The conditions one rule — or one step of a part's machine — tests before it runs. */
-function ConditionsEditor({
-  when,
-  onChange,
-  vars,
-  p,
-}: {
-  when: Condition[];
-  onChange: (when: Condition[] | undefined) => void;
-  vars: Var[];
-  p: Palette;
-}) {
-  const lang = useLang();
-  const patch = (i: number, next: Partial<Condition>) => onChange(when.map((c, j) => (j === i ? { ...c, ...next } : c)));
-  const drop = (i: number) => {
-    const rest = when.filter((_, j) => j !== i);
-    onChange(rest.length ? rest : undefined);
-  };
-  return (
-    <>
-      {when.map((c, i) => {
-        const v = vars.find((x) => x.id === c.varId);
-        /* a numeric comparison says nothing about text or a switch, so those operators are not
-           offered for them */
-        const ops = (v?.kind ?? "number") === "number" ? CONDITION_OPS : CONDITION_OPS.filter((o) => !NUMERIC_OPS.includes(o));
-        return (
-          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            {vars.length > 1 ? (
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <Pick
-                  options={vars.map((x) => ({ key: x.id, label: x.name, icon: VAR_KINDS.find((k) => k.key === x.kind)?.icon }))}
-                  value={c.varId}
-                  onChange={(varId) => patch(i, { varId })}
-                  p={p}
-                  title={t("varName", lang)}
-                />
-              </div>
-            ) : (
-              <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v?.name ?? c.varId}</span>
-            )}
-            <div style={{ flex: "0 0 64px" }}>
-              <Pick options={ops.map((op) => ({ key: op, label: CONDITION_SYMBOLS[op] }))} value={c.op} onChange={(op) => patch(i, { op })} p={p} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>{v && <VarValueField v={v} value={c.value} onChange={(value) => patch(i, { value })} p={p} />}</div>
-            <IconBtn icon="close" p={p} title={t("removeRule", lang)} size={30} onClick={() => drop(i)} />
-          </div>
-        );
-      })}
-      {vars.length > 0 && (
-        <button onClick={() => onChange([...when, { varId: vars[0].id, op: ">=" as ConditionOp, value: 1 }])} className="m3-press" style={dashedStyle(p)}>
-          <Icon name="add" size={16} />
-          {t("addCondition", lang)}
-        </button>
-      )}
-    </>
-  );
+  if (kind === "look") return { kind, icon: item.icon ?? undefined };
+  return { kind: kind as "back" | "close" };
 }
 
 /** The fields one rule action needs, under the picker that chose it. */
 function ActionFields({
   action,
   onChange,
-  vars,
   frames,
   item,
   lookTargets = [],
@@ -2132,7 +2031,6 @@ function ActionFields({
 }: {
   action: RuleAction;
   onChange: (a: RuleAction) => void;
-  vars: Var[];
   frames: Frame[];
   /** the part the action belongs to: a look starts from what it shows now */
   item: Item;
@@ -2142,8 +2040,6 @@ function ActionFields({
 }) {
   const lang = useLang();
   const a = action;
-  const written = a.kind === "set" || a.kind === "add" || a.kind === "toggle" ? vars.find((v) => v.id === a.varId) : undefined;
-  const varOptions = vars.map((v) => ({ key: v.id, label: v.name, icon: VAR_KINDS.find((k) => k.key === v.kind)?.icon }));
   return (
     <>
       {a.kind === "goto" && (
@@ -2171,7 +2067,9 @@ function ActionFields({
               guessing which row the text field is */}
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("lookText", lang)}</div>
-            <Field value={a.label ?? ""} onChange={(label) => onChange({ ...a, label })} p={p} placeholder={t("label", lang)} icon="edit" />
+            {/* the words a look puts on the part: a text box that wraps and grows, since the line
+                may be a whole sentence and the canvas wraps it itself */}
+            <Field value={a.label ?? ""} onChange={(label) => onChange({ ...a, label })} p={p} placeholder={t("label", lang)} icon="edit" multiline rows={1} grow />
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("lookColor", lang)}</div>
@@ -2191,127 +2089,10 @@ function ActionFields({
               )}
             </div>
           </div>
-          <Segmented<Variant>
-            options={VARIANTS.map((v) => ({ key: v.key, title: t(v.key, lang) }))}
-            value={isVariant(a.variant) ? a.variant : "filled"}
-            onChange={(variant) => onChange({ ...a, variant })}
-            p={p}
-            height={36}
-          />
           <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("ruleLookHint", lang)}</div>
         </>
       )}
-      {(a.kind === "set" || a.kind === "add" || a.kind === "toggle") && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <Pick
-            options={varOptions}
-            value={a.varId}
-            onChange={(varId) => {
-              const v = vars.find((x) => x.id === varId);
-              if (!v) return;
-              onChange(a.kind === "set" ? { ...a, varId, value: varInitial(v) } : { ...a, varId });
-            }}
-            p={p}
-            title={t("varName", lang)}
-          />
-          {a.kind === "add" && (
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Field
-                value={String(a.delta)}
-                onChange={(raw) => {
-                  const n = Number(raw.replace(/[^0-9.-]/g, ""));
-                  if (Number.isFinite(n)) onChange({ ...a, delta: n });
-                }}
-                placeholder={t("ruleValue", lang)}
-                p={p}
-                icon="exposure"
-                height={36}
-              />
-            </div>
-          )}
-          {a.kind === "set" && written && (
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <VarValueField v={written} value={a.value} onChange={(value) => onChange({ ...a, value })} p={p} />
-            </div>
-          )}
-        </div>
-      )}
     </>
-  );
-}
-
-/**
- * Conditional taps. Each rule is one "when … then …" line, tried in order; the plain action
- * above is what happens when none of them holds, which is why a rule may carry no condition at
- * all and still be useful as the last branch.
- */
-function RuleList({
-  rules,
-  onChange,
-  vars,
-  frames,
-  item,
-  lookTargets = [],
-  p,
-}: {
-  rules: ItemRule[];
-  onChange: (rules: ItemRule[]) => void;
-  vars: Var[];
-  frames: Frame[];
-  /** the part the rules belong to: a look rule starts from what it shows now */
-  item: Item;
-  /** the other parts on the page, for a look aimed at one of them */
-  lookTargets?: { id: string; name: string }[];
-  p: Palette;
-}) {
-  const lang = useLang();
-  const write = (id: string, next: Partial<ItemRule>) => onChange(rules.map((r) => (r.id === id ? { ...r, ...next } : r)));
-  /* a new rule lands as a jump to the first page, the place almost every rule wants to go */
-  const add = () => onChange([...rules, { id: uid(), do: { kind: "goto", to: frames[0]?.id ?? "", transition: "slide" } }]);
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {rules.map((rule) => {
-        const a = rule.do;
-        return (
-          <div key={rule.id} style={cardStyle(p)}>
-            {/* a rule waits for a tap, or for the clock: "ten minutes later the battle is won" */}
-            <Toggle on={isTimedRule(rule)} onChange={(on) => write(rule.id, { after: on ? 60 : undefined })} p={p} icon="timer" label={t("ruleAfter", lang)} grow />
-            {isTimedRule(rule) && (
-              <>
-                <Slider icon="timer" title={t("ruleAfter", lang)} value={rule.after ?? 60} min={1} max={3600} step={1} onChange={(after) => write(rule.id, { after })} p={p} unit="s" />
-                <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("ruleAfterHint", lang)}</div>
-              </>
-            )}
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: 1, minWidth: 0 }}>{t("ruleWhen", lang)}</span>
-              <IconBtn icon="delete" p={p} danger title={t("removeRule", lang)} size={30} onClick={() => onChange(rules.filter((r) => r.id !== rule.id))} />
-            </div>
-            <ConditionsEditor when={rule.when ?? []} onChange={(when) => write(rule.id, { when })} vars={vars} p={p} />
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: "0 0 auto" }}>{t("ruleThen", lang)}</span>
-              <Pick
-                options={RULE_ACTIONS.map((r2) => ({ key: r2.key, icon: r2.icon, label: t(RULE_LABEL[r2.key], lang) }))}
-                value={a.kind}
-                onChange={(kind) => {
-                  const next = seededAction(kind, a, item, vars, frames);
-                  if (next) write(rule.id, { do: next });
-                }}
-                p={p}
-                title={t("ruleThen", lang)}
-              />
-            </div>
-            <ActionFields action={a} onChange={(do2) => write(rule.id, { do: do2 })} vars={vars} frames={frames} item={item} lookTargets={lookTargets} p={p} />
-          </div>
-        );
-      })}
-      <button onClick={add} className="m3-press" style={{ ...dashedStyle(p), height: 40, borderRadius: 20, fontSize: 13 }}>
-        <Icon name="add" size={20} />
-        {t("addCondRule", lang)}
-      </button>
-      {vars.length === 0 && <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("ruleNoVars", lang)}</div>}
-      {rules.length > 0 && <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("ruleFallback", lang)}</div>}
-    </div>
   );
 }
 
@@ -2356,7 +2137,6 @@ function StepRow({
   onChange,
   onRemove,
   item,
-  vars,
   frames,
   lookTargets,
   extra,
@@ -2368,7 +2148,6 @@ function StepRow({
   onChange: (next: Partial<PartStep>) => void;
   onRemove: () => void;
   item: Item;
-  vars: Var[];
   frames: Frame[];
   lookTargets: { id: string; name: string }[];
   /** the action a new line of the list starts from, or null when there is nothing to seed it with */
@@ -2402,23 +2181,19 @@ function StepRow({
         <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: "0 0 auto" }}>{t("flowTo", lang)}</span>
         <Pick options={targets} value={step.to} onChange={(to) => onChange({ to })} p={p} title={t("flowTo", lang)} />
       </div>
-      <ConditionsEditor when={step.when ?? []} onChange={(when) => onChange({ when })} vars={vars} p={p} />
       {do2.map((a, i) => (
         <div key={i} style={{ display: "flex", flexDirection: "column", gap: 8, padding: 8, borderRadius: 12, background: p.surfaceContainerHigh }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <Pick
               options={RULE_ACTIONS.map((r2) => ({ key: r2.key, icon: r2.icon, label: t(RULE_LABEL[r2.key], lang) }))}
               value={a.kind}
-              onChange={(kind) => {
-                const next = seededAction(kind, a, item, vars, frames);
-                if (next) onChange({ do: do2.map((x, j) => (j === i ? next : x)) });
-              }}
+              onChange={(kind) => onChange({ do: do2.map((x, j) => (j === i ? seededAction(kind, a, item, frames) : x)) })}
               p={p}
               title={t("ruleThen", lang)}
             />
             <IconBtn icon="close" p={p} title={t("removeRule", lang)} size={28} onClick={() => onChange({ do: do2.filter((_, j) => j !== i) })} />
           </div>
-          <ActionFields action={a} onChange={(next) => onChange({ do: do2.map((x, j) => (j === i ? next : x)) })} vars={vars} frames={frames} item={item} lookTargets={lookTargets} p={p} />
+          <ActionFields action={a} onChange={(next) => onChange({ do: do2.map((x, j) => (j === i ? next : x)) })} frames={frames} item={item} lookTargets={lookTargets} p={p} />
         </div>
       ))}
       {extra && (
@@ -2442,7 +2217,6 @@ function FlowEditor({
   item,
   flow,
   onFlow,
-  vars,
   frames,
   lookTargets = [],
   p,
@@ -2451,7 +2225,6 @@ function FlowEditor({
   /** the machine as it stands; undefined for a part that never moves */
   flow: PartFlow | undefined;
   onFlow: (flow: PartFlow | undefined) => void;
-  vars: Var[];
   frames: Frame[];
   lookTargets?: { id: string; name: string }[];
   p: Palette;
@@ -2475,9 +2248,9 @@ function FlowEditor({
     setOpenId(made.id);
   };
   const link = (from: string, to: string) => put(looks, [...steps, { id: uid(), from, to, trigger: { kind: "tap" } }]);
-  /* the action a new line of a step's list starts from: a jump when there are pages to jump to, a
-     switch when there is something to switch, and nothing at all when the document has neither */
-  const extra: RuleAction | null = frames.length ? { kind: "goto", to: frames[0].id, transition: "slide" } : vars.length ? { kind: "toggle", varId: vars[0].id } : null;
+  /* the action a new line of a step's list starts from: a jump when there are pages to jump to,
+     and no button at all when the document has none */
+  const extra: RuleAction | null = frames.length ? { kind: "goto", to: frames[0].id, transition: "slide" } : null;
   const nodes: { id: string; look?: PartLook }[] = [{ id: START_LOOK }, ...looks.map((l) => ({ id: l.id, look: l }))];
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -2561,7 +2334,6 @@ function FlowEditor({
                 onChange={(next) => patchStep(s.id, next)}
                 onRemove={() => dropStep(s.id)}
                 item={item}
-                vars={vars}
                 frames={frames}
                 lookTargets={lookTargets}
                 extra={extra}
@@ -2598,7 +2370,6 @@ function StateRules({
   slots = [],
   slot = "",
   onSlot,
-  vars,
   lookTargets = [],
 }: {
   item: Item;
@@ -2616,8 +2387,6 @@ function StateRules({
   onSlot?: (key: string) => void;
   /** the other parts on the page, for a look that changes one of them */
   lookTargets?: { id: string; name: string }[];
-  /** the variables a condition can test, and a rule can write */
-  vars: Var[];
 }) {
   /* a bar's rules belong to one destination; a plain part keeps them on itself */
   const target = slots.length > 0 ? slot || slots[0].key : "";
@@ -2708,23 +2477,6 @@ function StateRules({
         </div>
       )}
 
-      {/* conditional taps: they run before the plain action above, which is their fallback */}
-      <div style={card}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Icon name="rule" size={18} color={p.onSurfaceVariant} />
-          <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: 1, minWidth: 0 }}>{t("condRules", lang)}</span>
-        </div>
-        <RuleList
-          rules={item.rules ?? []}
-          onChange={(next) => onChange({ rules: next.length ? next : undefined })}
-          vars={vars}
-          frames={frames}
-          item={item}
-          lookTargets={lookTargets}
-          p={p}
-        />
-      </div>
-
       {(flow?.looks.length ?? 0) === 0 && <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant }}>{t("transitionsHint", lang)}</div>}
       {/* the state machine itself: the looks the part can be in, and what moves it between them */}
       <div style={card}>
@@ -2732,7 +2484,7 @@ function StateRules({
           <Icon name="change_circle" size={18} color={p.onSurfaceVariant} />
           <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: 1, minWidth: 0 }}>{t("onTap", lang)}</span>
         </div>
-        <FlowEditor item={item} flow={flow} onFlow={writeFlow} vars={vars} frames={frames} lookTargets={lookTargets} p={p} />
+        <FlowEditor item={item} flow={flow} onFlow={writeFlow} frames={frames} lookTargets={lookTargets} p={p} />
       </div>
     </div>
   );

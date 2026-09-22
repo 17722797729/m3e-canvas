@@ -1,4 +1,4 @@
-import { Doc, Group, KIND_ORDER, Kind, VARIANTS, isCardAlign, isCardImagePos, isConditionOp, isCustomColor, isOverlayLevel, isPlace, isRuleKind, isStateEffect, isTextToken, isPlatform, isTrackThickness, isVarKind, isVariant } from "./tokens";
+import { Doc, Group, KIND_ORDER, Kind, VARIANTS, isCardAlign, isCardImagePos, isCustomColor, isOverlayLevel, isPlace, isRuleKind, isStateEffect, isTextToken, isPlatform, isTrackThickness, isVariant } from "./tokens";
 
 /* A project file is the Doc as JSON, nothing more. Reading one back only checks
  * the shape the editor relies on; the same migrations that run on a saved
@@ -44,8 +44,7 @@ const validStep = (step: unknown) =>
   typeof step.to === "string" &&
   isRecord(step.trigger) &&
   (step.trigger.kind === "tap" || (step.trigger.kind === "after" && Number.isFinite(step.trigger.seconds) && (step.trigger.seconds as number) >= 0)) &&
-  (step.when === undefined || (Array.isArray(step.when) && step.when.every(validCondition))) &&
-  (step.do === undefined || (Array.isArray(step.do) && step.do.every(validRuleAction)));
+  (step.do === undefined || (Array.isArray(step.do) && step.do.every(validStepAction)));
 
 const validFlow = (flow: unknown): boolean =>
   isRecord(flow) && Array.isArray(flow.looks) && flow.looks.every(validLook) && Array.isArray(flow.steps) && flow.steps.every(validStep);
@@ -55,13 +54,6 @@ const validChildren = (children: unknown): boolean =>
   children === undefined || (Array.isArray(children) && children.every((c) => validItem(c) && isRecord(c) && Number.isFinite(c.x) && Number.isFinite(c.y)));
 
 /** a value a variable, a condition or a rule action carries */
-const isVarValue = (v: unknown): boolean => typeof v === "string" || typeof v === "number" || typeof v === "boolean";
-
-const validVar = (v: unknown) =>
-  isRecord(v) && typeof v.id === "string" && typeof v.name === "string" && isVarKind(v.kind) && isVarValue(v.initial) && (v.pageId === undefined || typeof v.pageId === "string");
-
-const validCondition = (c: unknown) => isRecord(c) && typeof c.varId === "string" && isConditionOp(c.op) && isVarValue(c.value);
-
 /** What a rule does. A rule whose action this build does not understand is dropped rather
  *  than opened, because the preview would otherwise run something it cannot carry out. */
 const validRuleAction = (a: unknown): boolean => {
@@ -73,18 +65,14 @@ const validRuleAction = (a: unknown): boolean => {
     return (
       [a.target, a.icon, a.label, a.color].every((v) => v === undefined || typeof v === "string") && (a.variant === undefined || isVariant(a.variant))
     );
-  if (typeof a.varId !== "string") return false;
-  if (a.kind === "set") return isVarValue(a.value);
-  if (a.kind === "add") return Number.isFinite(a.delta);
-  return true;
+  /* a step written while variables existed may still carry a write: the machine's reader drops it,
+     and the file has to open for that to happen */
+  return typeof a.varId === "string";
 };
 
-const validRule = (r: unknown) =>
-  isRecord(r) &&
-  typeof r.id === "string" &&
-  (r.when === undefined || (Array.isArray(r.when) && r.when.every(validCondition))) &&
-  (r.after === undefined || (Number.isFinite(r.after) && (r.after as number) >= 0)) &&
-  validRuleAction(r.do);
+/** the actions a step may carry, the ones this build dropped included */
+const validStepAction = (a: unknown): boolean =>
+  isRecord(a) && (a.kind === "set" || a.kind === "add" || a.kind === "toggle") ? typeof a.varId === "string" : validRuleAction(a);
 
 const validItem = (item: unknown): boolean =>
   isRecord(item) &&
@@ -110,12 +98,12 @@ const validItem = (item: unknown): boolean =>
     (isRecord(item.slotStates) && Object.values(item.slotStates).every((list) => Array.isArray(list) && list.every(validState)))) &&
   (item.flow === undefined || validFlow(item.flow)) &&
   (item.slotFlows === undefined || (isRecord(item.slotFlows) && Object.values(item.slotFlows).every(validFlow))) &&
-  (item.rules === undefined || (Array.isArray(item.rules) && item.rules.every(validRule))) &&
   validChildren(item.children) &&
   typeof item.id === "string" &&
   typeof item.kind === "string" &&
   KINDS.has(item.kind as Kind) &&
   typeof item.label === "string" &&
+  (item.name === undefined || typeof item.name === "string") &&
   (typeof item.icon === "string" || item.icon === null) &&
   VARIANTS.some((variant) => variant.key === item.variant) &&
   (item.supporting === undefined || typeof item.supporting === "string") &&
@@ -154,7 +142,6 @@ export const isProject = (value: unknown): value is Doc =>
   Array.isArray(value.frames) &&
   value.groups.every(validGroup) &&
   value.frames.every(validFrame) &&
-  (value.vars === undefined || (Array.isArray(value.vars) && value.vars.every(validVar))) &&
   (value.platform === undefined || isPlatform(value.platform));
 
 /** The runs of a stored document this build can still read. A file and a link pass

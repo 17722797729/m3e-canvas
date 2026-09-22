@@ -159,8 +159,8 @@ Fields that any part may carry:
 
   - `looks` are the appearances the part can take. Each names only what it changes — `label`, `icon` (`null` for none), `color`, `variant`, `disabled`, `grow`, `hidden` — and every field it leaves out stays whatever the part itself is, so the author keeps editing one part rather than three copies.
   - `:start` is the part exactly as drawn. A step may go back to it.
-  - `steps` move the part between looks. `trigger` is `{ "kind": "tap" }` or `{ "kind": "after", "seconds": 30 }` (counted from the moment the part entered the look it is leaving). `when` is a condition list over `vars`, exactly as in `rules`. `do` is a list of what else the step does on the way: `goto`, `set`, `add`, `toggle`, or `look` (a change latched onto this part or, with `target`, another one).
-  - Steps leaving the same look are tried in order, so the first whose conditions hold is the one taken. When none holds, the part does what `action` says, which is also what happens in a look no step leaves.
+  - `steps` move the part between looks. `trigger` is `{ "kind": "tap" }` or `{ "kind": "after", "seconds": 30 }` (counted from the moment the part entered the look it is leaving). `do` is a list of what else the step does on the way: `goto`, `back`, `close`, or `look` (a change latched onto this part or, with `target`, another one).
+  - Steps leaving the same look are tried in order, and the first one is the one taken. When none is there, the part does what `action` says, which is also what happens in a look no step leaves.
 
 
 Icons are Material Symbols names (`home`, `search`, `add`, `favorite`, `settings`, `arrow_back`, `more_vert`, `edit`, `delete`, `share`, `restaurant`, `photo_camera`, …).

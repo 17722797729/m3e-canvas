@@ -114,13 +114,6 @@ export function AuditPanel({
                             {text.missing}: {names.frameById.get(issue.targetId) ?? issue.targetId}
                           </span>
                         )}
-                        {/* a variable the document does not declare, or a name text reads */}
-                        {issue.varId && (
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 8, background: p.tertiaryContainer, color: p.onTertiaryContainer }}>
-                            <Icon name="data_object" size={12} />
-                            {issue.varId}
-                          </span>
-                        )}
                       </span>
                     </span>
                     <span style={{ display: "inline-flex", flex: "0 0 auto", marginTop: 2, color: p.outline }}>

@@ -2,8 +2,6 @@ import {
   BACK_TARGET,
   START_LOOK,
   actionsOf,
-  readVars,
-  ruleVars,
   frameOfGroup,
   groupsInFrame,
   isOverlayFrame,
@@ -45,12 +43,6 @@ export type AuditKind =
   | "deadEnd"
   /** a tap that leads back to the page it sits on */
   | "selfJump"
-  /** a rule names a variable the document does not declare */
-  | "missingVar"
-  /** a part's text reads `{name}` and nothing declares that name */
-  | "unknownBinding"
-  /** a variable nothing reads and nothing writes */
-  | "unusedVar"
   /** a tab row holding more panels than it has tabs: the extra ones are never drawn */
   | "extraPanel"
   /** a step of a part's machine lands in a look that is not there any more */
@@ -71,26 +63,21 @@ export type AuditIssue = {
   itemId: string | null;
   /** the id a broken link points at, so the report can say which one it was */
   targetId?: string;
-  /** the variable a rule names, or the name a piece of text reads */
-  varId?: string;
 };
 
 /** how bad each check is: an error breaks the prototype, a warning is probably a mistake */
 export const AUDIT_SEVERITY: Record<AuditKind, AuditSeverity> = {
   deadLink: "error",
   overlayTrapped: "error",
-  missingVar: "error",
   orphanOverlay: "warning",
   orphanOverlayItem: "warning",
   unreachable: "warning",
   deadEnd: "warning",
   selfJump: "warning",
-  unknownBinding: "warning",
   extraPanel: "warning",
   danglingLook: "warning",
   emptyFrame: "info",
   unreachableLook: "info",
-  unusedVar: "info",
   noPages: "info",
 };
 
@@ -107,9 +94,6 @@ export const AUDIT_KIND_ICONS: Record<AuditKind, string> = {
   unreachable: "wrong_location",
   deadEnd: "block",
   selfJump: "sync_problem",
-  missingVar: "help",
-  unknownBinding: "spellcheck",
-  unusedVar: "inventory_2",
   extraPanel: "space_dashboard",
   danglingLook: "search_off",
   unreachableLook: "help_center",
@@ -129,7 +113,7 @@ function canLeave(parts: Item[], level: OverlayLevel): boolean {
   return parts.some(
     (it) =>
       actionsOf(it).some(({ action }) => action.to !== BACK_TARGET) ||
-      (it.rules ?? []).some((r) => r.do.kind === "close" || r.do.kind === "goto"),
+      [it.flow, ...Object.values(it.slotFlows ?? {})].some((m) => (m?.steps ?? []).some((st) => (st.do ?? []).some((a) => a.kind === "close" || a.kind === "goto"))),
   );
 }
 
@@ -141,14 +125,8 @@ export function audit(doc: Doc, widths: Record<string, number>): AuditIssue[] {
   const out: AuditIssue[] = [];
   const frames = doc.frames;
   const frameIds = new Set(frames.map((f) => f.id));
-  const push = (kind: AuditKind, frameId: string | null, itemId: string | null, targetId?: string, varId?: string) =>
-    out.push({ kind, severity: AUDIT_SEVERITY[kind], frameId, itemId, ...(targetId !== undefined ? { targetId } : undefined), ...(varId !== undefined ? { varId } : undefined) });
-
-  /* the variables the document declares, and the ones its text and rules actually name */
-  const declaredVars = doc.vars ?? [];
-  const declaredIds = new Set(declaredVars.map((v) => v.id));
-  const declaredNames = new Set(declaredVars.map((v) => v.name));
-  const usedIds = new Set<string>();
+  const push = (kind: AuditKind, frameId: string | null, itemId: string | null, targetId?: string) =>
+    out.push({ kind, severity: AUDIT_SEVERITY[kind], frameId, itemId, ...(targetId !== undefined ? { targetId } : undefined) });
 
   if (frames.length === 0) push("noPages", null, null);
 
@@ -180,27 +158,6 @@ export function audit(doc: Doc, widths: Record<string, number>): AuditIssue[] {
         if (frameId && action.to === frameId) push("selfJump", frameId, it.id);
         if (frameId && frameIds.has(action.to)) outgoing.get(frameId)?.add(action.to);
       }
-      /* a conditional tap leads somewhere just as a plain one does, and names variables the
-         document has to declare: an undeclared one makes the rule silently do nothing */
-      for (const rule of it.rules ?? []) {
-        for (const id of ruleVars(rule).read) {
-          usedIds.add(id);
-          if (!declaredIds.has(id)) push("missingVar", frameId, it.id, undefined, id);
-        }
-        for (const id of ruleVars(rule).write) {
-          usedIds.add(id);
-          if (!declaredIds.has(id)) push("missingVar", frameId, it.id, undefined, id);
-        }
-        const a = rule.do;
-        if (a.kind !== "goto") continue;
-        targets.add(a.to);
-        if (!frameIds.has(a.to) && !overlayItems.has(a.to)) {
-          push("deadLink", frameId, it.id, a.to);
-          continue;
-        }
-        if (frameId && a.to === frameId) push("selfJump", frameId, it.id);
-        if (frameId && frameIds.has(a.to)) outgoing.get(frameId)?.add(a.to);
-      }
       /* The machine a part runs: a step that lands in a look the machine does not have would draw
          the part as drawn, and a look nothing leads into is a state the visitor never sees. */
       for (const machine of [...(it.flow ? [it.flow] : []), ...Object.values(it.slotFlows ?? {})]) {
@@ -210,20 +167,11 @@ export function audit(doc: Doc, widths: Record<string, number>): AuditIssue[] {
           if (st.from !== START_LOOK && !looks.has(st.from)) push("danglingLook", frameId, it.id, st.from);
           if (st.to !== START_LOOK && !looks.has(st.to)) push("danglingLook", frameId, it.id, st.to);
           else reached.add(st.to);
-          for (const c of st.when ?? []) {
-            usedIds.add(c.varId);
-            if (!declaredIds.has(c.varId)) push("missingVar", frameId, it.id, undefined, c.varId);
-          }
           for (const a of st.do ?? []) {
-            if (a.kind === "goto") {
-              targets.add(a.to);
-              if (!frameIds.has(a.to) && !overlayItems.has(a.to)) push("deadLink", frameId, it.id, a.to);
-              else if (frameId && frameIds.has(a.to)) outgoing.get(frameId)?.add(a.to);
-              continue;
-            }
-            if (a.kind !== "set" && a.kind !== "add" && a.kind !== "toggle") continue;
-            usedIds.add(a.varId);
-            if (!declaredIds.has(a.varId)) push("missingVar", frameId, it.id, undefined, a.varId);
+            if (a.kind !== "goto") continue;
+            targets.add(a.to);
+            if (!frameIds.has(a.to) && !overlayItems.has(a.to)) push("deadLink", frameId, it.id, a.to);
+            else if (frameId && frameIds.has(a.to)) outgoing.get(frameId)?.add(a.to);
           }
         }
         for (const l of machine.looks) if (!reached.has(l.id)) push("unreachableLook", frameId, it.id, l.id);
@@ -231,13 +179,6 @@ export function audit(doc: Doc, widths: Record<string, number>): AuditIssue[] {
       /* A tab row switches between its panels by position, so a panel past the last tab has no tab
          that could ever bring it forward: it would simply never be drawn. */
       if (it.kind === "tabs" && (it.children?.length ?? 0) > (it.tabs?.length ?? 0)) push("extraPanel", frameId, it.id);
-      /* text that reads a variable: an unknown name stays on the screen, which is worth a
-         warning rather than an error, since the screen still reads */
-      for (const name of [...readVars(it.label), ...readVars(it.supporting), ...(it.tabs ?? []).flatMap((t) => readVars(t.label))]) {
-        const v = declaredVars.find((d) => d.name === name);
-        if (v) usedIds.add(v.id);
-        else push("unknownBinding", frameId, it.id, undefined, name);
-      }
     }
   }
 
@@ -281,11 +222,6 @@ export function audit(doc: Doc, widths: Record<string, number>): AuditIssue[] {
   for (const [id, { item, frameId }] of overlayItems) {
     if (!targets.has(id)) push("orphanOverlayItem", frameId, id);
     if (!canLeave(subtreeOf(item), overlayLevelOf(item)!)) push("overlayTrapped", frameId, id);
-  }
-
-  /* a variable nothing reads and nothing writes is dead weight in the panel */
-  for (const v of declaredVars) {
-    if (!usedIds.has(v.id)) push("unusedVar", null, null, undefined, v.name);
   }
 
   /* a blank canvas says one thing, not one thing per stray group */
@@ -335,9 +271,6 @@ export const AUDIT_TEXT: Record<
       unreachable: "この画面には到達できません",
       deadEnd: "この画面では何も起きません",
       selfJump: "タップが同じ画面に戻ります",
-      missingVar: "ルールが存在しない変数を参照しています",
-      unknownBinding: "テキストが存在しない変数名を読んでいます",
-      unusedVar: "この変数は使われていません",
       extraPanel: "タブよりパネルが多いです",
       danglingLook: "状態の移動先がありません",
       unreachableLook: "この状態には何も移りません",
@@ -352,9 +285,6 @@ export const AUDIT_TEXT: Record<
       unreachable: "他の画面からリンクするか、この画面を削除してください。",
       deadEnd: "タップ・スワイプ・状態ルールのいずれかを足すと、先へ進めるようになります。",
       selfJump: "別の画面へ向けるか、「戻る」に変えてください。",
-      missingVar: "「変数」で追加するか、既存の変数に変えてください。",
-      unknownBinding: "名前は「変数」の名称と完全に一致させてください。固定の数字なら参照は不要です。",
-      unusedVar: "読む部品も書き換えるルールもありません。削除するか {name} で表示してください。",
       extraPanel: "タブの数より多いパネルは表示されません。パネルを消すか、タブを増やしてください。",
       danglingLook: "その状態はもうありません。移動先を選び直すか、この段を削除してください。",
       unreachableLook: "どこからも来ない状態です。別の状態から線を引くか、削除してください。",
@@ -378,9 +308,6 @@ export const AUDIT_TEXT: Record<
       unreachable: "Nothing reaches this page",
       deadEnd: "Nothing happens on this screen",
       selfJump: "A tap leads back to its own page",
-      missingVar: "A rule names a variable that is not declared",
-      unknownBinding: "Text reads a variable name nothing declares",
-      unusedVar: "This variable is never used",
       extraPanel: "More panels than tabs",
       danglingLook: "A step lands in a state that is gone",
       unreachableLook: "Nothing moves the part into this state",
@@ -395,9 +322,6 @@ export const AUDIT_TEXT: Record<
       unreachable: "Link to it from another page, or delete it.",
       deadEnd: "Add a tap, a swipe or a state rule so the visitor can move on.",
       selfJump: "Point it at another page, or make it go Back.",
-      missingVar: "Add it in the Variables panel, or point the rule at one that exists.",
-      unknownBinding: "The name has to match the Variables panel exactly. A fixed number needs no binding.",
-      unusedVar: "No part reads it and no rule touches it. Delete it, or show it with {name}.",
       extraPanel: "A panel past the last tab is never drawn: delete it, or add a tab for it.",
       danglingLook: "That state is no longer there: point the step at another one, or delete it.",
       unreachableLook: "No step leads here: draw one from another state, or delete it.",
@@ -421,9 +345,6 @@ export const AUDIT_TEXT: Record<
       unreachable: "没有路径到达此页面",
       deadEnd: "此页面上什么都不会发生",
       selfJump: "点击回到了自己所在的页面",
-      missingVar: "规则引用了不存在的变量",
-      unknownBinding: "文本引用了不存在的变量名",
-      unusedVar: "这个变量没有被用到",
       extraPanel: "面板比标签多",
       danglingLook: "流转的目标状态已不存在",
       unreachableLook: "没有任何流转能进入这个状态",
@@ -438,9 +359,6 @@ export const AUDIT_TEXT: Record<
       unreachable: "从其他页面链接到它，或者删除这个页面。",
       deadEnd: "加一个点击、滑动或状态规则，让用户能继续往下走。",
       selfJump: "把它指向别的页面，或者改成「返回」。",
-      missingVar: "在「变量」页添加它，或者把规则改到已有的变量上。",
-      unknownBinding: "名称要和「变量」里的名称完全一致；固定数字不需要引用。",
-      unusedVar: "没有组件读取它，也没有规则读写它。可以删掉，或者用 {name} 显示出来。",
       extraPanel: "超出标签数量的面板不会显示：删掉它，或者为它增加一个标签。",
       danglingLook: "那个状态已经被删掉了：重新选择去向，或者删除这一步。",
       unreachableLook: "没有一条线能走到它：从别的状态连一条，或者删掉它。",
@@ -464,9 +382,6 @@ export const AUDIT_TEXT: Record<
       unreachable: "이 페이지에 도달할 수 없습니다",
       deadEnd: "이 화면에서는 아무 일도 일어나지 않습니다",
       selfJump: "탭이 자기 페이지로 돌아옵니다",
-      missingVar: "규칙이 없는 변수를 가리킵니다",
-      unknownBinding: "텍스트가 없는 변수 이름을 읽습니다",
-      unusedVar: "이 변수는 쓰이지 않습니다",
       extraPanel: "패널이 탭보다 많습니다",
       danglingLook: "상태의 이동 대상이 없습니다",
       unreachableLook: "이 상태로 들어오는 것이 없습니다",
@@ -481,9 +396,6 @@ export const AUDIT_TEXT: Record<
       unreachable: "다른 페이지에서 연결하거나 이 페이지를 삭제하세요.",
       deadEnd: "탭, 스와이프, 상태 규칙 중 하나를 더하면 계속 진행할 수 있습니다.",
       selfJump: "다른 페이지로 돌리거나 '뒤로'로 바꾸세요.",
-      missingVar: "'변수'에서 추가하거나 있는 변수로 바꾸세요.",
-      unknownBinding: "이름은 '변수'의 이름과 정확히 같아야 합니다. 고정 숫자에는 참조가 필요 없습니다.",
-      unusedVar: "읽는 부품도, 쓰는 규칙도 없습니다. 삭제하거나 {name}으로 표시하세요.",
       extraPanel: "탭 수보다 많은 패널은 표시되지 않습니다. 패널을 지우거나 탭을 늘리세요.",
       danglingLook: "그 상태는 더 이상 없습니다. 이동 대상을 다시 고르거나 이 단계를 삭제하세요.",
       unreachableLook: "어디서도 들어올 수 없는 상태입니다. 다른 상태에서 선을 잇거나 삭제하세요.",

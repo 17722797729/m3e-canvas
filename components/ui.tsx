@@ -137,6 +137,11 @@ export function Segmented<K extends string>({
   );
 }
 
+/** The box a text field is drawn in: a visible outline and a lighter fill than the card it sits on,
+ *  so an empty field can never be mistaken for a label. Shared with the few inputs that are not a
+ *  `Field` — a slider's number, the icon search, the prompt box. */
+export const inputBox = (p: Palette, radius = 12): React.CSSProperties => ({ border: `1px solid ${p.outline}`, background: p.surface, borderRadius: radius });
+
 export function Field({
   value,
   onChange,
@@ -147,6 +152,7 @@ export function Field({
   rows = 3,
   grow,
   height = 44,
+  outlined = true,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -159,6 +165,9 @@ export function Field({
    *  it wraps but never takes a line break, since the canvas wraps the text on its own */
   grow?: boolean;
   height?: number;
+  /** Every field is drawn as a box: the fill alone sat too close to the card behind it, so an
+   *  empty field read as a label. A caller with a box of its own around it can turn that off. */
+  outlined?: boolean;
 }) {
   const lang = useLang();
   const filled = value.length > 0;
@@ -172,9 +181,7 @@ export function Field({
   const base: React.CSSProperties = {
     width: "100%",
     padding: multiline ? `12px ${filled ? 40 : 14}px 12px ${icon ? 42 : 14}px` : `0 ${filled ? 40 : 14}px 0 ${icon ? 42 : 14}px`,
-    borderRadius: multiline ? 18 : height / 2,
-    border: "none",
-    background: p.surfaceContainerHigh,
+    ...(outlined ? inputBox(p) : { borderRadius: multiline ? 18 : height / 2, border: "none", background: p.surfaceContainerHigh }),
     color: p.onSurface,
     fontSize: 14,
     lineHeight: multiline ? 1.55 : undefined,
@@ -189,8 +196,8 @@ export function Field({
         <span
           style={{
             position: "absolute",
-            left: 12,
-            top: multiline ? 12 : (height - 20) / 2,
+            left: outlined ? 13 : 12,
+            top: multiline ? (outlined ? 13 : 12) : (height - 20) / 2,
             color: p.onSurfaceVariant,
             pointerEvents: "none",
             lineHeight: 1,
@@ -347,12 +354,10 @@ export function Slider({
           }}
           className="m3-number"
           style={{
+            ...inputBox(p, 8),
             width: unit ? 56 : 52,
             height: 30,
             padding: unit ? "0 18px 0 6px" : "0 6px",
-            borderRadius: 8,
-            border: "none",
-            background: p.surfaceContainerHigh,
             color: p.onSurface,
             fontSize: 12,
             fontWeight: 600,

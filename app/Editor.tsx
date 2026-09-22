@@ -11,6 +11,7 @@ import {
 import { AnimatePresence, motion, useReducedMotion, useSpring } from "motion/react";
 import { toPng } from "html-to-image";
 import { buildPrompt, effectivePrompt } from "@/lib/prompt";
+import { alignTo, linesX, linesY, type AlignGuide, type AlignLine } from "@/lib/guides";
 import {
   Action,
   actionPatchFor,
@@ -76,7 +77,6 @@ import {
   KIND_SPEC,
   PlacedItem,
   CustomPart,
-  Var,
   compositeInstance,
   resizedChildren,
   byLayer,
@@ -123,13 +123,11 @@ import {
   childDrawn,
   railMetrics,
   RAIL_TOP,
-  VARS_ALL,
   migrateFlows,
 } from "@/lib/tokens";
 import { Icon, M3Node, M3Static, MeasuredContent } from "@/components/M3Node";
 import { LayersPanel } from "@/components/Layers";
 import { AuditPanel } from "@/components/Audit";
-import { VarsPanel } from "@/components/Vars";
 import { FrameInspector, FrameSizePicker, Inspector, type DialogChoice } from "@/components/Inspector";
 import { Preview } from "@/components/Preview";
 import { Logo } from "@/components/Logo";
@@ -192,8 +190,10 @@ const UI_KEY = "m3e:ui";
 type View = { x: number; y: number; z: number };
 type Snap = { groupId: string; index: number; pull: number };
 
-/** alignment guide: the snapped position plus the line to draw */
-type Guide = { x?: number; y?: number; gx?: number; gy?: number };
+/** Alignment guide: the position the drag takes once it is pulled into line, and the dashed lines
+ *  to draw for it — one per axis, reaching from the moving part to the part it lines up with. */
+type Guide = { x?: number; y?: number; lines: AlignGuide[] };
+const onGuide = (guide: Guide | null | undefined, axis: "x" | "y") => !!guide?.lines.some((l) => l.axis === axis);
 const GUIDE_PX = 7;
 
 /** Material's 4dp grid: a coordinate rounded to it, measured from the screen's corner */
@@ -241,7 +241,7 @@ type Gesture =
     }
   | { kind: "group"; id: string; sx: number; sy: number; gx: number; gy: number; moved: boolean; overBin: boolean; guide?: Guide | null }
   /** a part being moved inside the container that holds it, in the container's own coordinates */
-  | { kind: "child"; groupId: string; parentId: string; id: string; sx: number; sy: number; ox: number; oy: number; moved: boolean; free?: boolean; over?: string | null };
+  | { kind: "child"; groupId: string; parentId: string; id: string; sx: number; sy: number; ox: number; oy: number; moved: boolean; free?: boolean; over?: string | null; guide?: Guide | null };
 
 /** everything in a document apart from its screens and parts */
 type DocMeta = Omit<Doc, "groups" | "frames">;
@@ -389,13 +389,12 @@ function ThinkingRing({ p, frame }: { p: Palette; frame: Frame }) {
   );
 }
 
-type LeftTab = "parts" | "layers" | "audit" | "vars" | "color" | "shape" | "type" | "motion" | "ai";
+type LeftTab = "parts" | "layers" | "audit" | "color" | "shape" | "type" | "motion" | "ai";
 /** the left rail: what the document is made of, what is wrong with it, then its four theme axes */
-const LEFT_TABS: { key: LeftTab; icon: string; title: "parts" | "layers" | "audit" | "variables" | "colors" | "shape" | "typography" | "motion" | "ai" }[] = [
+const LEFT_TABS: { key: LeftTab; icon: string; title: "parts" | "layers" | "audit" | "colors" | "shape" | "typography" | "motion" | "ai" }[] = [
   { key: "parts", icon: "add_box", title: "parts" },
   { key: "layers", icon: "layers", title: "layers" },
   { key: "audit", icon: "fact_check", title: "audit" },
-  { key: "vars", icon: "data_object", title: "variables" },
   { key: "color", icon: "palette", title: "colors" },
   { key: "shape", icon: "rounded_corner", title: "shape" },
   { key: "type", icon: "text_fields", title: "typography" },
@@ -475,10 +474,6 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const [rightOpen, setRightOpen] = useState(true);
   const [leftW, setLeftW] = useState(RAIL_W + 268);
   const [leftTab, setLeftTab] = useState<LeftTab>("parts");
-  /* What the variables panel shows: everything to begin with, so a variable is never hidden
-     behind a page filter the author has forgotten about. From there it can be narrowed to the
-     shared ones or to a single page. */
-  const [varsScope, setVarsScope] = useState<string>(VARS_ALL);
   /** pointer over the collapsed rail: the logo becomes the open button */
   const [railHover, setRailHover] = useState(false);
   /** the screen whose layers are listed when nothing on a screen is selected */
@@ -489,7 +484,6 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   /** the author's own composite parts, offered by the palette beside the kinds */
   const [customParts, setCustomParts] = useState<CustomPart[]>([]);
   /** the values the prototype carries between taps: coins, stamina, what has been claimed */
-  const [vars, setVars] = useState<Var[]>([]);
   /** the dialog that composes a new composite part */
   const [composeOpen, setComposeOpen] = useState(false);
   /** the saved composite the dialog is changing, if any */
@@ -722,8 +716,6 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     else if (reset) setPlatform(null);
     if (Array.isArray(doc.customParts)) setCustomParts(doc.customParts);
     else if (reset) setCustomParts([]);
-    if (Array.isArray(doc.vars)) setVars(doc.vars);
-    else if (reset) setVars([]);
   };
 
   useEffect(() => {
@@ -856,7 +848,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
          say — cannot be left out of the saved file by a second list that has to be kept in step. */
       localStorage.setItem(DOC_KEY, JSON.stringify(docRef.current));
     } catch {}
-  }, [editAccess, groups, frames, paletteKey, frame, title, brief, promptEdit, platform, customPalette, dynamicColor, theme, customParts, vars]);
+  }, [editAccess, groups, frames, paletteKey, frame, title, brief, promptEdit, platform, customPalette, dynamicColor, theme, customParts]);
 
   useEffect(() => {
     if (!loadedRef.current) return;
@@ -1133,66 +1125,49 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const sx = useSpring(0, CARRY);
   const sy = useSpring(0, CARRY);
 
-  /** Canva-style alignment: edges and centres of neighbours and of the frame
-   *  pull the part gently into line and draw a guide while they do. */
+  /** Every part on the canvas with its rect in canvas coordinates. A container's children sit
+   *  inside it, so they follow it: marquee selection, overlap tests and the alignment guides all
+   *  read them too, which is how a part inside a box lines up with what is around it. */
+  const itemRects = useCallback(() => {
+    const out: { id: string; l: number; t: number; r: number; b: number }[] = [];
+    const push = (it: Item, x: number, y: number) => {
+      const sz = sizeOf(it, widthsRef.current);
+      out.push({ id: it.id, l: x, t: y, r: x + sz.w, b: y + sz.h });
+      for (const c of it.children ?? []) push(c, x + c.x, y + c.y);
+    };
+    for (const g of groupsRef.current) {
+      for (const pl of layoutOf(g, widthsRef.current)) push(pl.item, pl.x, pl.y);
+    }
+    return out;
+  }, []);
+
+  /** Canva-style alignment: the edges and centres of the neighbours and of the screen pull the part
+   *  into line and draw a dashed guide along the one it took. The arithmetic lives in lib/guides.ts;
+   *  this only gathers what the document offers to line up with. */
   const guideFor = useCallback(
     (left: number, top: number, sz: { w: number; h: number }, skip: Set<string>): Guide | null => {
       const tol = GUIDE_PX / viewRef.current.z;
-      const xs: number[] = [];
-      const ys: number[] = [];
-      for (const g of groupsRef.current) {
-        for (const pl of layoutOf(g, widthsRef.current)) {
-          if (skip.has(pl.item.id)) continue;
-          xs.push(pl.x, pl.x + pl.w / 2, pl.x + pl.w);
-          ys.push(pl.y, pl.y + pl.h / 2, pl.y + pl.h);
-        }
+      const xs: AlignLine[] = [];
+      const ys: AlignLine[] = [];
+      for (const r of itemRects()) {
+        if (skip.has(r.id)) continue;
+        xs.push(...linesX(r));
+        ys.push(...linesY(r));
       }
       if (frameRef.current === "phone") {
         for (const f of framesRef.current) {
           const { w, h } = frameSizeOf(f);
-          xs.push(
-            f.x,
-            f.x + FRAME_MARGIN,
-            f.x + w / 2,
-            f.x + w - FRAME_MARGIN,
-            f.x + w,
-          );
-          ys.push(
-            f.y,
-            f.y + FRAME_MARGIN,
-            f.y + h / 2,
-            f.y + h - FRAME_MARGIN,
-            f.y + h,
-          );
+          /* the screen's own edges and margins are lines like any other */
+          for (const at of [f.x, f.x + FRAME_MARGIN, f.x + w / 2, f.x + w - FRAME_MARGIN, f.x + w]) xs.push({ at, lo: f.y, hi: f.y + h });
+          for (const at of [f.y, f.y + FRAME_MARGIN, f.y + h / 2, f.y + h - FRAME_MARGIN, f.y + h]) ys.push({ at, lo: f.x, hi: f.x + w });
         }
       }
-      const mine = (pos: number, len: number) => [
-        pos,
-        pos + len / 2,
-        pos + len,
-      ];
-      let best: Guide = {};
-      let bx = tol;
-      for (const c of xs)
-        for (const m of mine(left, sz.w)) {
-          const d = Math.abs(c - m);
-          if (d < bx) {
-            bx = d;
-            best = { ...best, x: left + (c - m), gx: c };
-          }
-        }
-      let by = tol;
-      for (const c of ys)
-        for (const m of mine(top, sz.h)) {
-          const d = Math.abs(c - m);
-          if (d < by) {
-            by = d;
-            best = { ...best, y: top + (c - m), gy: c };
-          }
-        }
-      return best.x === undefined && best.y === undefined ? null : best;
+      const moving = { l: left, t: top, r: left + sz.w, b: top + sz.h };
+      const { dx, dy, guides } = alignTo(moving, { xs, ys }, tol);
+      if (!guides.length) return null;
+      return { x: left + dx, y: top + dy, lines: guides };
     },
-    [],
+    [itemRects],
   );
   const findGuide = useCallback(
     (item: Item, left: number, top: number): Guide | null => guideFor(left, top, sizeRef(item), new Set([item.id])),
@@ -1519,8 +1494,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
         loose || onGuide ? Math.round(pos) : onGrid(pos, grid);
       const dropped: Group = {
         id: uid(),
-        x: isBar && slot ? Math.round(slot.x) : settle(d.guide?.gx !== undefined, rawX, origin.x),
-        y: settle(d.guide?.gy !== undefined, rawY, origin.y),
+        x: isBar && slot ? Math.round(slot.x) : settle(onGuide(d.guide, "x"), rawX, origin.x),
+        y: settle(onGuide(d.guide, "y"), rawY, origin.y),
         axis: connectSpecOf(item)?.axis ?? "x",
         items: [placedItem],
       };
@@ -1531,7 +1506,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       const ng =
         pulled === dropped || loose
           ? pulled
-          : { ...pulled, x: d.guide?.gx !== undefined ? pulled.x : onGrid(pulled.x, origin.x), y: d.guide?.gy !== undefined ? pulled.y : onGrid(pulled.y, origin.y) };
+          : { ...pulled, x: onGuide(d.guide, "x") ? pulled.x : onGrid(pulled.x, origin.x), y: onGuide(d.guide, "y") ? pulled.y : onGrid(pulled.y, origin.y) };
       setGroups((prev) =>
         prev.some((g) => g.items.some((it) => it.id === item.id))
           ? prev
@@ -1590,21 +1565,6 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   }, [drag, restPos, sizeRef, sx, sy]);
 
   /* ---------- pointer: canvas (pan / marquee) ---------- */
-  const itemRects = useCallback(() => {
-    const out: { id: string; l: number; t: number; r: number; b: number }[] =
-      [];
-    /* a container's children sit inside it: their rects follow it, and are reported so
-       marquee selection, duplication and overlap tests see them too */
-    const push = (it: Item, x: number, y: number) => {
-      const sz = sizeOf(it, widthsRef.current);
-      out.push({ id: it.id, l: x, t: y, r: x + sz.w, b: y + sz.h });
-      for (const c of it.children ?? []) push(c, x + c.x, y + c.y);
-    };
-    for (const g of groupsRef.current) {
-      for (const pl of layoutOf(g, widthsRef.current)) push(pl.item, pl.x, pl.y);
-    }
-    return out;
-  }, []);
 
   const clearSelection = () => {
     setSelectedIds([]);
@@ -1755,8 +1715,17 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
         g.over = next && next !== g.parentId ? next : null;
         const room = childDragRoom(parent, kid, widthsRef.current, !!g.free || !!g.over);
         const f = foldPlace(kid, widthsRef.current);
-        const nx = Math.round(Math.min(room.w, Math.max(0, g.ox + dx))) - f.dx;
-        const ny = Math.round(Math.min(room.h, Math.max(0, g.oy + dy))) - f.dy;
+        /* The child's place is an offset inside its container, so a guide has to be found where the
+           part actually sits on the canvas: the container's own corner, plus the offset it is being
+           dragged to. What comes back is a shift, which is the same in either space. */
+        const loose = e.ctrlKey || e.metaKey;
+        const held = g.ox + dx;
+        const heldY = g.oy + dy;
+        const at = itemRects().find((r) => r.id === g.parentId);
+        const guide = loose || g.free || g.over || !at ? null : guideFor(at.l + held + f.dx, at.t + heldY + f.dy, sizeRef(kid), new Set([g.id]));
+        const nx = Math.round(Math.min(room.w, Math.max(0, held + (guide ? guide.x! - (at!.l + held + f.dx) : 0)))) - f.dx;
+        const ny = Math.round(Math.min(room.h, Math.max(0, heldY + (guide ? guide.y! - (at!.t + heldY + f.dy) : 0)))) - f.dy;
+        g.guide = guide;
         setGroups((gs) => gs.map((x) => (x.id === g.groupId ? { ...x, items: patchItemIn(x.items, g.id, { x: nx, y: ny }) } : x)));
         setGesture({ ...g });
         return;
@@ -3231,13 +3200,10 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
             }),
           })),
       );
-      /* the page's own variables go with it; a rule that referred to one simply stops matching */
-      setVars((vs) => vs.filter((v) => v.pageId !== id));
-      if (varsScope === id) setVarsScope(VARS_ALL);
       setSelectedFrameId(null);
       setSelectedIds((cur) => cur.filter((x) => !groupsRef.current.some((g) => gone.has(g.id) && g.items.some((it) => it.id === x))));
     },
-    [snapshot, varsScope],
+    [snapshot],
   );
 
   const duplicateFrame = (id: string) => {
@@ -3733,8 +3699,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   }, [selected, groups, frames, widths, lang]);
 
   const doc: Doc = useMemo(
-    () => ({ groups, frames, paletteKey, frame, title, brief, promptEdit, platform: platform ?? undefined, customPalette: customPalette ?? undefined, dynamicColor, theme, customParts: customParts.length ? customParts : undefined, vars: vars.length ? vars : undefined }),
-    [groups, frames, paletteKey, frame, title, brief, promptEdit, platform, customPalette, dynamicColor, theme, customParts, vars],
+    () => ({ groups, frames, paletteKey, frame, title, brief, promptEdit, platform: platform ?? undefined, customPalette: customPalette ?? undefined, dynamicColor, theme, customParts: customParts.length ? customParts : undefined }),
+    [groups, frames, paletteKey, frame, title, brief, promptEdit, platform, customPalette, dynamicColor, theme, customParts],
   );
   /** the same document, for callbacks that were created on an earlier render */
   const docRef = useRef(doc);
@@ -4225,7 +4191,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
 
   const showRight = rightOpen && !isMobile;
   const overBin = (!!drag?.active && drag.overBin) || (gesture?.kind === "group" && gesture.overBin);
-  const guide = drag?.active ? drag.guide : gesture?.kind === "group" && gesture.moved ? (gesture.guide ?? null) : null;
+  const guide = drag?.active ? drag.guide : (gesture?.kind === "group" || gesture?.kind === "child") && gesture.moved ? (gesture.guide ?? null) : null;
   const visibleWorld = (() => {
     const r = canvasRef.current?.getBoundingClientRect();
     return {
@@ -4508,20 +4474,6 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   />
                 ) : leftTab === "audit" ? (
                   <AuditPanel p={p} doc={doc} issues={auditReport} onLocate={locateIssue} />
-                ) : leftTab === "vars" ? (
-                  /* a variable is document-wide, so an undo step has to carry the whole document
-                     with it: restoring only the parts would leave the two out of step */
-                  <VarsPanel
-                    p={p}
-                    vars={vars}
-                    frames={frames}
-                    scope={varsScope}
-                    onScope={setVarsScope}
-                    onChange={(next) => {
-                      snapshotFor("vars", true);
-                      setVars(next);
-                    }}
-                  />
                 ) : leftTab === "color" ? (
                   <ColorPanel
                     p={p}
@@ -4571,23 +4523,16 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                     }}
                     onReorder={reorderLayers}
                     onReorderItems={reorderGroupItems}
-                    vars={vars}
-                    /* a variable row in the page list opens the panel showing that variable: on
-                       its own page when it has one, and on 全部 for the shared ones */
-                    onVar={(id) => {
-                      const v = vars.find((x) => x.id === id);
-                      setVarsScope(v?.pageId ?? VARS_ALL);
-                      setLeftTab("vars");
-                    }}
                     onDragging={onLayerDragging}
                     onTabSelect={switchTab}
                     onNest={(it) => askNest([it])}
                     onMagnify={toggleMagnify}
                     magnifiedId={magnified?.id ?? null}
                     onFreePart={freePart}
-                    /* the name an author types over a row in the list is the part's, the run's or
-                       the screen's own name */
-                    onRename={(id, name) => patchItemById(id, { label: name })}
+                    /* A name typed over a row names that part — the run's or the screen's own
+                       name — and never writes over the words the part shows: those are edited in
+                       the inspector, so renaming a badge cannot turn its count into a label */
+                    onRename={(id, name) => patchItemById(id, { name: name.trim() || undefined })}
                     onGroupRename={renameGroup}
                     onFrameRename={renameFrame}
                     onTabRename={renameTab}
@@ -4883,32 +4828,27 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   </div>
                 ))}
 
-              {guide?.gx !== undefined && (
-                <div
-                  style={{
-                    position: "absolute",
-                    left: guide.gx,
-                    top: visibleWorld.t,
-                    width: 1.5 / view.z,
-                    height: visibleWorld.h,
-                    background: p.primary,
-                    pointerEvents: "none",
-                  }}
-                />
-              )}
-              {guide?.gy !== undefined && (
-                <div
-                  style={{
-                    position: "absolute",
-                    top: guide.gy,
-                    left: visibleWorld.l,
-                    height: 1.5 / view.z,
-                    width: visibleWorld.w,
-                    background: p.primary,
-                    pointerEvents: "none",
-                  }}
-                />
-              )}
+              {(guide?.lines ?? []).map((line) => {
+                /* a dashed line along the edge or centre the drag was pulled into, reaching from
+                   the part to the part it took the line from */
+                const dash = 7 / view.z;
+                const gap = 6 / view.z;
+                const thick = 1.5 / view.z;
+                const paint = `repeating-linear-gradient(${line.axis === "x" ? "to bottom" : "to right"}, ${p.primary} 0 ${dash}px, transparent ${dash}px ${dash + gap}px)`;
+                const from = Math.min(line.from, line.to);
+                const to = Math.max(line.from, line.to);
+                return line.axis === "x" ? (
+                  <div
+                    key={`x${line.at}`}
+                    style={{ position: "absolute", left: line.at - thick / 2, top: from, width: thick, height: Math.max(to - from, thick), backgroundImage: paint, pointerEvents: "none" }}
+                  />
+                ) : (
+                  <div
+                    key={`y${line.at}`}
+                    style={{ position: "absolute", top: line.at - thick / 2, left: from, height: thick, width: Math.max(to - from, thick), backgroundImage: paint, pointerEvents: "none" }}
+                  />
+                );
+              })}
 
               {/* what a drop would land in: the container lights up under the part being dragged */}
               {(() => {
@@ -5225,7 +5165,6 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   widths={widths}
                   lookTargets={lookTargets}
                   onUngroup={ungroupSelected}
-                  vars={vars}
                 />
               ) : (
                 <PromptPanel

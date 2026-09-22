@@ -1,69 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { contrastRatio } from "./color";
+import { itemNameOf } from "./flow";
 import { getLang, KIND_TEXT } from "./i18n";
 
-import { BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill,
-  childShown,
-  connectedButton,
-  DIALOG_COLOR,
-  childDrawn,
-  badgeSurface,
-  buttonScale,
-  findItemIn,
-  foldMargins,
-  radiiOfRuns,
-  roundByNature,
-  runPartRadii,
-  ROUND_SHAPES,
-  foldPlace,
-  foldShift,
-  layoutOf,
-  NO_FOLD,
-  fitTabPanels,
-  keepPanelSlots,
-  liftAbove,
-  isStateEffect,
-  STATE_EFFECTS,
-  START_LOOK,
-  firstTapStep,
-  firstDueStep,
-  waitLeft,
-  lookItem,
-  lookAt,
-  statesAsFlow,
-  migrateFlows,
-  hasTimedSteps,
-  type PartFlow,
-  type PartLook,
-  type PartStep,
-  type MachineAt,
-  NAV_ICON,
-  NAV_INDICATOR,
-  NAV_INDICATOR_R,
-  NAV_LABEL_FONT,
-  selectedAncestor,
-  takesText,
-  panelSlotFor,
-  refillPanels,
-  restorePanel,
-  slotsOf,
-  resizedChildren,
-  needsTabPanels,
-  tabIndexOf,
-  tabPanelId,
-  tabRenamePatch,
-  tabPanelsPatch,
-  tabStyleOf,
-  TAB_PANEL_H,
-  TAB_ROW_H,
-  onToken,
-  pageTintOf,
-  PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor,
-  scrollContent, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, conditionalLook, ruledLook,
-  looksFor, isTimedRule, ruleDue, dueAction, hasTimedRules, firstDueRule,
-  varsOfPage, varsInFrames, varsForScope, VARS_ALL,
-  paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type ItemState, type PlacedItem, type Frame, type Var } from "./tokens";
+import { BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill, childShown, connectedButton, DIALOG_COLOR, childDrawn, badgeSurface, buttonScale, findItemIn, foldMargins, radiiOfRuns, roundByNature, runPartRadii, ROUND_SHAPES, foldPlace, foldShift, layoutOf, NO_FOLD, fitTabPanels, keepPanelSlots, liftAbove, isStateEffect, STATE_EFFECTS, START_LOOK, firstTapStep, firstDueStep, waitLeft, lookItem, lookAt, statesAsFlow, migrateFlows, hasTimedSteps, type PartFlow, type PartLook, type PartStep, type MachineAt, NAV_ICON, NAV_INDICATOR, NAV_INDICATOR_R, NAV_LABEL_FONT, selectedAncestor, takesText, panelSlotFor, refillPanels, restorePanel, slotsOf, resizedChildren, needsTabPanels, tabIndexOf, tabPanelId, tabRenamePatch, tabPanelsPatch, tabStyleOf, TAB_PANEL_H, TAB_ROW_H, onToken, pageTintOf, PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor, scrollContent, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type ItemState, type PlacedItem, type Frame } from "./tokens";
 
 afterEach(() => setGlobalShape("rounded")); // restore the module default
 
@@ -510,416 +451,6 @@ describe("a button's shape", () => {
     expect(resizedChildren(tall, { size2: 200 }, {})).toBeUndefined();
     expect(resizedChildren({ ...box }, { size2: 200 }, {})?.map((c) => c.y)).toEqual([0, 160]);
   });
-
-  it("keeps each page's variables its own, and the shared ones shared", () => {
-    const vars: Var[] = [
-      { id: "a", name: "金币", kind: "number", initial: 0, pageId: "home" },
-      { id: "b", name: "宝箱", kind: "boolean", initial: false, pageId: "home" },
-      { id: "c", name: "已领取", kind: "boolean", initial: false, pageId: "bag" },
-      { id: "d", name: "关卡", kind: "number", initial: 1 },
-    ];
-    /* a page shows its own */
-    expect(varsOfPage(vars, "home").map((v) => v.id)).toEqual(["a", "b"]);
-    expect(varsOfPage(vars, "bag").map((v) => v.id)).toEqual(["c"]);
-    /* the shared ones are the ones no page owns — what a document written before this looks like */
-    expect(varsOfPage(vars, null).map((v) => v.id)).toEqual(["d"]);
-    expect(varsOfPage(vars, "other")).toEqual([]);
-    /* the preview watches the pages in play, plus the shared ones: a variable of a page nobody is
-       looking at is noise in a list the tester reads at a glance */
-    expect(varsInFrames(vars, ["home"]).map((v) => v.id)).toEqual(["a", "b", "d"]);
-    expect(varsInFrames(vars, ["home", "bag"]).map((v) => v.id)).toEqual(["a", "b", "c", "d"]);
-    expect(varsInFrames(vars, []).map((v) => v.id)).toEqual(["d"]);
-    /* the scope the panel opens on: everything, so a variable that has just been given a page is
-       still in the list rather than appearing to have been dropped */
-    expect(varsForScope(vars, VARS_ALL).map((v) => v.id)).toEqual(["a", "b", "c", "d"]);
-    expect(varsForScope(vars, "home").map((v) => v.id)).toEqual(["a", "b"]);
-    expect(varsForScope(vars, "").map((v) => v.id)).toEqual(["d"]);
-    expect(varsForScope([], VARS_ALL)).toEqual([]);
-  });
-
-  it("lets one part's rule change another part, and lets a rule wait for the clock", () => {
-    const state: Var[] = [{ id: "v1", name: "状态", kind: "text", initial: "未领取" }];
-    const gift: Item = { ...makeItem("iconButton"), id: "gift", icon: "redeem" };
-    const claim: Item = {
-      ...makeItem("button"),
-      id: "claim",
-      label: "领取",
-      rules: [{ id: "r1", when: [{ varId: "v1", op: "==", value: "已领取" }], do: { kind: "look", target: "gift", icon: "check_circle" } }],
-    };
-    /* the claim button's rule draws the gift, not itself */
-    const looks = looksFor([claim, gift], { v1: "已领取" }, state);
-    expect(looks.get("gift")).toMatchObject({ id: "gift", icon: "check_circle" });
-    expect(looks.has("claim")).toBe(false);
-    /* one part can wear a look of its own and mark another part at the same time: the first look
-       per target counts, but a part is not limited to one look */
-    const both: Item = {
-      ...claim,
-      id: "both",
-      label: "分享",
-      rules: [
-        { id: "b1", when: [{ varId: "v1", op: "==", value: "已领取" }], do: { kind: "look", target: "gift", icon: "check_circle" } },
-        { id: "b2", when: [{ varId: "v1", op: "==", value: "已领取" }], do: { kind: "look", label: "领取", icon: "redeem" } },
-      ],
-    };
-    const two = looksFor([both, gift], { v1: "已领取" }, state);
-    expect(two.get("both")).toMatchObject({ label: "领取", icon: "redeem" });
-    expect(two.get("gift")).toMatchObject({ icon: "check_circle" });
-    /* and while the condition does not hold nothing is redrawn */
-    expect(looksFor([claim, gift], { v1: "未领取" }, state).size).toBe(0);
-    /* a rule naming a part that is not there changes nothing */
-    const ghost: Item = { ...claim, id: "ghost", rules: [{ id: "r2", do: { kind: "look", target: "nowhere", icon: "star" } }] };
-    expect(looksFor([ghost, gift], {}, state).size).toBe(0);
-
-    /* a rule with a wait is not a tap rule */
-    const waiting: Item = {
-      ...makeItem("button"),
-      id: "build",
-      rules: [{ id: "r3", after: 600, do: { kind: "goto", to: "win", transition: "fade" } }],
-    };
-    const rules3 = waiting.rules ?? [];
-    expect(isTimedRule(rules3[0])).toBe(true);
-    expect(ruleDue(rules3[0], 0)).toBe(false);
-    expect(ruleDue(rules3[0], 600)).toBe(true);
-    /* nothing to do before the wait is over, and the action once it is */
-    expect(dueAction(rules3, {}, state, 599)).toBeNull();
-    expect(dueAction(rules3, {}, state, 600)?.id).toBe("r3");
-    /* a timed look is drawn, not carried out as an action */
-    const timedLook: Item = { ...gift, rules: [{ id: "r4", after: 10, do: { kind: "look", icon: "done" } }] };
-    expect(dueAction(timedLook.rules, {}, state, 20)).toBeNull();
-    expect(firstDueRule(timedLook.rules, {}, state, 20)?.id).toBe("r4");
-    expect(looksFor([timedLook], {}, state, 20).get("gift")).toMatchObject({ icon: "done" });
-    expect(looksFor([timedLook], {}, state, 5).size).toBe(0);
-    /* and the preview only keeps time when something waits */
-    expect(hasTimedRules([claim, gift])).toBe(false);
-    expect(hasTimedRules([waiting])).toBe(true);
-  });
-
-  it("draws a part the way a look rule asks while its conditions hold", () => {
-    /* the button that becomes the claim button: the variable decides the look, not a tap */
-    const state: Var[] = [{ id: "v1", name: "状态", kind: "text", initial: "分享" }];
-    const it: Item = {
-      ...makeItem("button"),
-      id: "b",
-      label: "{状态}",
-      icon: "share",
-      rules: [
-        { id: "r1", when: [{ varId: "v1", op: "==", value: "领取" }], do: { kind: "look", icon: "redeem", label: "领取奖励" } },
-        { id: "r2", when: [{ varId: "v1", op: "==", value: "分享" }], do: { kind: "goto", to: "sharePage", transition: "slide" } },
-      ],
-    };
-    /* while the value is 领取 the look applies … */
-    const claim = conditionalLook(it, { v1: "领取" }, state);
-    expect(claim).toMatchObject({ icon: "redeem", label: "领取奖励" });
-    /* … and every other value leaves the part as its author drew it */
-    expect(conditionalLook(it, { v1: "分享" }, state)).toBeNull();
-    expect(conditionalLook(it, { v1: "别的" }, state)).toBeNull();
-    /* a rule that goes somewhere is not a look */
-    expect(conditionalLook({ ...it, rules: [{ id: "r3", do: { kind: "goto", to: "p", transition: "slide" } }] }, {}, state)).toBeNull();
-    /* a part with no rules is never redrawn */
-    expect(conditionalLook(makeItem("button"), { v1: "领取" }, state)).toBeNull();
-    /* only the fields the rule names change */
-    expect(ruledLook(it, { kind: "look", icon: "" })).toMatchObject({ icon: null, label: "{状态}" });
-    expect(ruledLook(it, { kind: "look", variant: "outlined" }).variant).toBe("outlined");
-  });
-
-  it("keeps a destination's action on the destination, not on the bar around it", () => {
-    /* binding the bar as a whole would leave the destination doing nothing and make the whole bar
-       open the dialog — the bug the target-aware dialog choice was fixed for */
-    const nav = makeItem("bottomNav");
-    expect(actionPatchFor(nav, "tab:2", { to: "d1", transition: "expand", dialog: true })).toEqual({
-      actions: { "tab:2": { to: "d1", transition: "expand", dialog: true } },
-    });
-    expect(actionPatchFor(nav, null, { to: "d1", transition: "fade" })).toEqual({ action: { to: "d1", transition: "fade" } });
-    /* two destinations keep their own, and neither loses the other */
-    const bound = { ...nav, actions: { "tab:0": { to: "bag", transition: "fade" as const } } };
-    expect(actionPatchFor(bound, "tab:2", { to: "d1", transition: "expand" })).toEqual({
-      actions: { "tab:0": { to: "bag", transition: "fade" }, "tab:2": { to: "d1", transition: "expand" } },
-    });
-  });
-
-  it("draws a slim progress bar whose length, height and fill are the author's", () => {
-    /* the box *is* the bar: a thin one out of the box, and the two size rows are its own length
-       and height rather than a cell a track floats inside */
-    expect(KIND_SPEC.progressBar.category).toBe("progress");
-    expect(KIND_SPEC.progressBar.hasValue).toBe(true);
-    expect(KIND_SPEC.progressBar.hasLabel).toBe(true);
-    const bar = makeItem("progressBar");
-    expect(bar.label).toBe("");
-    expect(sizeOf(bar, {})).toEqual({ w: CONTENT_W, h: 10 });
-    expect(sizeOf({ ...bar, size: 300 }, {})).toEqual({ w: 300, h: 10 });
-    expect(sizeOf({ ...bar, size: 300, size2: 24 }, {})).toEqual({ w: 300, h: 24 });
-    /* ends rounded to half the height, whatever the document's shape scale says */
-    expect(baseRadii({ ...bar, size2: 24 })).toEqual(uniformRadii(12));
-    expect(baseRadii(bar)).toEqual(uniformRadii(5));
-    /* a bar carries its own share of the track, and never spills out of it */
-    expect(progressValue(bar)).toBe(PROGRESS_DEFAULT);
-    expect(progressValue({ ...bar, value: 0 })).toBe(0);
-    expect(progressValue({ ...bar, value: 42.6 })).toBe(43);
-    expect(progressValue({ ...bar, value: -20 })).toBe(0);
-    expect(progressValue({ ...bar, value: 250 })).toBe(100);
-    /* it is a bar of its own, not a member of a run */
-    expect(connectSpecOf(bar)).toBeUndefined();
-    /* and it starts with no track at all: the page shows through until a background is picked */
-    expect(KIND_SPEC.progressBar.hasFill).toBe(true);
-    expect(progressTrack(bar, PALETTES[0])).toEqual({ color: "transparent", ink: PALETTES[0].onSurface });
-    const onTrack = progressTrack({ ...bar, fill: "primaryContainer" }, PALETTES[0]);
-    expect(onTrack.color).toBe(PALETTES[0].primaryContainer);
-    expect(onTrack.ink).toBe(onToken("primaryContainer", PALETTES[0]));
-  });
-
-  it("gives an image its own width and height, square until a height is set", () => {
-    /* an author crops a picture into the box they want: two numbers, like a camera preview */
-    expect(KIND_SPEC.image.size?.icon).toBe("width");
-    expect(KIND_SPEC.image.size2?.icon).toBe("height");
-    const square = makeItem("image");
-    expect(sizeOf(square, {})).toEqual({ w: 200, h: 200 });
-    expect(sizeOf({ ...square, size: 300 }, {})).toEqual({ w: 300, h: 300 });
-    expect(sizeOf({ ...square, size: 300, size2: 160 }, {})).toEqual({ w: 300, h: 160 });
-    /* a height is never read from the width: the two are independent */
-    expect(sizeOf({ ...square, size: 120, size2: 300 }, {})).toEqual({ w: 120, h: 300 });
-  });
-
-
-  it("says an icon button is a circle, and keeps it one even beside a button", () => {
-    /* the switch can only be honest if the part says what it wears: a new icon button is a circle
-       outright, so the round shape is never a no-op that leaves it looking square */
-    const ib = makeItem("iconButton");
-    expect(ib.shape).toBe("round");
-    expect(roundByNature("iconButton")).toBe(true);
-    expect(roundByNature("fab")).toBe(true);
-    expect(roundByNature("button")).toBe(false);
-    /* and a circle it stays where runs would otherwise fuse it with a button */
-    const run: Group = { id: "r", x: 0, y: 0, axis: "x", items: [ib, { ...makeItem("button"), id: "b" }] };
-    const corners = radiiOfRuns([run]);
-    expect(corners.get(ib.id)).toEqual(uniformRadii(scaleR(ib.size! / 2)));
-    expect(corners.get("b")).toMatchObject({ tl: 8, bl: 8 });
-    /* the preview reads the same rule, so what it draws is what the canvas draws — this is what
-       used to turn a circle into a square the moment the preview was opened */
-    expect(runPartRadii(ib, true, false, "x")).toEqual(uniformRadii(Math.round(ib.size! / 2)));
-    expect(runPartRadii({ ...ib, shape: "square" }, true, false, "x")).toEqual(uniformRadii(8));
-    expect(runPartRadii({ ...ib, shape: "round" }, true, true, "x")).toEqual(uniformRadii(24));
-    setGlobalShape("square");
-    expect(runPartRadii(ib, true, false, "x")).toEqual(uniformRadii(24));
-    setGlobalShape("rounded");
-    /* a part with no shape of its own still takes the connected look of its run */
-    const plain: Item = { ...makeItem("button"), id: "p" };
-    expect(runPartRadii(plain, true, false, "x")).toEqual(runCorners("x", true, false, R_FULL, scaleR(8)));
-    expect(runPartRadii(plain, true, true, "x")).toEqual(uniformRadii(R_FULL));
-    expect(runPartRadii({ ...makeItem("text"), id: "t" }, false, false, "x")).toEqual(baseRadii({ ...makeItem("text"), id: "t" }));
-  });
-});
-
-describe("the highlight a tapped destination wears", () => {
-  /* A navigation bar's and a rail's active indicator is a square in this tool rather than M3's pill,
-   * and the words under it are a touch bigger. Both shape how a game's navigation reads, so they
-   * are named once and read from everywhere the destinations are drawn. */
-  it("is a square rather than a pill, with slightly bigger words", () => {
-    expect(NAV_INDICATOR_R).toBe(8);
-    /* a pill would be half the indicator's height (32dp) */
-    expect(NAV_INDICATOR_R).toBeLessThan(32 / 2);
-    expect(NAV_LABEL_FONT).toBe(12);
-    expect(NAV_LABEL_FONT).toBeGreaterThan(11);
-    /* A square around the icon rather than the 56x32 rectangle it used to be: the indicator is one
-       number for both of its sides, wide enough for the icon and its padding. */
-    expect(NAV_INDICATOR).toBeGreaterThan(32);
-    expect(NAV_INDICATOR).toBeLessThan(56);
-    expect(NAV_ICON).toBeGreaterThan(24);
-    expect(NAV_ICON).toBeLessThan(NAV_INDICATOR);
-    /* the square and its one line of words still fit a destination's own cell */
-    expect(NAV_INDICATOR + NAV_LABEL_FONT * 1.4).toBeLessThanOrEqual(60);
-  });
-});
-
-describe("the part a drag belongs to", () => {
-  /* A container the author picked in the layers panel takes the drag that lands on anything inside
-   * it: the alternative is moving whatever happens to be drawn over the container. */
-  const kid: PlacedItem = { ...makeItem("button"), id: "kid", x: 8, y: 8 } as PlacedItem;
-  const inner: PlacedItem = { ...makeItem("box"), id: "inner", x: 4, y: 4, children: [kid] } as PlacedItem;
-  const group: Group = { id: "g", x: 0, y: 0, axis: "x", items: [{ ...makeItem("box"), id: "outer", children: [inner] }] };
-
-  it("is the nearest part picked in the layers that holds the pressed one", () => {
-    expect(selectedAncestor([group], "kid", ["outer"])?.id).toBe("outer");
-    /* the innermost pick wins when both hold it */
-    expect(selectedAncestor([group], "kid", ["outer", "inner"])?.id).toBe("inner");
-    /* a part that holds nothing of the pressed one is not it */
-    expect(selectedAncestor([group], "kid", ["unrelated"])).toBeNull();
-    expect(selectedAncestor([group], "outer", ["kid"])).toBeNull();
-    /* and a part that is itself the pick is not its own ancestor */
-    expect(selectedAncestor([group], "kid", ["kid"])).toBeNull();
-  });
-});
-
-describe("a part that takes a dragged text", () => {
-  /* Dragging a text onto a control that writes text of its own puts the words inside it: a caption
-   * belongs to the button it is about. A container takes anything already, and a text takes none. */
-  it("is a part with words of its own, never a container or a text", () => {
-    /* an icon button holds one icon and no words, so a dragged text is not its caption */
-    expect(takesText(makeItem("iconButton"))).toBe(false);
-    expect(takesText(makeItem("button"))).toBe(true);
-    expect(takesText(makeItem("card"))).toBe(true);
-    expect(takesText(makeItem("box"))).toBe(false);
-    expect(takesText(makeItem("tabs"))).toBe(false);
-    expect(takesText(makeItem("text"))).toBe(false);
-    expect(takesText(makeItem("divider"))).toBe(false);
-    expect(takesText({ ...makeItem("box"), kind: "nope" as Item["kind"] })).toBe(false);
-  });
-});
-
-describe("a button's own height", () => {
-  /* whatever is inside the button grows with it: M3's small, medium and large buttons differ in
-   * their words and icons as much as in their height. */
-  it("scales what is inside it with the height", () => {
-    expect(buttonScale(makeItem("button"))).toBe(1);
-    expect(buttonScale({ ...makeItem("button"), size2: 112 })).toBe(2);
-    expect(buttonScale({ ...makeItem("button"), size2: 28 })).toBe(0.5);
-  });
-
-  /* M3's medium button is 56dp tall; the size row offers the width and, since a tall or short
-   * button is often wanted, the height as well. */
-  it("takes the height the author set, and keeps its own when they did not", () => {
-    const fresh = makeItem("button");
-    expect(KIND_SPEC.button.size2).toMatchObject({ icon: "height" });
-    expect(sizeOf(fresh, {}).h).toBe(KIND_SPEC.button.h);
-    expect(sizeOf({ ...fresh, size2: 80 }, {}).h).toBe(80);
-    /* the width behaves as it always did, and the two are independent */
-    expect(sizeOf({ ...fresh, size: 200, size2: 80 }, {})).toEqual({ w: 200, h: 80 });
-    expect(sizeOf({ ...fresh, size2: 80 }, {}).w).toBe(KIND_SPEC.button.w);
-  });
-});
-
-describe("a part's border", () => {
-  const p = PALETTES[0];
-  it("draws nothing at zero and an inset ring otherwise", () => {
-    const plain = makeItem("button");
-    expect(strokeOf(plain, p)).toBeNull();
-    expect(strokeOf({ ...plain, strokeWidth: 0 }, p)).toBeNull();
-    expect(strokeOf({ ...plain, strokeWidth: 3 }, p)).toBe(`inset 0 0 0 3px ${p.outline}`);
-    expect(strokeOf({ ...plain, strokeWidth: 2, strokeColor: "primary" }, p)).toBe(`inset 0 0 0 2px ${p.primary}`);
-    expect(strokeOf({ ...plain, strokeWidth: 2, strokeColor: "#ff0000" }, p)).toBe("inset 0 0 0 2px #ff0000");
-    /* an unknown colour name falls back to the outline role */
-    expect(strokeOf({ ...plain, strokeWidth: 1, strokeColor: "chartreuse" }, p)).toBe(`inset 0 0 0 1px ${p.outline}`);
-  });
-});
-
-describe("a badge's size", () => {
-  it("hugs its number by default and takes the size its author gives it", () => {
-    const dot = { ...makeItem("badge"), label: "" };
-    expect(sizeOf(dot, {})).toEqual({ w: 16, h: 6 });
-    const numbered = makeItem("badge");
-    expect(sizeOf(numbered, {})).toEqual({ w: 16, h: 16 });
-    expect(sizeOf({ ...numbered, size: 40, size2: 24 }, {})).toEqual({ w: 40, h: 24 });
-    /* a measured width stays the fallback when only the height was set */
-    expect(sizeOf({ ...numbered, size2: 24 }, { [numbered.id]: 30 })).toEqual({ w: 30, h: 24 });
-    expect(KIND_SPEC.badge.size).toBeDefined();
-    expect(KIND_SPEC.badge.size2).toBeDefined();
-    /* the size the row shows is the size it draws: the intrinsic 16dp, not a zero */
-    expect(KIND_SPEC.badge.w).toBe(16);
-    expect(sizeOf(makeItem("badge"), {})).toEqual({ w: KIND_SPEC.badge.w, h: KIND_SPEC.badge.h });
-  });
-
-  it("paints its pill with the author's colour and rings it with their border", () => {
-    /* a badge is a pill of its own: nothing else paints it, so the colour and the border the author
-       set have to ride on the pill itself (the box behind it draws no ring) */
-    const p = PALETTES[0];
-    const plain = makeItem("badge");
-    expect(badgeSurface(plain, p)).toEqual({ background: p.error, color: p.onError });
-    const coloured = { ...plain, color: "tertiaryContainer", strokeWidth: 2, strokeColor: "primary" };
-    const surface = badgeSurface(coloured, p);
-    expect(surface.background).toBe(p.tertiaryContainer);
-    expect(surface.color).toBe(onToken("tertiaryContainer", p));
-    expect(surface.boxShadow).toBe(strokeOf(coloured, p));
-    /* a hex colour of its own works the same way */
-    const hex = { ...plain, color: "#123456" };
-    expect(badgeSurface(hex, p).background).toBe("#123456");
-  });
-});
-
-describe("a part of an unknown kind", () => {  const alien = { ...makeItem("button"), kind: "chart" } as unknown as Item;
-
-  it("measures as the box rather than reading an undefined spec", () => {
-    expect(sizeOf(alien, {})).toEqual({ w: KIND_SPEC.box.w, h: KIND_SPEC.box.h });
-  });
-
-  it("has box geometry at every entry point that reads a spec", () => {
-    expect(baseRadii(alien)).toEqual(uniformRadii(scaleR(KIND_SPEC.box.radius)));
-    expect(connectSpecOf(alien)).toBeUndefined();
-    expect(connectable(alien)).toBe(false);
-    expect(iconSlotsOf(alien)).toEqual([]);
-    expect(() => fitHeight(alien, 100)).not.toThrow();
-    expect(() => carryItemSize(alien, { w: 100, h: 100 }, { w: 200, h: 200 })).not.toThrow();
-  });
-});
-
-describe("a part's own colour and layer", () => {
-  const p = PALETTES[0];
-
-  it("starts every part at the default level and follows a typed one", () => {
-    expect(LAYER_DEFAULT).toBe(10);
-    expect(layerOf(makeItem("button"))).toBe(LAYER_DEFAULT);
-    expect(layerOf({ ...makeItem("button"), z: 40 })).toBe(40);
-    expect(layerOf({ ...makeItem("button"), z: 0 })).toBe(0);
-  });
-
-  it("resolves a palette role and a hex literal, and ignores junk", () => {
-    expect(isCustomColor("primary")).toBe(true);
-    expect(isCustomColor("#1A2B3C")).toBe(true);
-    expect(isCustomColor("#1a2b3c")).toBe(true);
-    expect(isCustomColor("chartreuse")).toBe(false);
-    expect(isCustomColor("#12345")).toBe(false);
-    expect(isCustomColor(undefined)).toBe(false);
-    expect(colorOverrideOf(makeItem("button"), p)).toBeNull();
-    expect(colorOverrideOf({ ...makeItem("button"), color: "tertiaryContainer" }, p)).toEqual({ main: p.tertiaryContainer, on: p.onTertiaryContainer });
-    expect(colorOverrideOf({ ...makeItem("button"), color: "#101010" }, p)?.main).toBe("#101010");
-  });
-
-  it("stands in for the primary role so every accent follows the part's colour", () => {
-    const plain = paletteForItem(makeItem("button"), p);
-    expect(plain).toBe(p);
-    const own = paletteForItem({ ...makeItem("button"), color: "primary" }, p);
-    expect(own.primary).toBe(p.primary);
-    const hex = paletteForItem({ ...makeItem("text"), color: "#FFD400" }, p);
-    expect(hex).toMatchObject({ primary: "#FFD400", primaryContainer: "#FFD400", onSurface: "#FFD400" });
-  });
-});
-
-describe("containers and their children", () => {
-  const kid = (id: string, x: number, y: number): PlacedItem => ({ ...makeItem("button"), id, x, y });
-  const box = (id: string, children: PlacedItem[]): PlacedItem => ({ ...makeItem("box"), id, x: 0, y: 0, children });
-  const groups = (): Group[] => [
-    { id: "g1", x: 0, y: 0, axis: "x", items: [box("c1", [kid("k1", 10, 20), box("c2", [kid("k2", 1, 2)])]), kid("top", 300, 0)] },
-  ];
-
-  it("walks a document depth first, containers before what they hold", () => {
-    expect(itemsOf(groups()).map((it) => it.id)).toEqual(["c1", "k1", "c2", "k2", "top"]);
-    expect(subtreeOf(box("c1", [kid("k1", 0, 0), box("c2", [kid("k2", 0, 0)])])).map((it) => it.id)).toEqual(["c1", "k1", "c2", "k2"]);
-  });
-
-  it("names the container a part sits in, however deep", () => {
-    expect(parentOf(groups(), "k2")?.id).toBe("c2");
-    expect(parentOf(groups(), "k1")?.id).toBe("c1");
-    expect(parentOf(groups(), "top")).toBeNull();
-    expect(parentOf(groups(), "missing")).toBeNull();
-  });
-
-  it("copies a subtree with fresh ids, keeping the offsets and the children", () => {
-    let n = 0;
-    const ids = new Map<string, string>();
-    const copy = copySubtree(box("c1", [kid("k1", 10, 20), box("c2", [kid("k2", 1, 2)])]) as PlacedItem, () => `n${++n}`, ids);
-    expect(copy.id).toBe("n1");
-    expect(copy.children?.map((c) => c.id)).toEqual(["n2", "n3"]);
-    expect(copy.children?.[0]).toMatchObject({ x: 10, y: 20 });
-    expect(copy.children?.[1].children?.[0]).toMatchObject({ id: "n4", x: 1, y: 2 });
-    expect(ids.get("k2")).toBe("n4");
-    /* the original tree is untouched */
-    expect(copy.children).not.toBe(box("c1", []).children);
-  });
-
-  it("stacks a container's contents by level", () => {
-    const low = { ...kid("a", 0, 0), z: 1 };
-    const high = { ...kid("b", 0, 0), z: 30 };
-    const same = kid("c", 0, 0);
-    expect([high, same, low].sort(byLayer).map((it) => it.id)).toEqual(["a", "c", "b"]);
-  });
 });
 
 describe("a part's own state machine", () => {
@@ -931,7 +462,7 @@ describe("a part's own state machine", () => {
   const inGroup = (it: Item): Item => migrateFlows([{ id: "g1", x: 0, y: 0, axis: "x", items: [it] }])[0].items[0];
 
   it("walks the cycle an author drew: 分享, 领取, 已领取", () => {
-    /* The example the feature exists for: three looks, two tap steps, no variable anywhere. */
+    /* The example the feature exists for: three looks and two tap steps. */
     const share = look("l1", { label: "分享" });
     const claim = look("l2", { label: "领取", icon: "redeem" });
     const done = look("l3", { label: "已领取", icon: "check_circle", disabled: true });
@@ -940,17 +471,19 @@ describe("a part's own state machine", () => {
     /* the look no step has moved it out of is the one the author drew */
     expect(lookAt({}, "b1")).toBe(START_LOOK);
     expect(resolveStates(it, {}, 0).item).toBe(it);
-    expect(firstTapStep(f, START_LOOK, {}, [])?.to).toBe("l2");
-    expect(firstTapStep(f, "l2", {}, [])?.to).toBe("l3");
+    expect(firstTapStep(f, START_LOOK)?.to).toBe("l2");
+    expect(firstTapStep(f, "l2")?.to).toBe("l3");
     /* the last look has no step out of it, so the tap is the plain action's again */
-    expect(firstTapStep(f, "l3", {}, [])).toBeNull();
+    expect(firstTapStep(f, "l3")).toBeNull();
     expect(resolveStates(it, at("l2"), 0).item).toMatchObject({ label: "领取", icon: "redeem" });
     expect(resolveStates(it, at("l3"), 0).item).toMatchObject({ label: "已领取", icon: "check_circle" });
     expect(resolveStates(it, at("l3"), 0)).toMatchObject({ disabled: true, hidden: false, grown: false });
     expect(tappable(resolveStates(it, at("l3"), 0))).toBe(false);
+    /* two steps leaving one look are read in the order they were written */
+    const two = flow([look("a"), look("b")], [step("l2", "a"), step("l2", "b")]);
+    expect(firstTapStep(two, "l2")?.to).toBe("a");
     /* a step that names the drawn look goes back to exactly what the author made */
-    const back = flow([look("l2")], [step("l2", START_LOOK)]);
-    expect(firstTapStep(back, "l2", {}, [])?.to).toBe(START_LOOK);
+    expect(firstTapStep(flow([look("l2")], [step("l2", START_LOOK)]), "l2")?.to).toBe(START_LOOK);
   });
 
   it("keeps every field a look left alone, so editing the part still moves the nodes", () => {
@@ -968,30 +501,13 @@ describe("a part's own state machine", () => {
     expect(resolveStates(flags, at("l1"), 0).item.variant).toBe("outlined");
   });
 
-  it("takes the first step whose conditions hold, and none when none does", () => {
-    const vars: Var[] = [{ id: "v1", name: "金币", kind: "number", initial: 0 }];
-    const f = flow(
-      [look("rich", { label: "买得起" }), look("poor", { label: "买不起" })],
-      [step(START_LOOK, "rich", { when: [{ varId: "v1", op: ">=", value: 10 }] }), step(START_LOOK, "poor")],
-    );
-    expect(firstTapStep(f, START_LOOK, { v1: 20 }, vars)?.to).toBe("rich");
-    expect(firstTapStep(f, START_LOOK, { v1: 3 }, vars)?.to).toBe("poor");
-    /* a step with no fallback behind it leaves the tap to the plain action */
-    const only = flow([look("rich")], [step(START_LOOK, "rich", { when: [{ varId: "v1", op: ">=", value: 10 }] })]);
-    expect(firstTapStep(only, START_LOOK, { v1: 3 }, vars)).toBeNull();
-    expect(firstTapStep(undefined, START_LOOK, {}, [])).toBeNull();
-  });
-
   it("waits its own clock, counted from the look the part is in", () => {
     const f = flow(
       [look("building", { label: "建造中", disabled: true })],
       [step(START_LOOK, "building"), step("building", START_LOOK, { trigger: { kind: "after", seconds: 10 } })],
     );
-    expect(firstDueStep(f, "building", {}, [], 9)).toBeNull();
-    expect(firstDueStep(f, "building", {}, [], 10)?.to).toBe(START_LOOK);
-    /* a wait that is also conditional waits for both */
-    const guarded = flow([look("done")], [step("building", "done", { trigger: { kind: "after", seconds: 10 }, when: [{ varId: "v1", op: "==", value: 1 }] })]);
-    expect(firstDueStep(guarded, "building", { v1: 0 }, [{ id: "v1", name: "v", kind: "number", initial: 0 }], 30)).toBeNull();
+    expect(firstDueStep(f, "building", 9)).toBeNull();
+    expect(firstDueStep(f, "building", 10)?.to).toBe(START_LOOK);
     /* the wait left on a look reads as a countdown, and it is the soonest one that shows */
     const two = flow([look("a")], [step("building", "a", { trigger: { kind: "after", seconds: 30 } }), step("building", "a", { trigger: { kind: "after", seconds: 5 } })]);
     expect(waitLeft(two, "building", 2)).toBe(3);
@@ -1022,19 +538,19 @@ describe("a part's own state machine", () => {
     expect(f.looks).toHaveLength(1);
     /* the effects of one tap are one look, and the icon swap is what a visitor taps back */
     expect(f.looks[0]).toMatchObject({ icon: "check_circle", label: "已领取" });
-    expect(firstTapStep(f, START_LOOK, {}, [])?.to).toBe(f.looks[0].id);
-    expect(firstTapStep(f, f.looks[0].id, {}, [])?.to).toBe(START_LOOK);
+    expect(firstTapStep(f, START_LOOK)?.to).toBe(f.looks[0].id);
+    expect(firstTapStep(f, f.looks[0].id)?.to).toBe(START_LOOK);
     expect(resolveStates(read, { b1: { look: f.looks[0].id, since: 0 } }, 0).item).toMatchObject({ icon: "check_circle", label: "已领取" });
     /* a claim stays claimed: with no icon swap there is nothing to go back to */
     const claim = inGroup({ ...makeItem("button"), id: "b2", states: [{ id: "s1", trigger: "tap", effect: "label", value: "已领取" }] });
     const cf = claim.flow as PartFlow;
-    expect(firstTapStep(cf, cf.looks[0].id, {}, [])).toBeNull();
+    expect(firstTapStep(cf, cf.looks[0].id)).toBeNull();
     /* a cooldown is a greyed look the part waits its way out of */
     const cool = inGroup({ ...makeItem("button"), id: "b3", states: [{ id: "s1", trigger: "tap", effect: "cooldown", seconds: 5 }] });
     const kf = cool.flow as PartFlow;
     expect(kf.looks[0].disabled).toBe(true);
     expect(resolveStates(cool, { b3: { look: kf.looks[0].id, since: 1000 } }, 3000)).toMatchObject({ disabled: true, cooldown: 3 });
-    expect(firstDueStep(kf, kf.looks[0].id, {}, [], 5)?.to).toBe(START_LOOK);
+    expect(firstDueStep(kf, kf.looks[0].id, 5)?.to).toBe(START_LOOK);
     /* a bar's per-slot rules come back the same way */
     const bar = inGroup({ ...makeItem("bottomNav"), id: "nav", slotStates: { "tab:0": [{ id: "s1", trigger: "tap", effect: "label", value: "新消息" }] } });
     expect(bar.slotStates).toBeUndefined();
@@ -1473,5 +989,67 @@ describe("panels follow the tabs they belong to", () => {
   it("has no panel to name when the row has none, or the tab is past the last panel", () => {
     expect(tabPanelId(row([]))).toBeNull();
     expect(tabPanelId({ ...row([panel("a")]), selected: 2 })).toBeNull();
+  });
+});
+
+describe("a document written while variables existed", () => {
+  const flow = (machine: PartFlow): PartFlow => machine;
+
+  it("drops the values, the conditional rules and the rules inside a part's machine", () => {
+    const legacy = {
+      ...makeItem("button"),
+      id: "share",
+      rules: [{ id: "r", when: [{ varId: "v", op: ">=", value: 1 }], do: { kind: "goto", to: "next", transition: "slide" } }],
+      flow: flow({
+        looks: [{ id: "l2", label: "领取" }],
+        steps: [
+          { id: "s1", from: START_LOOK, to: "l2", trigger: { kind: "tap" }, when: [{ varId: "v", op: ">=", value: 1 }], do: [{ kind: "set", varId: "v", value: 0 }, { kind: "look", target: "gift", icon: "done" }] } as never,
+          { id: "s2", from: "l2", to: START_LOOK, trigger: { kind: "after", seconds: 5 } },
+        ],
+      }),
+    } as Item;
+    const [read] = migrateFlows([{ id: "g", x: 0, y: 0, axis: "x", items: [legacy] }]).map((g) => g.items[0]);
+    expect((read as unknown as { rules?: unknown }).rules).toBeUndefined();
+    expect(read.flow?.steps[0]).toEqual({ id: "s1", from: START_LOOK, to: "l2", trigger: { kind: "tap" }, do: [{ kind: "look", target: "gift", icon: "done" }] });
+    /* a step that carried nothing but a guard stays a plain step */
+    expect(read.flow?.steps[1]).toEqual({ id: "s2", from: "l2", to: START_LOOK, trigger: { kind: "after", seconds: 5 } });
+  });
+
+  it("hands an untouched part back as the very same one", () => {
+    const plain = makeItem("button");
+    const [read] = migrateFlows([{ id: "g", x: 0, y: 0, axis: "x", items: [plain] }]).map((g) => g.items[0]);
+    expect(read).toBe(plain);
+  });
+});
+
+describe("a look a step latches onto a part", () => {
+  it("changes what it names and nothing else, so a document's old style choice is dropped", () => {
+    const legacy = {
+      ...makeItem("button"),
+      id: "share",
+      flow: {
+        looks: [{ id: "l2", label: "领取" }],
+        steps: [{ id: "s1", from: START_LOOK, to: "l2", trigger: { kind: "tap" as const }, do: [{ kind: "look" as const, target: "gift", icon: "done", color: "#FF8A00", variant: "outlined" as const }] }],
+      },
+    } as unknown as Item;
+    const [read] = migrateFlows([{ id: "g", x: 0, y: 0, axis: "x", items: [legacy] }]).map((g) => g.items[0]);
+    expect(read.flow?.steps[0].do).toEqual([{ kind: "look", target: "gift", icon: "done", color: "#FF8A00" }]);
+    /* a machine that carries nothing legacy comes back as the same object */
+    const clean = { ...makeItem("button"), id: "b", flow: { looks: [{ id: "l2" }], steps: [{ id: "s", from: START_LOOK, to: "l2", trigger: { kind: "tap" as const } }] } } as Item;
+    const [same] = migrateFlows([{ id: "g", x: 0, y: 0, axis: "x", items: [clean] }]).map((g) => g.items[0]);
+    expect(same).toBe(clean);
+    expect(same.flow).toBe(clean.flow);
+  });
+});
+
+describe("the name an author gives a part", () => {
+  /* Renaming a row in the layers panel names that part and never writes over what it shows, so a
+   * badge keeps its count and a button keeps its words. The name is what the row and the prompt
+   * read; the part's own words stay in `label`, where the inspector edits them. */
+  it("is shown in place of the words the part says", () => {
+    const named = (patch: Partial<Item>): Item => ({ ...makeItem("button"), id: "b", label: "分享", ...patch });
+    expect(itemNameOf(named({ name: "分享按钮" }), "zh")).toBe("分享按钮");
+    expect(itemNameOf(named({}), "zh")).toBe("分享");
+    expect(itemNameOf(named({ label: "", name: "" }), "zh")).toBe("按钮");
   });
 });

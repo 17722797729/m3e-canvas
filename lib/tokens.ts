@@ -1358,6 +1358,11 @@ export type Item = {
   id: string;
   kind: Kind;
   label: string;
+  /** The author's own name for this part: what the layers panel shows and renames, and what the
+   *  prompt and the flow call it. It is never the part's words — those are `label`, edited in the
+   *  inspector — so renaming a row cannot rewrite what the part displays. Unset means the row names
+   *  the part by its own text, and then by its kind. */
+  name?: string;
   icon: string | null;
   icon2?: string | null;
   variant: Variant;
@@ -1427,12 +1432,9 @@ export type Item = {
   /** The state machine of this part: the looks a tap moves it between, drawn as a flow in the
    *  inspector. Documents written before flows carry `states`, which is read back as one. */
   flow?: PartFlow;
-  /** Interaction rules hung on this part: what a tap changes about it, the old way. Read back as
-   *  a flow when the document is opened, and kept so those documents still open. */
+  /** Interaction rules hung on this part, the old way: read back as a flow when the document is
+   *  opened, and kept so those documents still open. */
   states?: ItemState[];
-  /** conditional taps: each rule runs when its conditions hold, and the part's plain action
-   *  is what happens when none of them does */
-  rules?: ItemRule[];
   /** The parts this one holds: a container's children, drawn inside its box. Their x/y
    *  are offsets from the container's top-left corner, so moving or resizing the
    *  container carries them along. */
@@ -1540,8 +1542,7 @@ export type PartStep = {
   from: string;
   to: string;
   trigger: StepTrigger;
-  when?: Condition[];
-  /** what else the step does, in order: a jump, a value written, another part's look */
+  /** what else the step does, in order: a jump, or a look latched onto a part */
   do?: RuleAction[];
 };
 
@@ -1567,19 +1568,17 @@ export function lookItem(it: Item, look: PartLook | undefined): Item {
   return out;
 }
 
-/** The conditions hold, and the step's own clock (if it has one) has come round. */
-const stepHolds = (s: PartStep, vars: Record<string, VarValue>, declared: Var[], elapsed: number) =>
-  (s.when ?? []).every((c) => holds(c, vars, declared)) && (s.trigger.kind !== "after" || elapsed >= Math.max(0, s.trigger.seconds));
-
-/** The step a *tap* takes from this look, or null when the part's plain action is what runs. */
-export function firstTapStep(flow: PartFlow | undefined, from: string, vars: Record<string, VarValue>, declared: Var[]): PartStep | null {
-  for (const s of stepsFrom(flow, from)) if (s.trigger.kind === "tap" && stepHolds(s, vars, declared, 0)) return s;
+/** The step a *tap* takes from this look, or null when the part's plain action is what runs.
+ *  Two steps leave the same look in the order they were written, so that is the whole of the
+ *  order an author thinks about. */
+export function firstTapStep(flow: PartFlow | undefined, from: string): PartStep | null {
+  for (const s of stepsFrom(flow, from)) if (s.trigger.kind === "tap") return s;
   return null;
 }
 
 /** The step that has come round on its own, counted from the moment the part entered this look. */
-export function firstDueStep(flow: PartFlow | undefined, from: string, vars: Record<string, VarValue>, declared: Var[], elapsed: number): PartStep | null {
-  for (const s of stepsFrom(flow, from)) if (s.trigger.kind === "after" && stepHolds(s, vars, declared, elapsed)) return s;
+export function firstDueStep(flow: PartFlow | undefined, from: string, elapsed: number): PartStep | null {
+  for (const s of stepsFrom(flow, from)) if (s.trigger.kind === "after" && elapsed >= Math.max(0, s.trigger.seconds)) return s;
   return null;
 }
 
@@ -1593,6 +1592,16 @@ export function waitLeft(flow: PartFlow | undefined, from: string, elapsed: numb
     if (best === 0 || left < best) best = left;
   }
   return best;
+}
+
+/** Whether any part carries a step that waits: the ticker only has to run when one does. */
+export function hasTimedSteps(items: Item[]): boolean {
+  return items.some(
+    (it) =>
+      (it.flow?.steps ?? []).some(isTimedStep) ||
+      Object.values(it.slotFlows ?? {}).some((f) => f.steps.some(isTimedStep)) ||
+      (it.children ? hasTimedSteps(it.children) : false),
+  );
 }
 
 /** Where a part is: the look it is in, and the moment on the preview's clock it got there. */
@@ -1650,27 +1659,58 @@ export function statesAsFlow(states: ItemState[]): PartFlow | undefined {
  * as a document is opened, so the editor, the preview and the prompt only ever see machines.
  */
 export function migrateFlows(groups: Group[]): Group[] {
+  /** A step written while variables existed may carry a guard or a write: neither can run any more,
+   *  so both are dropped. A machine that needs nothing dropped is handed back as it is. */
+  const tidy = (machine: PartFlow | undefined): PartFlow | undefined => {
+    if (!machine) return machine;
+    let changed = false;
+    const steps = machine.steps.map((st) => {
+      const legacy = st as PartStep & { when?: unknown };
+      const acts = st.do ?? [];
+      const kept = acts
+        .filter((a) => a.kind === "goto" || a.kind === "back" || a.kind === "close" || a.kind === "look")
+        /* a look was once able to restyle the part it aims at: that choice is gone */
+        .map((a) => (a.kind === "look" && a.variant !== undefined ? { kind: "look" as const, target: a.target, icon: a.icon, label: a.label, color: a.color } : a));
+      /* Nothing to drop: the very same step goes back, so an untouched machine keeps its identity. */
+      if (legacy.when === undefined && kept.length === acts.length && kept.every((a, i) => a === acts[i])) return st;
+      changed = true;
+      const { when: _when, ...clean } = legacy;
+      return { ...clean, ...(kept.length ? { do: kept } : {}) } as PartStep;
+    });
+    return changed ? { looks: machine.looks, steps } : machine;
+  };
   const walk = <T extends Item>(it: T): T => {
     const children = it.children?.map(walk);
     const nested = children && children.some((c, i) => c !== it.children?.[i]) ? children : it.children;
-    const keep = () => (nested === it.children ? it : { ...it, children: nested });
-    const hasStates = (it.states?.length ?? 0) > 0;
+    /* what a document written before this build carries, and this one does not */
+    const legacy = it as Item & { rules?: unknown; states?: ItemState[]; slotStates?: Record<string, ItemState[]> };
+    const { rules: _rules, states, slotStates, ...rest } = legacy;
+    const madeFlow = states && states.length ? statesAsFlow(states) : undefined;
     /* a document from a build that wrote something else there must not take the editor down:
        only a real list of rules becomes a machine */
-    const slots = it.slotStates ? Object.entries(it.slotStates).filter(([, list]) => Array.isArray(list)) : [];
-    if (!hasStates && slots.length === 0) return keep();
-    const { states, slotStates, ...rest } = it;
-    const flow = hasStates ? statesAsFlow((states ?? []) as ItemState[]) : undefined;
-    const slotFlows = slots.reduce<Record<string, PartFlow>>((acc, [key, list]) => {
-      const made = statesAsFlow(list);
-      if (made) acc[key] = made;
+    const madeSlots = slotStates
+      ? Object.entries(slotStates).reduce<Record<string, PartFlow>>((acc, [key, list]) => {
+          if (!Array.isArray(list)) return acc;
+          const made = statesAsFlow(list);
+          if (made) acc[key] = made;
+          return acc;
+        }, {})
+      : undefined;
+    const flow = tidy(madeFlow ?? it.flow);
+    const slotFlows = Object.entries(madeSlots ?? it.slotFlows ?? {}).reduce<Record<string, PartFlow>>((acc, [key, machine]) => {
+      const kept = tidy(machine);
+      if (kept) acc[key] = kept;
       return acc;
     }, {});
+    const hadSlots = Object.keys(it.slotFlows ?? {}).length > 0;
+    const blank = _rules === undefined && states === undefined && slotStates === undefined && flow === it.flow && !hadSlots && nested === it.children;
+    /* nothing to read back: the part itself, untouched, so an untouched document keeps its identity */
+    if (blank) return it;
     return {
       ...rest,
       ...(nested ? { children: nested } : {}),
       ...(flow ? { flow } : {}),
-      ...(slotStates && Object.keys(slotFlows).length ? { slotFlows } : {}),
+      ...(Object.keys(slotFlows).length ? { slotFlows } : {}),
     } as T;
   };
   return groups.map((g) => {
@@ -1681,112 +1721,7 @@ export function migrateFlows(groups: Group[]): Group[] {
 
 export type ToggleLook = { icon?: string | null; variant?: Variant; label?: string };
 
-/* ---------- variables and rules ---------- */
-
-/**
- * A value the prototype carries from one tap to the next — coins, stamina, level, "the
- * reward has been claimed". Without these a prototype can only ever go forward; with them a
- * button can do one thing when the visitor can afford it and another when they cannot, which
- * is the difference between a clickable picture and a playable screen.
- */
-export type VarValue = number | boolean | string;
-export type VarKind = "number" | "boolean" | "text";
-
-export type Var = {
-  id: string;
-  /** how a part's text refers to it: `{stamina}` */
-  name: string;
-  kind: VarKind;
-  /** what the preview starts from */
-  initial: VarValue;
-  /** The page it belongs to — a screen or a dialog. Left out, it is shared by every page, which is
-   *  what a document written before pages owned their variables looks like. */
-  pageId?: string;
-};
-
-/** The scope that shows every variable there is, whatever page owns it. A frame id is never this. */
-export const VARS_ALL = "*";
-
-/** The variables one scope shows: all of them, the ones no page owns, or one page's own. The empty
- *  string is the shared scope — a picker can only carry string keys — and reads as "no page". */
-export const varsForScope = (vars: Var[], scope: string | null): Var[] =>
-  scope === VARS_ALL ? vars : varsOfPage(vars, scope === "" ? null : scope);
-
-/** The variables one page declares, in the order they were written. */
-export const varsOfPage = (vars: Var[], pageId: string | null): Var[] =>
-  pageId === null ? vars.filter((v) => !v.pageId) : vars.filter((v) => v.pageId === pageId);
-
-/** The variables the preview can watch while these pages are in play: their own, plus the shared ones. */
-export const varsInFrames = (vars: Var[], frameIds: string[]): Var[] =>
-  vars.filter((v) => !v.pageId || frameIds.includes(v.pageId));
-
-export const VAR_KINDS: { key: VarKind; icon: string }[] = [
-  { key: "number", icon: "tag" },
-  { key: "boolean", icon: "toggle_on" },
-  { key: "text", icon: "text_fields" },
-];
-export const isVarKind = (v: unknown): v is VarKind => VAR_KINDS.some((k) => k.key === v);
-
-/** the initial value as its own kind says it should read: a number var never holds "" */
-export const varInitial = (v: Var): VarValue => {
-  if (v.kind === "number") return typeof v.initial === "number" && Number.isFinite(v.initial) ? v.initial : Number(v.initial) || 0;
-  if (v.kind === "boolean") return v.initial === true || v.initial === "true";
-  return v.initial === undefined || v.initial === null ? "" : String(v.initial);
-};
-
-/** every variable's starting value, the state the preview opens on */
-export function initialVars(vars: Var[] | undefined): Record<string, VarValue> {
-  return Object.fromEntries((vars ?? []).map((v) => [v.id, varInitial(v)]));
-}
-
-export type ConditionOp = "==" | "!=" | ">" | "<" | ">=" | "<=";
-export const CONDITION_OPS: ConditionOp[] = ["==", "!=", ">", "<", ">=", "<="];
-/** the ops that only mean something for a number: the editor hides them for other kinds */
-export const NUMERIC_OPS: ConditionOp[] = [">", "<", ">=", "<="];
-export const isConditionOp = (v: unknown): v is ConditionOp => CONDITION_OPS.some((o) => o === v);
-
-/** one test a rule makes before it runs */
-export type Condition = { varId: string; op: ConditionOp; value: VarValue };
-
-const asNumber = (v: VarValue | undefined) => (typeof v === "number" ? v : Number(v));
-
-/** whether a single condition holds, read against the variable's own kind */
-export function holds(c: Condition, vars: Record<string, VarValue>, declared: Var[]): boolean {
-  const kind = declared.find((v) => v.id === c.varId)?.kind ?? "number";
-  const left = vars[c.varId];
-  if (left === undefined) return false;
-  if (kind === "text") {
-    /* text compares as text: "level 3" is never greater than "level 10" in a useful way, so
-       the numeric ops are refused rather than guessed at */
-    if (NUMERIC_OPS.includes(c.op)) return false;
-    return c.op === "==" ? String(left) === String(c.value) : String(left) !== String(c.value);
-  }
-  if (kind === "boolean") {
-    if (NUMERIC_OPS.includes(c.op)) return false;
-    const on = left === true;
-    const want = c.value === true || c.value === "true";
-    return c.op === "==" ? on === want : on !== want;
-  }
-  const a = asNumber(left);
-  const b = asNumber(c.value);
-  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
-  switch (c.op) {
-    case "==":
-      return a === b;
-    case "!=":
-      return a !== b;
-    case ">":
-      return a > b;
-    case "<":
-      return a < b;
-    case ">=":
-      return a >= b;
-    case "<=":
-      return a <= b;
-  }
-}
-
-/** everything a rule does when its conditions hold */
+/** what a step of a machine, or a part's own tap, can do besides landing somewhere */
 export type RuleAction =
   /** the same places a plain tap can go: a page, or an overlay popped over this one */
   | { kind: "goto"; to: string; transition: Transition }
@@ -1794,188 +1729,20 @@ export type RuleAction =
   | { kind: "back" }
   /** puts away the overlay the part stands in */
   | { kind: "close" }
-  /** writes a variable outright */
-  | { kind: "set"; varId: string; value: VarValue }
-  /** spends or grants: a step from the value it holds now */
-  | { kind: "add"; varId: string; delta: number }
-  /** flips a boolean */
-  | { kind: "toggle"; varId: string }
-  /** While its conditions hold, a part is drawn as this: the look a variable decides, not a tap.
-   *  `target` names the part it changes, and leaving it out changes the part the rule belongs to —
-   *  a claim button can therefore turn the gift icon beside it into a claimed one. */
+  /** A look a step latches onto a part: `target` names the part it changes, and leaving it out
+   *  changes the part the step belongs to — a claim button can therefore turn the gift icon beside
+   *  it into a claimed one. A document written while an action could also restyle the part keeps
+   *  its `variant` here; the reader drops it. */
   | { kind: "look"; target?: string; icon?: string; label?: string; color?: string; variant?: Variant };
+
 
 export const RULE_ACTIONS: { key: RuleAction["kind"]; icon: string }[] = [
   { key: "goto", icon: "login" },
   { key: "back", icon: "arrow_back" },
   { key: "close", icon: "close_fullscreen" },
-  { key: "set", icon: "edit" },
-  { key: "add", icon: "exposure" },
-  { key: "toggle", icon: "toggle_on" },
   { key: "look", icon: "format_paint" },
 ];
 export const isRuleKind = (v: unknown): v is RuleAction["kind"] => RULE_ACTIONS.some((a) => a.key === v);
-
-/**
- * One tap, with a condition on it. A part's rules are tried in order and the first one whose
- * conditions all hold is the one that runs; a part with no matching rule falls back to its
- * plain action, which is what makes "if it is affordable, fight; otherwise do nothing" one
- * button instead of two.
- */
-export type ItemRule = {
-  id: string;
-  when?: Condition[];
-  do: RuleAction;
-  /** seconds to wait, counted from the moment the screen is shown: a timed rule runs by itself
-   *  ("ten minutes later the battle is won"). Left out, the rule waits for a tap instead. */
-  after?: number;
-};
-
-/** whether a rule runs on its own clock rather than on a tap */
-export const isTimedRule = (r: ItemRule) => typeof r.after === "number";
-
-/** whether a timed rule's wait is over */
-export const ruleDue = (r: ItemRule, seconds: number) => !isTimedRule(r) || seconds >= (r.after as number);
-
-/** the conditions hold, and the rule's own clock (if it has one) has come round */
-const ruleHolds = (r: ItemRule, vars: Record<string, VarValue>, declared: Var[], seconds: number) =>
-  ruleDue(r, seconds) && (r.when ?? []).every((c) => holds(c, vars, declared));
-
-/** The first rule a *tap* takes, or null when the part's plain action is the one that runs. Timed
- *  rules are not in it: a tap is not what they are waiting for. */
-export function firstRule(rules: ItemRule[] | undefined, vars: Record<string, VarValue>, declared: Var[]): ItemRule | null {
-  for (const r of rules ?? []) {
-    if (!isTimedRule(r) && (r.when ?? []).every((c) => holds(c, vars, declared))) return r;
-  }
-  return null;
-}
-
-/** The first rule that has come round and holds, of either kind: what a part is drawn as now. */
-export function firstDueRule(rules: ItemRule[] | undefined, vars: Record<string, VarValue>, declared: Var[], seconds: number): ItemRule | null {
-  for (const r of rules ?? []) {
-    if (ruleHolds(r, vars, declared, seconds)) return r;
-  }
-  return null;
-}
-
-/** The action a timed rule runs once its wait is over, when it is not a look: the victory that pops
- *  by itself. Null says there is nothing to run this moment. */
-export function dueAction(rules: ItemRule[] | undefined, vars: Record<string, VarValue>, declared: Var[], seconds: number): ItemRule | null {
-  const rule = firstDueRule((rules ?? []).filter((r) => isTimedRule(r) && r.do.kind !== "look"), vars, declared, seconds);
-  return rule;
-}
-
-/** whether anything in the document runs on a clock, so the preview knows to keep time at all */
-export function hasTimedRules(items: Item[]): boolean {
-  return items.some((it) => (it.rules ?? []).some(isTimedRule) || (it.children ? hasTimedRules(it.children) : false));
-}
-
-/** Whether any part carries a step that waits: the ticker only has to run when one does. */
-export function hasTimedSteps(items: Item[]): boolean {
-  return items.some(
-    (it) =>
-      (it.flow?.steps ?? []).some(isTimedStep) ||
-      Object.values(it.slotFlows ?? {}).some((f) => f.steps.some(isTimedStep)) ||
-      (it.children ? hasTimedSteps(it.children) : false),
-  );
-}
-
-/** The part as a `look` rule draws it: only the fields the rule names are changed. */
-export function ruledLook(it: Item, look: Extract<RuleAction, { kind: "look" }>): Item {
-  const out: Item = { ...it };
-  if (look.icon !== undefined) out.icon = look.icon || null;
-  if (look.label !== undefined) out.label = look.label;
-  if (look.color !== undefined) out.color = look.color;
-  if (look.variant !== undefined) out.variant = look.variant;
-  return out;
-}
-
-/**
- * Every look the variables ask for right now, keyed by the part it belongs to. A rule can change the
- * part it sits on or name another one, so a claim button turns the gift icon beside it into a claimed
- * one; the first rule that holds wins, in the order the document lists the parts.
- */
-export function looksFor(items: Item[], vars: Record<string, VarValue>, declared: Var[], seconds = 0): Map<string, Item> {
-  const out = new Map<string, Item>();
-  const walk = (list: Item[]) => {
-    for (const it of list) {
-      /* Every look this part asks for, in order, each on the part it names: one button can wear a
-         look of its own and mark the gift beside it claimed at the same time, so the first look is
-         not the only one that counts — only the first look *per target* is. Rules that write a
-         variable or go somewhere are not looks, and must not mask the look behind them. */
-      for (const rule of it.rules ?? []) {
-        if (rule.do.kind !== "look" || !ruleHolds(rule, vars, declared, seconds)) continue;
-        const target = rule.do.target ?? it.id;
-        const targetItem = target === it.id ? it : findItemIn(items, target);
-        if (targetItem && !out.has(target)) out.set(target, ruledLook(targetItem, rule.do));
-      }
-      if (it.children) walk(it.children);
-    }
-  };
-  walk(items);
-  return out;
-}
-
-/**
- * What a part looks like because of the variables: the first of its own rules whose conditions hold,
- * when that rule is a look. This is how a button becomes the claim button once the reward is finished
- * — the look follows the value, where a tap effect only reacts to being touched. A rule that goes
- * somewhere is not a look, so the part is drawn as its author drew it.
- */
-export function conditionalLook(it: Item, vars: Record<string, VarValue>, declared: Var[], seconds = 0): Item | null {
-  if (!(it.rules ?? []).length) return null;
-  return looksFor([it], vars, declared, seconds).get(it.id) ?? null;
-}
-
-/** what a variable holds after a rule writes it */
-export function writtenValue(v: Var, action: Extract<RuleAction, { kind: "set" | "add" | "toggle" }>, current: VarValue | undefined): VarValue {
-  if (action.kind === "set") return varInitial({ ...v, initial: action.value });
-  if (action.kind === "toggle") return !(current === true);
-  const step = Number.isFinite(action.delta) ? action.delta : 0;
-  return (asNumber(current) || 0) + step;
-}
-
-/**
- * Replaces `{name}` with what the variable holds right now, so a resource bar counts down as
- * the visitor spends. A name nothing declares is left on the screen exactly as written: a
- * typo should be visible, not silently blank.
- */
-export function varText(text: string, vars: Record<string, VarValue>, declared: Var[]): string {
-  if (!text.includes("{")) return text;
-  return text.replace(/\{([^{}]+)\}/g, (whole, name: string) => {
-    const v = declared.find((d) => d.name === name.trim());
-    if (!v) return whole;
-    const value = vars[v.id];
-    return value === undefined ? whole : String(value);
-  });
-}
-
-/** the names a piece of text reads, so the editor can tell which bindings are typos */
-export const readVars = (text: string | undefined): string[] => [...(text ?? "").matchAll(/\{([^{}]+)\}/g)].map((m) => m[1].trim());
-
-/* Comparisons and writes are written in symbols rather than words: "stamina ≥ 10" and
- * "coins + 100" read the same in every language the editor speaks, so the flow diagram, the
- * description document and the panel can all share one phrasing. */
-export const CONDITION_SYMBOLS: Record<ConditionOp, string> = { "==": "=", "!=": "≠", ">": ">", "<": "<", ">=": "≥", "<=": "≤" };
-
-/** a comparison in short form, naming the variable the way the author named it */
-export const conditionText = (c: Condition, declared: Var[]) =>
-  `${declared.find((v) => v.id === c.varId)?.name ?? c.varId} ${CONDITION_SYMBOLS[c.op]} ${String(c.value)}`;
-
-/** a write in short form: `coins + 100`, `stamina = 0`, `claimed ¬` */
-export function writeText(v: Var, a: Extract<RuleAction, { kind: "set" | "add" | "toggle" }>): string {
-  if (a.kind === "toggle") return `${v.name} ¬`;
-  if (a.kind === "set") return `${v.name} = ${String(a.value)}`;
-  return `${v.name} ${a.delta < 0 ? "−" : "+"} ${Math.abs(a.delta)}`;
-}
-
-/** every name a rule's conditions and writes touch, so a missing one can be reported */
-export function ruleVars(r: ItemRule): { read: string[]; write: string[] } {
-  return {
-    read: (r.when ?? []).map((c) => c.varId),
-    write: r.do.kind === "set" || r.do.kind === "add" || r.do.kind === "toggle" ? [r.do.varId] : [],
-  };
-}
 
 /** a part placed inside a container: its own offsets from the container's top-left */
 /** the outlines a button-like part can take */
@@ -2866,8 +2633,6 @@ export type Doc = {
   theme?: Theme;
   /** the author's own composite parts: ready-made sets of parts the palette offers */
   customParts?: CustomPart[];
-  /** the values the prototype carries between taps: coins, stamina, what has been claimed */
-  vars?: Var[];
 };
 
 /** A set of parts the author composed once and can drop again and again. On the canvas

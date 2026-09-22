@@ -29,14 +29,10 @@ import {
   isWideRail,
   isOverlayFrame,
   overlayLevelOfFrame,
-  conditionText,
-  writeText,
   lookItem,
   START_LOOK,
   type PartFlow,
   type PartStep,
-  varInitial,
-  type Var,
   normalizeTheme,
   paletteOf,
   railWidth,
@@ -631,12 +627,15 @@ function slotName(it: Item, slot: string, lang: Lang): string {
   return `the ${icon ?? ""} icon button on the ${slot === "icon2" ? "right" : "left"}`;
 }
 
-function notes(g: Group, frames: Frame[], vars: Var[], lang: Lang): string[] {
+function notes(g: Group, frames: Frame[], lang: Lang): string[] {
   const out: string[] = [];
   const q = quote(lang);
   for (const it of g.items) {
     const noun = KIND_TEXT[lang][it.kind]?.noun ?? it.kind;
-    const name = hasText(it.label) && it.kind !== "text" ? (lang === "en" ? `The ${q(it.label)} ${noun}` : `${q(it.label)}${lang === "ko" ? " " : ""}${noun}`) : lang === "en" ? `The ${noun}` : hasText(it.label) ? (lang === "ja" ? `テキスト${q(it.label)}` : lang === "zh" ? `文本${q(it.label)}` : `텍스트 ${q(it.label)}`) : noun;
+    /* a part whose text is a readout — a badge's count — is named by the name its author gave the
+       row, so the prompt does not talk about "the 3" */
+    const called = hasText(it.label) ? "" : (it.name ?? "").trim();
+    const name = hasText(it.label) && it.kind !== "text" ? (lang === "en" ? `The ${q(it.label)} ${noun}` : `${q(it.label)}${lang === "ko" ? " " : ""}${noun}`) : lang === "en" ? (called ? `The ${q(called)} ${noun}` : `The ${noun}`) : hasText(it.label) ? (lang === "ja" ? `テキスト${q(it.label)}` : lang === "zh" ? `文本${q(it.label)}` : `텍스트 ${q(it.label)}`) : called || noun;
     const parts: string[] = [];
     if (it.action) {
       const a = actionText(it.action, frames, lang);
@@ -682,63 +681,6 @@ function notes(g: Group, frames: Frame[], vars: Var[], lang: Lang): string[] {
         parts.push(`is a toggle button that flips on / off with every tap${changes.length ? ` (when on, ${changes.join(" and ")})` : ""}`);
       }
     }
-    /* Conditional taps: they read and write the variables, so each branch says what it is
-       for and what it costs — that is the whole point of the branch. */
-    for (const rule of it.rules ?? []) {
-      const when = (rule.when ?? []).map((c) => conditionText(c, vars)).join(lang === "en" ? " and " : "、");
-      const act = rule.do.kind === "goto"
-        ? actionText({ to: rule.do.to, transition: rule.do.transition }, frames, lang)
-        : rule.do.kind === "back"
-          ? actionText({ to: BACK_TARGET, transition: "none" }, frames, lang)
-          : rule.do.kind === "close"
-            ? { ja: "重ねた画面を閉じる", en: "closes the overlay", zh: "关闭叠加层", ko: "오버레이를 닫는다" }[lang]
-            : rule.do.kind === "look"
-              ? (() => {
-                  const look = rule.do;
-                  /* a look can be aimed at another part: say whose look it is */
-                  const who = (() => {
-                    const target = look.target;
-                    if (!target) return "";
-                    let named: Item | null = null;
-                    const walk = (list: Item[]) => {
-                      for (const x of list) {
-                        if (x.id === target) {
-                          named = x;
-                          return;
-                        }
-                        if (x.children) walk(x.children);
-                      }
-                    };
-                    walk(g.items);
-                    const found = named as Item | null;
-                    const label = found ? found.label.trim() || KIND_TEXT[lang][found.kind]?.noun || found.kind : "";
-                    return label
-                      ? { ja: `「${label}」は`, en: `"${label}" is`, zh: `「${label}」`, ko: `"${label}"은(는)` }[lang]
-                      : { ja: "別の部品は", en: `another part is`, zh: `另一个组件`, ko: `다른 부품은` }[lang];
-                  })();
-                  const bits = [
-                    look.label !== undefined && { ja: `表示は「${look.label}」`, en: `its label reads ${q(look.label)}`, zh: `文字变成「${look.label}」`, ko: `글자는 "${look.label}"` }[lang],
-                    look.icon !== undefined && { ja: `アイコンは ${look.icon}`, en: `its icon is ${look.icon}`, zh: `图标是 ${look.icon}`, ko: `아이콘은 ${look.icon}` }[lang],
-                    look.variant !== undefined && { ja: `スタイルは ${look.variant}`, en: `its style is ${look.variant}`, zh: `样式是 ${look.variant}`, ko: `스타일은 ${look.variant}` }[lang],
-                    look.color !== undefined && { ja: `色は ${look.color}`, en: `its colour is ${look.color}`, zh: `颜色是 ${look.color}`, ko: `색은 ${look.color}` }[lang],
-                  ].filter(Boolean);
-                  if (!bits.length) return who ? null : { ja: "見た目が変わる", en: "its look changes", zh: "外观改变", ko: "모양이 바뀐다" }[lang];
-                  return { ja: `${who}${bits.join("、")}の見た目になる`, en: `${who ? `${who} is` : "it is"} drawn with ${bits.join(", ")}`, zh: `${who ? `${who}` : ""}外观变成${bits.join("、")}`, ko: `${who}${bits.join(", ")} 모양이 된다` }[lang];
-                })()
-              : (() => {
-                  const v = vars.find((x) => x.id === (rule.do as Extract<typeof rule.do, { varId: string }>).varId);
-                  return v ? writeText(v, rule.do as Parameters<typeof writeText>[1]) : null;
-                })();
-      if (!act) continue;
-      /* a rule with a wait says when it happens, not what is tapped */
-      const head =
-        typeof rule.after === "number"
-          ? { ja: `この画面を表示してから ${rule.after} 秒後に`, en: `${rule.after}s after this screen appears, `, zh: `进入这个页面 ${rule.after} 秒后，`, ko: `이 화면이 뜨고 ${rule.after}초 뒤 ` }[lang]
-          : when
-            ? { ja: `${when}のときは`, en: `when ${when}, `, zh: `${when}时`, ko: `${when}이면 ` }[lang]
-            : "";
-      parts.push(`${head}${act}`);
-    }
     /* The machine the part runs: one clause per step, so a reader can wire the same behaviour
        without ever seeing the editor's flow. Steps leaving one look are read in order. */
     const lookWord = (machine: PartFlow, id: string) => {
@@ -752,7 +694,6 @@ function notes(g: Group, frames: Frame[], vars: Var[], lang: Lang): string[] {
         const bits = [
           a.label !== undefined && { ja: `文字は「${a.label}」`, en: `its words read ${q(a.label)}`, zh: `文字为「${a.label}」`, ko: `글자는 "${a.label}"` }[lang],
           a.icon !== undefined && { ja: `アイコンは ${a.icon || "なし"}`, en: `its icon is ${a.icon || "gone"}`, zh: `图标为 ${a.icon || "无"}`, ko: `아이콘은 ${a.icon || "없음"}` }[lang],
-          a.variant !== undefined && { ja: `スタイルは ${a.variant}`, en: `its style is ${a.variant}`, zh: `样式为 ${a.variant}`, ko: `스타일은 ${a.variant}` }[lang],
           a.color !== undefined && { ja: `色は ${a.color}`, en: `its colour is ${a.color}`, zh: `颜色为 ${a.color}`, ko: `색은 ${a.color}` }[lang],
         ].filter(Boolean);
         if (!bits.length) return null;
@@ -771,9 +712,7 @@ function notes(g: Group, frames: Frame[], vars: Var[], lang: Lang): string[] {
         const other = a.target ? (label ? { ja: `「${label}」の`, en: `${q(label)}'s `, zh: `「${label}」的`, ko: `"${label}"의 ` }[lang] : { ja: "別の部品の", en: "another part's ", zh: "另一个组件的", ko: "다른 부품의 " }[lang]) : "";
         return { ja: `${other}${bits.join("、")}`, en: `${other}${bits.join(", ")}`, zh: `${other}${bits.join("、")}`, ko: `${other}${bits.join(", ")}` }[lang];
       }
-      if (a.kind !== "set" && a.kind !== "add" && a.kind !== "toggle") return null;
-      const v = vars.find((x) => x.id === a.varId);
-      return v ? writeText(v, a) : null;
+      return null;
     };
     for (const machine of [...(it.flow ? [it.flow] : []), ...Object.values(it.slotFlows ?? {})]) {
       for (const st of machine.steps) {
@@ -791,13 +730,12 @@ function notes(g: Group, frames: Frame[], vars: Var[], lang: Lang): string[] {
           .map(stepAction)
           .filter(Boolean)
           .join(lang === "en" ? ", " : "、");
-        const when = (st.when ?? []).map((c) => conditionText(c, vars)).join(lang === "en" ? " and " : "、");
         /* what sets the step off: a tap, or a wait counted from entering the look it leaves */
         const how =
           st.trigger.kind === "after"
             ? { ja: `${st.trigger.seconds} 秒後に`, en: `after ${st.trigger.seconds}s `, zh: `进入这个状态 ${st.trigger.seconds} 秒后`, ko: `${st.trigger.seconds}초 뒤에 ` }[lang]
             : { ja: "タップすると", en: "on tap ", zh: "点击后", ko: "탭하면 " }[lang];
-        const said = { ja: `${how}${when ? `${when} のときは` : ""}${to}になり${bits.length ? `（${bits.join("、")}）` : ""}${rest ? `、${rest}` : ""}`, en: `${how}${when ? `when ${when}, ` : ""}it becomes ${to}${bits.length ? ` (${bits.join(", ")})` : ""}${rest ? `, and ${rest}` : ""}`, zh: `${how}${when ? `${when}时` : ""}变成${to}${bits.length ? `（${bits.join("、")}）` : ""}${rest ? `，并${rest}` : ""}`, ko: `${how}${when ? ` ${when}이면` : ""} ${to}이(가) 되고${bits.length ? ` (${bits.join(", ")})` : ""}${rest ? `, ${rest}` : ""}` }[lang];
+        const said = { ja: `${how}${to}になり${bits.length ? `（${bits.join("、")}）` : ""}${rest ? `、${rest}` : ""}`, en: `${how}it becomes ${to}${bits.length ? ` (${bits.join(", ")})` : ""}${rest ? `, and ${rest}` : ""}`, zh: `${how}变成${to}${bits.length ? `（${bits.join("、")}）` : ""}${rest ? `，并${rest}` : ""}`, ko: `${how} ${to}이(가) 되고${bits.length ? ` (${bits.join(", ")})` : ""}${rest ? `, ${rest}` : ""}` }[lang];
         parts.push(said);
       }
     }
@@ -1474,10 +1412,6 @@ const PH = {
     loose: "画面の外に置かれている部品（共通パーツや参考）:",
     freeform: "画面を上から順に説明します。",
     hBehavior: "## 振る舞いと画面遷移",
-    hVars: "## 変数",
-    varHint: "タップをまたいで持ち越す値です。部品のテキストに {name} と書くとその値が表示され、上のルールはこの値を条件にしたり書き換えたりします。アプリ起動時は以下の初期値から始めます。",
-    varKind: { number: "数値", boolean: "オン / オフ", text: "テキスト" },
-    varLine: (name: string, kind: string, initial: string) => `- ${name}（${kind}、初期値 ${initial}）`,
     hStyle: "## 各部品のスタイル",
     styleIntro: "使っている部品ごとの目安です。数値は M3 Expressive の標準値なので、標準コンポーネントで実現できるものは標準に任せ、内容に合わせて調整して構いません。",
     hGeneral: "## 全体の指針",
@@ -1522,10 +1456,6 @@ const PH = {
     loose: "Parts placed outside the screens (shared parts or references):",
     freeform: "The screen, from top to bottom:",
     hBehavior: "## Behavior and navigation",
-    hVars: "## Variables",
-    varHint: "Values the app carries from one tap to the next. Writing {name} in a part's text shows the value, and the rules above test and write these. The app starts on the initial values below.",
-    varKind: { number: "number", boolean: "on / off", text: "text" },
-    varLine: (name: string, kind: string, initial: string) => `- ${name}: ${kind}, starting at ${initial}`,
     hStyle: "## Component styles",
     styleIntro: "Per-component guidance for the parts in use. The numbers are the M3 Expressive defaults: let the standard components handle whatever they already do, and adjust where the content calls for it.",
     hGeneral: "## General guidance",
@@ -1570,10 +1500,6 @@ const PH = {
     loose: "放在屏幕之外的组件（公共部件或参考）：",
     freeform: "从上到下说明屏幕内容：",
     hBehavior: "## 行为与屏幕跳转",
-    hVars: "## 变量",
-    varHint: "跨点击保持的值。在组件文本里写 {name} 就会显示这个值；上面的规则会以它为条件或改写它。应用启动时使用下面的初始值。",
-    varKind: { number: "数值", boolean: "开 / 关", text: "文本" },
-    varLine: (name: string, kind: string, initial: string) => `- ${name}（${kind}，初始值 ${initial}）`,
     hStyle: "## 各组件的样式",
     styleIntro: "以下是所用组件的参考。数值均为 M3 Expressive 的标准值，能用标准组件实现的就交给标准组件，并可根据内容适当调整。",
     hGeneral: "## 整体原则",
@@ -1603,10 +1529,6 @@ const PH = {
     loose: "화면 밖에 놓인 부품(공통 부품 또는 참고):",
     freeform: "화면을 위에서부터 설명합니다.",
     hBehavior: "## 동작 및 화면 전환",
-    hVars: "## 변수",
-    varHint: "탭을 넘어 유지되는 값입니다. 부품 텍스트에 {name}을 쓰면 그 값이 표시되고, 위의 규칙이 이 값을 조건으로 삼거나 바꿉니다. 앱은 아래 초기값에서 시작합니다.",
-    varKind: { number: "숫자", boolean: "켜기/끄기", text: "텍스트" },
-    varLine: (name: string, kind: string, initial: string) => `- ${name}(${kind}, 초기값 ${initial})`,
     hStyle: "## 부품별 스타일",
     styleIntro: "사용된 부품별 지침입니다. 수치는 M3 Expressive 기본값이며 표준 컴포넌트가 제공하는 동작은 그대로 사용하고 내용에 맞게 조정할 수 있습니다.",
     hGeneral: "## 전체 지침",
@@ -1710,17 +1632,7 @@ export function buildPrompt(doc: Doc, widths: Record<string, number>, onlyFrameI
     describeScreen(lines, groups, null, widths, lang);
   }
 
-  /* The values the app has to carry between taps. Stated before the interactions, because the
-     rules above only read as intended once the reader knows what they test. */
-  const vars = doc.vars ?? [];
-  if (vars.length) {
-    lines.push("");
-    lines.push(ph.hVars);
-    lines.push(ph.varHint);
-    for (const v of vars) lines.push(ph.varLine(v.name, ph.varKind[v.kind], String(varInitial(v))));
-  }
-
-  const behavior = [...groups.flatMap((g) => notes(g, allFrames, vars, lang)), ...frames.flatMap((f) => swipeNotes(f, allFrames, lang))];
+  const behavior = [...groups.flatMap((g) => notes(g, allFrames, lang)), ...frames.flatMap((f) => swipeNotes(f, allFrames, lang))];
   if (behavior.length) {
     lines.push("");
     lines.push(ph.hBehavior);

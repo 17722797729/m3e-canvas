@@ -158,11 +158,13 @@ describe("audit: overlays", () => {
     );
     expect(only(stillTrapped, "overlayTrapped").map((i) => i.frameId)).toEqual(["login"]);
 
-    /* what does work: a part whose rule closes the overlay, or one that goes somewhere */
-    const closed = audit(
-      doc([home, login], [open, group("g2", login, [item({ id: "b", label: "Later", rules: [{ id: "r", do: { kind: "close" } }] })])]),
-      {},
-    );
+    /* what does work: a part whose machine closes the overlay, or one that goes somewhere */
+    const closer = item({
+      id: "b",
+      label: "Later",
+      flow: { looks: [], steps: [{ id: "s", from: ":start", to: ":start", trigger: { kind: "tap" }, do: [{ kind: "close" }] }] },
+    });
+    const closed = audit(doc([home, login], [open, group("g2", login, [closer])]), {});
     expect(only(closed, "overlayTrapped")).toEqual([]);
     const left = audit(
       doc([home, login], [open, group("g2", login, [item({ id: "b", label: "Retry", action: { to: "home", transition: "fade" } })])]),
@@ -191,107 +193,6 @@ describe("audit: overlays", () => {
     );
     expect(trapped.map((i) => i.kind)).toEqual(["overlayTrapped"]);
     expect(trapped[0]).toMatchObject({ frameId: "home", itemId: "lock" });
-  });
-});
-
-describe("audit: variables", () => {
-  const stamina = { id: "st", name: "stamina", kind: "number" as const, initial: 12 };
-
-  it("reports a rule that names a variable the document does not declare", () => {
-    const home = frame("home");
-    const d: Doc = {
-      ...doc([home], [
-        group("g", home, [
-          item({ id: "a", rules: [{ id: "r", when: [{ varId: "ghost", op: ">=", value: 1 }], do: { kind: "back" } }] }),
-        ]),
-      ]),
-      vars: [stamina],
-    };
-    const missing = only(audit(d, {}), "missingVar");
-    expect(missing).toHaveLength(1);
-    expect(missing[0]).toMatchObject({ frameId: "home", itemId: "a", varId: "ghost", severity: "error" });
-  });
-
-  it("reports a write to a variable that is not declared", () => {
-    const home = frame("home");
-    const d: Doc = {
-      ...doc([home], [group("g", home, [item({ id: "a", rules: [{ id: "r", do: { kind: "add", varId: "ghost", delta: -1 } }] })])]),
-      vars: [stamina],
-    };
-    expect(only(audit(d, {}), "missingVar").map((i) => i.varId)).toEqual(["ghost"]);
-  });
-
-  it("passes a rule that tests and writes a declared variable", () => {
-    const home = frame("home");
-    const next = frame("next", { x: 500 });
-    const d: Doc = {
-      ...doc(
-        [home, next],
-        [
-          group("g", home, [
-            item({
-              id: "a",
-              rules: [
-                { id: "r1", when: [{ varId: "st", op: ">=", value: 10 }], do: { kind: "goto", to: "next", transition: "slide" } },
-                { id: "r2", do: { kind: "add", varId: "st", delta: -10 } },
-              ],
-            }),
-          ]),
-          group("g2", next, [item({ id: "b", action: { to: BACK_TARGET, transition: "slide" } })]),
-        ],
-      ),
-      vars: [stamina],
-    };
-    expect(audit(d, {})).toEqual([]);
-  });
-
-  it("counts a page only a conditional tap reaches as reachable", () => {
-    const home = frame("home");
-    const locked = frame("locked", { x: 500 });
-    const d: Doc = {
-      ...doc(
-        [home, locked],
-        [
-          group("g", home, [
-            item({ id: "a", rules: [{ id: "r", when: [{ varId: "st", op: ">", value: 0 }], do: { kind: "goto", to: "locked", transition: "slide" } }] }),
-          ]),
-          group("g2", locked, [item({ id: "b", action: { to: BACK_TARGET, transition: "slide" } })]),
-        ],
-      ),
-      vars: [stamina],
-    };
-    expect(only(audit(d, {}), "unreachable")).toEqual([]);
-  });
-
-  it("reports a conditional tap that leads nowhere", () => {
-    const home = frame("home");
-    const d: Doc = {
-      ...doc([home], [group("g", home, [item({ id: "a", rules: [{ id: "r", do: { kind: "goto", to: "ghost", transition: "slide" } }] })])]),
-      vars: [stamina],
-    };
-    expect(only(audit(d, {}), "deadLink").map((i) => i.targetId)).toEqual(["ghost"]);
-  });
-
-  it("reports text that reads a name nothing declares, and clears it when it does", () => {
-    const home = frame("home");
-    const bad: Doc = { ...doc([home], [group("g", home, [item({ id: "a", label: "Stamina {stamnia}" })])]), vars: [stamina] };
-    const unknown = only(audit(bad, {}), "unknownBinding");
-    expect(unknown).toHaveLength(1);
-    expect(unknown[0]).toMatchObject({ itemId: "a", varId: "stamnia" });
-
-    const good: Doc = { ...doc([home], [group("g", home, [item({ id: "a", label: "Stamina {stamina}" })])]), vars: [stamina] };
-    expect(only(audit(good, {}), "unknownBinding")).toEqual([]);
-  });
-
-  it("reports a variable nothing reads and nothing writes", () => {
-    const home = frame("home");
-    const unused: Doc = { ...doc([home], [group("g", home, [item({ id: "a", action: { to: BACK_TARGET, transition: "none" } })])]), vars: [stamina] };
-    const report = only(audit(unused, {}), "unusedVar");
-    expect(report).toHaveLength(1);
-    expect(report[0]).toMatchObject({ varId: "stamina", severity: "info" });
-
-    const read: Doc = { ...doc([home], [group("g", home, [item({ id: "a", label: "{stamina}", action: { to: BACK_TARGET, transition: "none" } })])]), vars: [stamina] };
-    expect(only(audit(read, {}), "unusedVar")).toEqual([]);
   });
 });
 
@@ -360,36 +261,6 @@ describe("audit: the report itself", () => {
     );
     expect(only(report, "danglingLook").map((i) => i.targetId)).toEqual(["ghost"]);
     expect(only(report, "unreachableLook").map((i) => i.targetId)).toEqual(["l2"]);
-  });
-
-  it("reads a step's condition and its writes like any other rule's", () => {
-    const home = frame("home");
-    const report = audit(
-      doc([home], [
-        group("g", home, [
-          item({
-            id: "b",
-            flow: {
-              looks: [{ id: "l1", label: "领取" }],
-              steps: [
-                {
-                  id: "s1",
-                  from: ":start",
-                  to: "l1",
-                  trigger: { kind: "tap" },
-                  when: [{ varId: "ghost", op: ">=", value: 1 }],
-                  do: [{ kind: "add", varId: "ghost", delta: -1 }],
-                },
-              ],
-            },
-          }),
-        ]),
-      ]),
-      {},
-    );
-    /* the condition and the write both name the same undeclared variable, and neither is silently
-       ignored: the report says so once per mention */
-    expect(only(report, "missingVar").length).toBe(2);
   });
 
   it("counts each severity", () => {

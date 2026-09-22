@@ -6,6 +6,7 @@ import { Doc, Palette, Platform, defaultPlatformOf } from "@/lib/tokens";
 import { Icon } from "./M3Node";
 import { Field, IconBtn, Segmented } from "./ui";
 import { t, useLang } from "@/lib/i18n";
+import { inputBox } from "./ui";
 
 export function PromptPanel({
   doc,
@@ -98,12 +99,10 @@ export function PromptPanel({
           spellCheck={false}
           aria-label={t("prompt", lang)}
           style={{
+            ...inputBox(p, 18),
             flex: 1,
             minHeight: 0,
             width: "100%",
-            borderRadius: 18,
-            border: "none",
-            background: p.surfaceContainerLow,
             padding: edited ? "14px 14px 48px" : 14,
             fontSize: 13,
             lineHeight: 1.75,

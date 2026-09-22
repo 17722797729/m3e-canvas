@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactNode, createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Frame, Group, Item, KIND_SPEC, VAR_KINDS, Palette, byLayer, explodeGroup, findItemIn, isOverlayFrame, isPhoneFrame, layerOf, overlayLevelOfFrame, pageTintOf, parentOf, subtreeOf, tabIndexOf, takesText, varInitial, type Var } from "@/lib/tokens";
+import { Frame, Group, Item, KIND_SPEC, Palette, byLayer, explodeGroup, findItemIn, isOverlayFrame, isPhoneFrame, layerOf, overlayLevelOfFrame, pageTintOf, parentOf, subtreeOf, tabIndexOf, takesText } from "@/lib/tokens";
 import { contrastRatio } from "@/lib/color";
 import { splitByPage } from "@/lib/pages";
 import { Icon } from "./M3Node";
@@ -21,10 +21,12 @@ import { Lang, KIND_TEXT, overlayLevelText, t, useLang } from "@/lib/i18n";
 function nameOf(it: Item, lang: Lang) {
   const spec = KIND_SPEC[it.kind] ?? KIND_SPEC.box;
   const noun = KIND_TEXT[lang][it.kind]?.noun ?? spec.label;
-  /* An unnamed part is named by its kind, in the language the author is working in: its icon is a
-   * material symbol name, which reads as stray English in the middle of a Japanese or Chinese list.
-   * The row shows the glyph itself, so nothing is lost. */
-  return it.label.trim() || noun;
+  /* The name an author gave the row wins, then the part's own text, then its kind. A part renamed
+     in this list keeps its words: the row reads as the author named it, and the canvas keeps
+     showing what the part says. The kind's noun is in the author's language — an icon is a material
+     symbol name, which would read as stray English in the middle of a Japanese or Chinese list —
+     and the row draws the glyph itself, so nothing is lost. */
+  return it.name?.trim() || it.label.trim() || noun;
 }
 
 function runLabel(g: Group, lang: Lang) {
@@ -482,8 +484,6 @@ export function LayersPanel({
   onMagnify,
   magnifiedId,
   onTabSelect,
-  vars = [],
-  onVar,
 }: {
   p: Palette;
   frames: Frame[];
@@ -524,9 +524,7 @@ export function LayersPanel({
   /** switches a tab row to one of its own rows, the way picking its panel does */
   onTabSelect?: (itemId: string, index: number) => void;
   /** every variable in the document: the ones a page owns are listed under it */
-  vars?: Var[];
   /** takes the author to a variable in the variables panel */
-  onVar?: (varId: string) => void;
 }) {
   const lang = useLang();
   const sel = new Set(selectedIds);
@@ -662,7 +660,6 @@ export function LayersPanel({
   /* the two lists: one per page, and the parts no page owns */
   const { byPage: groupsOf, loose } = useMemo(() => splitByPage(groups, frameIdOf), [groups, frameIdOf]);
   const [looseOpen, setLooseOpen] = useState(true);
-  const [sharedOpen, setSharedOpen] = useState(true);
 
   /** the runs hidden in a free group, front first, and the flat back-to-front list they make */
   const freeRuns = (g: Group) => [...explodeGroup(g, widths)].reverse();
@@ -808,56 +805,11 @@ export function LayersPanel({
   };
 
   /** the layers of one page, top first */
-  /** A page's own variables, above its layers: they are the page's state, and with a few dozen of
-   *  them in a document this is what keeps them findable. Clicking one opens it in the panel. */
-  const varRows = (mine: Var[]) => {
-    if (!mine.length) return null;
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        {mine.map((v) => {
-          const kind = VAR_KINDS.find((k) => k.key === v.kind);
-          return (
-            <button
-              key={v.id}
-              type="button"
-              data-var={v.id}
-              onClick={() => onVar?.(v.id)}
-              title={t("variables", lang)}
-              className="m3-press"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                height: 32,
-                marginLeft: 14,
-                padding: "0 8px",
-                borderRadius: 10,
-                border: "none",
-                background: "transparent",
-                color: p.onSurfaceVariant,
-                cursor: "pointer",
-                textAlign: "left",
-              }}
-            >
-              <Icon name={kind?.icon ?? "data_object"} size={16} />
-              <span style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.name}</span>
-              <span style={{ marginLeft: "auto", flex: "0 0 auto", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 8, background: p.surfaceContainerHigh, color: p.onSurfaceVariant, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {String(varInitial(v))}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    );
-  };
-
   const pageBody = (f: Frame) => {
     const list = groupsOf.get(f.id) ?? [];
-    const vars_ = varRows(vars.filter((v) => v.pageId === f.id));
     if (list.length === 0) {
       return (
         <>
-          {vars_}
           <div style={{ padding: "10px 12px 14px", color: p.outline, fontSize: 12 }}>
             <Icon name="layers_clear" size={24} />
             <div style={{ marginTop: 4 }}>{t("noLayers", lang)}</div>
@@ -867,7 +819,6 @@ export function LayersPanel({
     }
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        {vars_}
         {groupRows(list, f.id === frameId ? `page:${f.id}` : null)}
       </div>
     );
@@ -917,31 +868,6 @@ export function LayersPanel({
                 </Row>
               );
             })}
-            {/* Variables no page owns: shared by all of them, and listed here for the same reason
-                the parts off the screens are — otherwise there would be no row to reach them by */}
-            {vars.some((v) => !v.pageId) && (
-              <Row
-                id="page:vars"
-                p={p}
-                depth={0}
-                plain
-                icon={<Icon name="public" size={18} />}
-                label={t("varsAllPages", lang)}
-                badge={String(vars.filter((v) => !v.pageId).length)}
-                badgeTitle={t("variables", lang)}
-                on={false}
-                onSelect={() => onVar?.(vars.find((v) => !v.pageId)!.id)}
-                open={sharedOpen}
-                onToggle={() => setSharedOpen((v) => !v)}
-                onDragging={onDragging}
-              >
-                {sharedOpen && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    {varRows(vars.filter((v) => !v.pageId))}
-                  </div>
-                )}
-              </Row>
-            )}
             {/* Parts the canvas draws but no page owns — dragged off a screen, or left behind by
                 one that was resized. They are listed here because otherwise they would have no row
                 at all, so there would be no way to select, move or delete them again. */}

@@ -6,6 +6,7 @@ import { isHex, onColorFor, schemeFromSeed } from "@/lib/color";
 import { t, useLang } from "@/lib/i18n";
 import { Section, Segmented } from "./ui";
 import { Icon } from "./M3Node";
+import { inputBox } from "./ui";
 
 /** roles the author can override by hand; their "on" color follows automatically */
 type Role = Exclude<keyof Palette, "seed">;
@@ -67,12 +68,10 @@ function ColorField({ value, onChange, p, label }: { value: string; onChange: (h
         onBlur={() => setText(value)}
         spellCheck={false}
         style={{
+          ...inputBox(p, 8),
           width: 76,
           height: 28,
           padding: "0 8px",
-          borderRadius: 8,
-          border: "none",
-          background: p.surfaceContainerHigh,
           color: p.onSurface,
           fontSize: 12,
           fontFamily: "ui-monospace, monospace",

@@ -388,7 +388,7 @@ describe("a part's machine in the prompt", () => {
       ],
       steps: [
         { id: "s1", from: ":start", to: "l2", trigger: { kind: "tap" } },
-        { id: "s2", from: "l2", to: "l3", trigger: { kind: "tap" }, do: [{ kind: "set", varId: "v1", value: 1 }] },
+        { id: "s2", from: "l2", to: "l3", trigger: { kind: "tap" }, do: [{ kind: "look", target: "gift", icon: "check_circle" }] },
         { id: "s3", from: "l3", to: ":start", trigger: { kind: "after", seconds: 30 } },
       ],
     },
@@ -397,76 +397,15 @@ describe("a part's machine in the prompt", () => {
   it("states every step the part takes, in the reader's language", () => {
     for (const lang of LANGS) {
       setGlobalLang(lang);
-      const doc = fixture("android", [share()]);
-      doc.vars = [{ id: "v1", name: "claimed", kind: "number", initial: 0 }];
-      const text = buildPrompt(doc, {}, undefined, lang);
+      const text = buildPrompt(fixture("android", [share()]), {}, undefined, lang);
       /* the look it lands in, what that look changes, and the wait that takes it back */
       expect(text).toContain("领取");
       expect(text).toContain("已领取");
       expect(text).toContain("redeem");
       expect(text).toContain("30");
-      /* and the variable the step writes is named the way the reader knows it */
-      expect(text).toContain("claimed");
+      /* and what the step latches onto another part is named too */
+      expect(text).toContain("check_circle");
     }
-  });
-});
-
-describe("variables in the prompt", () => {
-  const stamina = { id: "st", name: "stamina", kind: "number" as const, initial: 12 };
-  const doc = (patch: Partial<Doc> = {}): Doc => ({
-    title: "T",
-    brief: "",
-    paletteKey: "purple",
-    frame: "phone",
-    platform: "web",
-    frames: [
-      { id: "f", name: "Home", x: 0, y: 0 },
-      { id: "g", name: "Fight", x: 500, y: 0 },
-    ],
-    groups: [
-      {
-        id: "g1",
-        x: 0,
-        y: 100,
-        axis: "x",
-        items: [
-          {
-            ...makeItem("button"),
-            id: "fight",
-            label: "Fight",
-            rules: [
-              { id: "r1", when: [{ varId: "st", op: ">=", value: 10 }], do: { kind: "goto", to: "g", transition: "slide" } },
-              { id: "r2", do: { kind: "add", varId: "st", delta: -10 } },
-            ],
-          },
-        ],
-      },
-    ],
-    vars: [stamina],
-    ...patch,
-  });
-  const heading: Record<Lang, string> = { ja: "## 変数", en: "## Variables", zh: "## 变量", ko: "## 변수" };
-  const binding: Record<Lang, string> = { ja: "{name}", en: "{name}", zh: "{name}", ko: "{name}" };
-
-  it.each(LANGS)("lists every variable with its kind and starting value in %s", (lang) => {
-    const out = buildPrompt(doc(), {}, undefined, lang);
-    expect(out).toContain(heading[lang]);
-    expect(out).toContain("stamina");
-    expect(out).toContain("12");
-    /* the {name} syntax is explained, so the reader knows what the labels refer to */
-    expect(out).toContain(binding[lang]);
-  });
-
-  it.each(LANGS)("writes a conditional tap as one branch per rule in %s", (lang) => {
-    const out = buildPrompt(doc(), {}, undefined, lang);
-    /* the condition and the write both read in symbols, so they survive translation */
-    expect(out).toContain("stamina ≥ 10");
-    expect(out).toContain("stamina − 10");
-    expect(out).toContain("Fight");
-  });
-
-  it.each(LANGS)("leaves the variables section out when the document declares none in %s", (lang) => {
-    expect(buildPrompt(doc({ vars: undefined }), {}, undefined, lang)).not.toContain(heading[lang]);
   });
 });
 
