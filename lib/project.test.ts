@@ -266,6 +266,19 @@ describe("the machine a part runs", () => {
     expect(readableGroups(value.groups)).toEqual(value.groups);
   });
 
+  /* A look can carry the one switch that is not a way of drawing the part: a slot grid's bulk-tick
+     mode, which a button outside the board turns on and off. It has to survive a round trip, and a
+     value this build cannot read has to be refused rather than applied as "on". */
+  it("carries the bulk-tick switch a look can put on a board", () => {
+    const value = doc();
+    value.groups[0].items[0] = {
+      ...value.groups[0].items[0],
+      flow: { looks: [{ id: "l1" }], steps: [{ id: "s1", from: ":start", to: "l1", trigger: { kind: "tap" }, do: [{ kind: "look", target: "board", checkboxes: false }] }] },
+    } as never;
+    expect(isProject(value)).toBe(true);
+    expect(readableGroups(value.groups)).toEqual(value.groups);
+  });
+
   it("refuses a flow a build could not run", () => {
     const bad = (patch: unknown) => {
       const value = doc();
@@ -277,6 +290,7 @@ describe("the machine a part runs", () => {
     expect(bad({ looks: [], steps: [{ id: "s", from: "a", to: "b", trigger: { kind: "after", seconds: -1 } }] })).toBe(false);
     expect(bad({ looks: [{ id: "l1", variant: "chartreuse" }], steps: [] })).toBe(false);
     expect(bad({ looks: [{ id: "l1" }], steps: [{ id: "s", from: "a", to: "b", trigger: { kind: "after", seconds: 0 } }] })).toBe(true);
+    expect(bad({ looks: [], steps: [{ id: "s", from: "a", to: "b", trigger: { kind: "tap" }, do: [{ kind: "look", checkboxes: "yes" }] }] })).toBe(false);
   });
 });
 

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { KIND_TEXT, Lang, setGlobalLang } from "./i18n";
+import { KIND_TEXT, Lang, setGlobalLang, t } from "./i18n";
 import { buildPrompt } from "./prompt";
-import { BACK_TARGET, DEFAULT_THEME, Doc, Item, Platform, defaultTabs, makeItem, paletteOf, type PlacedItem } from "./tokens";
+import { BACK_TARGET, DEFAULT_THEME, Doc, Item, Platform, START_LOOK, defaultTabs, makeItem, paletteOf, slotGrid, withGridCells, type PlacedItem } from "./tokens";
 
 const LANGS: Lang[] = ["ja", "en", "zh", "ko"];
 
@@ -251,6 +251,24 @@ describe("navigation rail expansion", () => {
     expect(layout).not.toContain("220dp");
     expect(styleBullets(prompt, lang).join("\n")).toContain("220dp");
     expect(styleBullets(prompt, lang).join("\n")).not.toContain("80dp");
+  });
+});
+
+describe("a background with nothing in it", () => {
+  /* 透明 is a background like any other, and the prompt has to say so rather than name a role */
+  const box = (): Item => ({ ...makeItem("box"), id: "b", label: "", icon: null, variant: "filled", size: 200, size2: 100, fill: "transparent" });
+  const only = (): Doc => ({
+    groups: [{ id: "g", x: 16, y: 96, axis: "x", items: [box()] }],
+    frames: [{ id: "f", name: "Home", x: 0, y: 0 }],
+    paletteKey: "purple",
+    frame: "phone",
+    title: "T",
+    brief: "",
+  });
+  it.each(LANGS)("names a transparent background in %s", (lang) => {
+    setGlobalLang(lang);
+    const text = buildPrompt(only(), {}, undefined, lang);
+    expect(text).toContain({ ja: "背景 透明", en: "background transparent", zh: "背景 透明", ko: "배경 투명" }[lang]);
   });
 });
 
@@ -511,5 +529,70 @@ describe("a box in the prompt", () => {
     expect(legacy).not.toMatch(SHEET_WORDS);
     /* the box is still described as a box, with its own background and corners */
     expect(legacy).toContain(KIND_TEXT[lang].box.noun);
+  });
+});
+
+describe("a button that switches a board's bulk-tick mode", () => {
+  /* Games put the mode behind a button outside the board: the step's look carries the switch, and
+     the prompt has to name it, or the implementer wires a board that never shows its boxes. */
+  const doc = (on: boolean): Doc => ({
+    title: "T", brief: "", paletteKey: "purple", frame: "phone", platform: "android",
+    frames: [{ id: "f", name: "Home", x: 0, y: 0 }],
+    groups: [{ id: "g", x: 0, y: 100, axis: "y", items: [
+      { ...makeItem("button"), id: "pick", label: "选择", flow: { looks: [{ id: "l1", label: "取消" }], steps: [{ id: "s1", from: START_LOOK, to: "l1", trigger: { kind: "tap" as const }, do: [{ kind: "look" as const, target: "board", checkboxes: on }] }] } },
+      { ...makeItem("invGrid"), id: "board", size: 380, size2: 220 },
+    ] }],
+  });
+
+  it.each(LANGS)("says the board's boxes follow the step, in %s", (lang) => {
+    setGlobalLang(lang);
+    const words = { ja: "チェックボックスは 表示", en: "its checkboxes are shown", zh: "批量勾选：显示", ko: "체크박스는 표시" }[lang];
+    expect(buildPrompt(doc(true), {}, undefined, lang)).toContain(words);
+    const off = { ja: "チェックボックスは 非表示", en: "its checkboxes are hidden", zh: "批量勾选：隐藏", ko: "체크박스는 숨김" }[lang];
+    expect(buildPrompt(doc(false), {}, undefined, lang)).toContain(off);
+  });
+});
+
+describe("a slot grid in the prompt", () => {
+  /* The board is the part: the prompt has to say how many cells of what size the frame draws, and
+     the counts it names are the ones the frame really shows rather than the ones a document asked
+     for — a pinned row count that does not fit would otherwise be described as if it were on screen. */
+  const withGrid = (patch: Partial<Item> = {}): Doc => ({
+    title: "T",
+    brief: "",
+    paletteKey: "purple",
+    frame: "phone",
+    platform: "android",
+    frames: [{ id: "f", name: "Home", x: 0, y: 0 }],
+    groups: [{ id: "g", x: 0, y: 100, axis: "x", items: [{ ...makeItem("invGrid"), id: "inv", size: 380, size2: 320, ...patch }] }],
+  });
+
+  it.each(LANGS)("names the cells that hold something and leaves the empty ones out, in %s", (lang) => {
+    setGlobalLang(lang);
+    const part = { ...makeItem("iconButton"), id: "ib", icon: "swords" } as PlacedItem;
+    const board = makeItem("invGrid");
+    const filled: Item = { ...board, children: (board.children ?? []).map((c, i) => (i === 7 ? { ...c, checked: true, children: [part] } : c)) };
+    const doc: Doc = { ...withGrid(), groups: [{ id: "g", x: 0, y: 100, axis: "x", items: [filled] }] };
+    const text = buildPrompt(doc, {}, undefined, lang);
+    const g = slotGrid(filled, {});
+    const where = t("gridCellAt", lang).replace("{r}", "2").replace("{c}", "3");
+    expect(text).toContain(where);
+    expect(text).toContain(t("gridTicked", lang));
+    /* a board is one idea, not a list of every empty slot it happens to have */
+    expect(text).not.toContain(t("gridCellAt", lang).replace("{r}", "1").replace("{c}", "1"));
+    expect(g.count).toBeGreaterThan(1);
+  });
+
+  it.each(LANGS)("names the board it draws, in %s", (lang) => {
+    setGlobalLang(lang);
+    const text = buildPrompt(withGrid(), {}, undefined, lang);
+    const g = slotGrid(withGrid().groups[0].items[0], {});
+    expect(text).toContain(KIND_TEXT[lang].invGrid.noun);
+    expect(text).toContain(String(g.cell));
+    expect(text).toContain(`${g.cols}`);
+    expect(text).toContain(`${g.rows}`);
+    /* a pinned board scrolls, and the prompt says so */
+    const pinned = buildPrompt(withGrid({ gridRows: g.rows + 6 }), {}, undefined, lang);
+    expect(pinned).not.toBe(text);
   });
 });

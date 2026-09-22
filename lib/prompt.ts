@@ -1,5 +1,6 @@
-import { KIND_TEXT, Lang, SWIPE_TEXT, TRANSITION_TEXT, getLang, overlayLevelText } from "./i18n";
+import { KIND_TEXT, Lang, SWIPE_TEXT, TRANSITION_TEXT, getLang, overlayLevelText, t } from "./i18n";
 import { constrainModalRails } from "./rail";
+import { lookClauses } from "./flow";
 import {
   CONTENT_W,
   Place,
@@ -31,6 +32,8 @@ import {
   overlayLevelOfFrame,
   lookItem,
   START_LOOK,
+  TRANSPARENT,
+  type FillToken,
   type PartFlow,
   type PartStep,
   normalizeTheme,
@@ -39,6 +42,8 @@ import {
   progressThickness,
   progressValue,
   sizeOf,
+  slotGrid,
+  cellOf,
   isScrollableTabs,
 } from "./tokens";
 
@@ -103,10 +108,16 @@ function cardText(it: Item, lang: Lang): string {
   return lang === "en" ? ` (${parts.join(", ")})` : lang === "ko" ? ` (${parts.join(", ")})` : `（${parts.join("、")}）`;
 }
 
+/** How a chosen background reads: its role, or the word for having none. */
+const fillWord = (t: FillToken, lang: Lang): string => (t === TRANSPARENT ? { ja: "透明", en: "transparent", zh: "透明", ko: "투명" }[lang] : t);
+
 /** a card's background and corners when the author changed them, as one parenthetical */
 function cardLook(it: Item, lang: Lang): string {
   const parts: string[] = [];
-  if (it.fill) parts.push(lang === "ja" ? `背景 ${it.fill}` : lang === "zh" ? `背景 ${it.fill}` : lang === "ko" ? `배경 ${it.fill}` : `on ${it.fill}`);
+  if (it.fill) {
+    const bg = fillWord(it.fill, lang);
+    parts.push(lang === "ja" ? `背景 ${bg}` : lang === "zh" ? `背景 ${bg}` : lang === "ko" ? `배경 ${bg}` : `on ${bg}`);
+  }
   if (it.corners) parts.push(boxCorners(it, lang));
   else if (it.radiusTop !== undefined) parts.push(lang === "ja" ? `角丸 ${it.radiusTop}dp` : lang === "zh" ? `圆角 ${it.radiusTop}dp` : lang === "ko" ? `모서리 ${it.radiusTop}dp` : `${it.radiusTop}dp corners`);
   if (!parts.length) return "";
@@ -210,8 +221,12 @@ function itemJa(it: Item): string {
       return `${q(it.label)}のチェックボックス（初期状態は${it.checked ? "チェック済み" : "未チェック"}）`;
     case "slider":
       return `スライダー（初期値 ${it.value ?? 40}%）`;
+    case "stepper":
+      return `数値 ${it.value ?? 40} のステッパー${hasText(it.label) ? `（ラベルは${q(it.label)}）` : ""}（−／＋ ボタンで 1 ずつ増減し、間の数値は直接入力できる。範囲は 0〜100）`;
+    case "sliderInput":
+      return `ラベル${q(it.label)}の${it.value ?? 40} のスライダー入力（同じ値のスライダー・数値入力・−／＋ ボタンを 1 行にまとめ、どれを動かしても値が変わる。範囲は 0〜100）`;
     case "text":
-      return `${it.bold ? "太字の" : ""}テキスト${q(it.label)}（${it.size ?? 28}sp）`;
+      return `${it.bold ? "太字の" : ""}テキスト${q(it.label)}（${it.size ?? 28}sp${it.shows ? "、自分の文字の代わりに別の部品の現在値を表示する" : ""}）`;
     case "image":
       return `${viewSize(it, 1)} の画像${imageSrc(it) ? `（${imageSrc(it)} の画像を表示）` : it.src ? "（指定の画像を表示）" : "プレースホルダー"}`;
     case "camera":
@@ -221,7 +236,11 @@ function itemJa(it: Item): string {
     case "divider":
       return "区切り線";
     case "box":
-      return `${it.size ?? PHONE_W}×${it.size2 ?? 220}dp のボックス（背景 ${it.fill ?? "surfaceContainerLow"}、${boxCorners(it, "ja")}${scrollNote(it, "ja")}）`;
+      return `${it.size ?? PHONE_W}×${it.size2 ?? 220}dp のボックス（背景 ${fillWord(it.fill ?? "surfaceContainerLow", "ja")}、${boxCorners(it, "ja")}${scrollNote(it, "ja")}）`;
+    case "invGrid": {
+      const g = slotGrid(it, {});
+      return `${it.size ?? CONTENT_W}×${it.size2 ?? 320}dp のスロットグリッド（${g.cols} 列 × ${g.rows} 行の ${g.cell}dp のセル、間隔 ${g.gap}dp、背景 ${fillWord(it.fill ?? "surfaceContainer", "ja")}、${boxCorners(it, "ja")}${scrollNote(it, "ja")}）`;
+    }
     case "loadingIndicator":
       return `M3 Expressive の形が変化するローディングインジケータ${it.contained ? "（コンテナ付き）" : ""}`;
     case "linearProgress":
@@ -303,8 +322,12 @@ function itemEn(it: Item): string {
       return `a checkbox ${q(it.label)} (initially ${it.checked ? "checked" : "unchecked"})`;
     case "slider":
       return `a slider (initial value ${it.value ?? 40}%)`;
+    case "stepper":
+      return `a stepper at ${it.value ?? 40}${hasText(it.label) ? ` labelled ${q(it.label)}` : ""}: a minus and a plus that walk the value by one, with the number between them typed into directly (0–100)`;
+    case "sliderInput":
+      return `a slider field labelled ${q(it.label)} at ${it.value ?? 40}: one row of a slider, a number box and minus / plus buttons, all three carrying the same 0–100 value`;
     case "text":
-      return `${it.bold ? "bold " : ""}text ${q(it.label)} at ${it.size ?? 28}sp`;
+      return `${it.bold ? "bold " : ""}text ${q(it.label)} at ${it.size ?? 28}sp${it.shows ? " and reading another part's live value" : ""}`;
     case "image":
       return `a ${viewSize(it, 1)} image${imageSrc(it) ? ` (load it from ${imageSrc(it)})` : it.src ? " (use the provided image)" : " placeholder"}`;
     case "camera":
@@ -314,7 +337,11 @@ function itemEn(it: Item): string {
     case "divider":
       return "a divider";
     case "box":
-      return `a ${it.size ?? PHONE_W}×${it.size2 ?? 220}dp box (background ${it.fill ?? "surfaceContainerLow"}, ${boxCorners(it, "en")}${scrollNote(it, "en")})`;
+      return `a ${it.size ?? PHONE_W}×${it.size2 ?? 220}dp box (background ${fillWord(it.fill ?? "surfaceContainerLow", "en")}, ${boxCorners(it, "en")}${scrollNote(it, "en")})`;
+    case "invGrid": {
+      const g = slotGrid(it, {});
+      return `a ${it.size ?? CONTENT_W}×${it.size2 ?? 320}dp slot grid: ${g.cols} columns × ${g.rows} rows of ${g.cell}dp cells ${g.gap}dp apart, on ${fillWord(it.fill ?? "surfaceContainer", "en")}, ${boxCorners(it, "en")}${scrollNote(it, "en")}`;
+    }
     case "loadingIndicator":
       return `the M3 Expressive shape-morphing loading indicator${it.contained ? " (contained)" : ""}`;
     case "linearProgress":
@@ -396,8 +423,12 @@ function itemZh(it: Item): string {
       return `${q(it.label)}复选框（初始状态为${it.checked ? "已勾选" : "未勾选"}）`;
     case "slider":
       return `滑块（初始值 ${it.value ?? 40}%）`;
+    case "stepper":
+      return `${it.value ?? 40} 的步进器${hasText(it.label) ? `（标签${q(it.label)}）` : ""}（−／＋ 按钮每次加减 1，中间的数字可以直接输入，范围 0〜100）`;
+    case "sliderInput":
+      return `标签${q(it.label)}、数值 ${it.value ?? 40} 的多功能滑块（滑块、数值输入框、−／＋ 按钮三者联动，范围 0〜100）`;
     case "text":
-      return `${it.bold ? "粗体" : ""}文本${q(it.label)}（${it.size ?? 28}sp）`;
+      return `${it.bold ? "粗体" : ""}文本${q(it.label)}（${it.size ?? 28}sp${it.shows ? "，改为显示另一个组件的当前值" : ""}）`;
     case "image":
       return `${viewSize(it, 1)} 的图片${imageSrc(it) ? `（显示 ${imageSrc(it)} 的图片）` : it.src ? "（显示指定的图片）" : "占位符"}`;
     case "camera":
@@ -407,7 +438,11 @@ function itemZh(it: Item): string {
     case "divider":
       return "分割线";
     case "box":
-      return `${it.size ?? PHONE_W}×${it.size2 ?? 220}dp 的容器框（背景 ${it.fill ?? "surfaceContainerLow"}，${boxCorners(it, "zh")}${scrollNote(it, "zh")}）`;
+      return `${it.size ?? PHONE_W}×${it.size2 ?? 220}dp 的容器框（背景 ${fillWord(it.fill ?? "surfaceContainerLow", "zh")}，${boxCorners(it, "zh")}${scrollNote(it, "zh")}）`;
+    case "invGrid": {
+      const g = slotGrid(it, {});
+      return `${it.size ?? CONTENT_W}×${it.size2 ?? 320}dp 的格子框（${g.cols} 列 × ${g.rows} 行、每个格子 ${g.cell}dp、间隔 ${g.gap}dp，背景 ${fillWord(it.fill ?? "surfaceContainer", "zh")}，${boxCorners(it, "zh")}${scrollNote(it, "zh")}）`;
+    }
     case "loadingIndicator":
       return `M3 Expressive 形状变化的加载指示器${it.contained ? "（带容器）" : ""}`;
     case "linearProgress":
@@ -475,12 +510,18 @@ function itemKo(it: Item): string {
     case "switch": return `${q(it.label)} 스위치(초기 상태 ${it.checked ? "켜짐" : "꺼짐"}${it.noCheck ? ", 켜졌을 때 핸들에 체크 아이콘 없음" : ""})`;
     case "checkbox": return `${q(it.label)} 체크박스(초기 상태 ${it.checked ? "선택됨" : "선택 안 됨"})`;
     case "slider": return `슬라이더(초깃값 ${it.value ?? 40}%)`;
-    case "text": return `${it.bold ? "굵은 " : ""}텍스트 ${q(it.label)}(${it.size ?? 28}sp)`;
+    case "stepper": return `값 ${it.value ?? 40}의 스테퍼${hasText(it.label) ? `(레이블 ${q(it.label)})` : ""}(−／＋ 버튼으로 1씩 증감, 가운데 숫자는 직접 입력, 범위 0~100)`;
+    case "sliderInput": return `레이블 ${q(it.label)}, 값 ${it.value ?? 40}의 슬라이더 입력(슬라이더·숫자 입력·−／＋ 버튼이 한 줄에서 같은 값을 공유, 범위 0~100)`;
+    case "text": return `${it.bold ? "굵은 " : ""}텍스트 ${q(it.label)}(${it.size ?? 28}sp${it.shows ? ", 자기 글자 대신 다른 부품의 현재 값을 표시" : ""})`;
     case "image": return `${viewSize(it, 1)} 이미지${imageSrc(it) ? `(${imageSrc(it)}의 이미지 표시)` : it.src ? "(지정한 이미지 표시)" : " 자리표시자"}`;
     case "camera": return `${viewSize(it, 4 / 3)} 카메라 미리보기`;
     case "map": return `${viewSize(it, 3 / 4)} 지도`;
     case "divider": return "구분선";
-    case "box": return `${it.size ?? PHONE_W}×${it.size2 ?? 220}dp 상자(배경 ${it.fill ?? "surfaceContainerLow"}, ${boxCorners(it, "ko")}${scrollNote(it, "ko")})`;
+    case "box": return `${it.size ?? PHONE_W}×${it.size2 ?? 220}dp 상자(배경 ${fillWord(it.fill ?? "surfaceContainerLow", "ko")}, ${boxCorners(it, "ko")}${scrollNote(it, "ko")})`;
+    case "invGrid": {
+      const g = slotGrid(it, {});
+      return `${it.size ?? CONTENT_W}×${it.size2 ?? 320}dp 슬롯 그리드(${g.cols}열 × ${g.rows}행, 셀 ${g.cell}dp, 간격 ${g.gap}dp, 배경 ${fillWord(it.fill ?? "surfaceContainer", "ko")}, ${boxCorners(it, "ko")}${scrollNote(it, "ko")})`;
+    }
     case "loadingIndicator": return `M3 Expressive 형태 변환 로딩 표시기${it.contained ? "(컨테이너 포함)" : ""}`;
     case "linearProgress": return `${it.wavy ? "물결 모양 " : ""}선형 진행 표시기(${it.value === undefined ? "불확정" : `${it.value}%`}${progressThickness(it) !== 4 ? `, 트랙 두께 ${progressThickness(it)}dp` : ""})`;
     case "progressBar": return `${it.size ?? CONTENT_W}×${sizeOf(it, {}).h}dp 진행 표시줄(${progressValue(it)}%까지 채움${hasText(it.label) ? `, 막대 안에 ${q(it.label)}` : ""})`;
@@ -691,11 +732,9 @@ function notes(g: Group, frames: Frame[], lang: Lang): string[] {
     };
     const stepAction = (a: Exclude<PartStep["do"], undefined>[number]): string | null => {
       if (a.kind === "look") {
-        const bits = [
-          a.label !== undefined && { ja: `文字は「${a.label}」`, en: `its words read ${q(a.label)}`, zh: `文字为「${a.label}」`, ko: `글자는 "${a.label}"` }[lang],
-          a.icon !== undefined && { ja: `アイコンは ${a.icon || "なし"}`, en: `its icon is ${a.icon || "gone"}`, zh: `图标为 ${a.icon || "无"}`, ko: `아이콘은 ${a.icon || "없음"}` }[lang],
-          a.color !== undefined && { ja: `色は ${a.color}`, en: `its colour is ${a.color}`, zh: `颜色为 ${a.color}`, ko: `색은 ${a.color}` }[lang],
-        ].filter(Boolean);
+        /* one clause per property the step names, worded by the same table the flow graph reads:
+           a prompt and a diagram that describe a step differently are two documents to maintain */
+        const bits = lookClauses(lang, a);
         if (!bits.length) return null;
         let who: Item | null = null;
         const walk = (list: Item[]) => {
@@ -882,6 +921,28 @@ function describeChildren(lines: string[], parent: Item, lang: Lang, depth: numb
   const kids = parent.children ?? [];
   if (kids.length === 0) return;
   const pad = "  ".repeat(depth);
+  if (parent.kind === "invGrid") {
+    /* A board is one idea, not a list of forty boxes: the frame has already been described with its
+       cells, so only the cells the author actually filled are worth naming. */
+    const filled = kids.filter((c) => (c.children?.length ?? 0) > 0);
+    if (filled.length === 0) return;
+    const cell = cellOf(parent);
+    lines.push(
+      `${pad}- ${
+        {
+          ja: `各セルは ${cell}dp の小さなコンテナ（角丸、内側に 1dp の枠）で、中身のあるセルだけを挙げます:`,
+          en: `each cell is a small ${cell}dp container (rounded, with a 1dp inner border); only the cells that hold something are listed:`,
+          zh: `每个格子都是 ${cell}dp 的小容器（圆角、内侧 1dp 描边），下面只列出放了东西的格子：`,
+          ko: `각 셀은 ${cell}dp 크기의 작은 컨테이너(모서리 둥글게, 안쪽 1dp 테두리)이며, 내용이 있는 셀만 적습니다:`,
+        }[lang]
+      }`,
+    );
+    for (const c of filled) {
+      lines.push(`${pad}  - ${t("gridCellAt", lang).replace("{r}", String((c.cellRow ?? 0) + 1)).replace("{c}", String((c.cellCol ?? 0) + 1))}${c.checked ? ` (${t("gridTicked", lang)})` : ""}: ${itemText(c, lang)}`);
+      describeChildren(lines, c, lang, depth + 2);
+    }
+    return;
+  }
   const isTabRow = parent.kind === "tabs" && (parent.tabs?.length ?? 0) > 0;
   const lead = isTabRow
     ? {
@@ -1049,12 +1110,15 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind, string>>> = {
     switch: "スイッチ: M3 標準サイズ（トラック 52×32dp）。オンは primary、オフは surfaceContainerHighest に outline の枠。ラベルは左、スイッチは右端。",
     checkbox: "チェックボックス: 18dp の四角、角丸 2dp、チェック時は primary。ラベルは右に bodyLarge。",
     slider: "スライダー: M3 Expressive の太いトラック（高さ 16dp）と縦長のハンドル（幅 4dp・高さ 44dp）。ハンドルの左は primary、右は secondaryContainer。ドラッグで値を変えられる。",
+    stepper: "ステッパー: 高さ 56dp のピル型で背景は surfaceContainerHighest。左にラベル、右に −（remove）・数値・＋（add）のアイコンボタンを並べる。1 タップで値を 1 増減し、0〜100 を越えない。数値は直接入力でき、入力するとその値へ飛ぶ。",
     text: "テキスト: 指定の sp サイズ。見出しは onSurface、説明文は onSurfaceVariant、行間はサイズの 1.3〜1.5 倍。タップしてもリップルなどの反応は付けない。",
     image: "画像: 角丸 20dp、指定がなければ surfaceContainerHighest のプレースホルダー。アスペクト比を保って中央でクロップ。",
     camera: "カメラプレビュー: 角丸 20dp。端末のカメラ映像をこの領域に表示し、権限が無い間は inverseSurface の暗い面にカメラアイコンを置く。",
     map: "地図: 角丸 20dp。地図 SDK のビューをこの領域に置き、読み込み中は surfaceContainerHighest に地図アイコンを置く。",
     divider: "区切り線: 1dp の outlineVariant、左右に 16dp の余白。",
     box: "ボックス: 指定した背景色と角丸を持つ単なるコンテナ。中に重ねる部品の背景として使い、独自の挙動は付けない。スクロールが指定されたボックスは表示領域で、中身は指定方向に動く。はみ出した分は切り取り、細いスクロールバーを端に出す。",
+    invGrid:
+      "スロットグリッド: 枠の中に子フレーム（surfaceContainerHighest、角丸 18dp、内側の余白 8dp）を置き、その上にセルを格子状に並べる。セルは surfaceContainerLow の塗りに outlineVariant の 1dp 枠・角丸 10dp、セル同士の間隔はセルの大きさの約 16%、アイコンを指定した場合は各セルの中央に描く。セルの大きさは枠の大きさが変わっても一定で、入る数だけが増減する。枠は表示領域なので、行数がはみ出す場合は上下にスクロールでき、端に細いスクロールバーを出す。",
     loadingIndicator:
       "ローディング表示: M3 Expressive の形が変化する LoadingIndicator（回転しながら多角形の間を変形するもの）を使う。コンテナ付きは secondaryContainer の円の中に置く。",
     linearProgress: "リニアプログレス: 指定された太さ（指定がなければ 4dp）で、端を丸くする。波形指定のときは M3 Expressive の wavy スタイルにする。トラックは secondaryContainer、進捗は primary。",
@@ -1097,12 +1161,16 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind, string>>> = {
     switch: "Switches: standard M3 size (52×32dp track). On is primary; off is surfaceContainerHighest with an outline border. Label on the left, switch at the trailing edge.",
     checkbox: "Checkboxes: 18dp square with 2dp corners, primary when checked, label on the right in bodyLarge.",
     slider: "Sliders: the M3 Expressive thick track (16dp) with a tall handle (4×44dp). Primary on the left of the handle, secondaryContainer on the right. Dragging changes the value.",
+    stepper: "Steppers: a 56dp pill on surfaceContainerHighest with the label on the left and, on the right, a minus icon button, the number, and a plus icon button. One tap moves the value by one and never past 0 or 100. The number is an input too: typing a value takes the stepper to it.",
+    sliderInput: "Slider fields: the same thick slider on top of a row carrying the same value as a number box with a minus and a plus beside it. All three change the one 0–100 value, and the number is what a bound text reads. One rounded container with 20dp corners: the slider takes the upper 44dp, the row the rest, the number centred in a large weight.",
     text: "Text: the specified sp size; headings on onSurface, descriptions on onSurfaceVariant, line height 1.3–1.5× the size. No ripple or press feedback on tap.",
     image: "Images: 20dp corners; a surfaceContainerHighest placeholder when none is provided. Keep the aspect ratio and center-crop.",
     camera: "Camera preview: 20dp corners. Show the device camera feed in this area; while permission is missing, show a camera icon on a dark inverseSurface pane.",
     map: "Map: 20dp corners. Place the map SDK view in this area; while it loads, show a map icon on surfaceContainerHighest.",
     divider: "Dividers: 1dp outlineVariant with 16dp horizontal insets.",
     box: "Boxes: plain containers with the specified background token and corner radii. They are the background for whatever is layered on them and have no behavior of their own. A box set to scroll is a viewport: its contents move along the chosen axis, what overflows is clipped, and a slim scroll bar sits on that edge.",
+    invGrid:
+      "Slot grid: a frame holding a child frame (surfaceContainerHighest, 18dp corners, 8dp inset) with the cells laid out on it. A cell is a surfaceContainerLow square with a 1dp outlineVariant border and 10dp corners; cells sit about 16% of a cell apart, and a chosen icon is drawn centred in every cell. The cell size never changes with the frame — only how many fit does. The frame is a viewport: rows that overflow scroll up and down, with a slim scroll bar on that edge.",
     loadingIndicator:
       "Loading: use the M3 Expressive shape-morphing LoadingIndicator (the rotating polygon that morphs between shapes). The contained variant sits inside a secondaryContainer circle.",
     linearProgress: "Linear progress: use the stated track thickness (4dp unless stated) with round caps, and the M3 Expressive wavy style when specified. Track is secondaryContainer, progress is primary.",
@@ -1144,12 +1212,16 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind, string>>> = {
     switch: "开关：M3 标准尺寸（轨道 52×32dp）。开为 primary，关为 surfaceContainerHighest 加 outline 边框。标签在左，开关靠右。",
     checkbox: "复选框：18dp 方形，圆角 2dp，勾选时为 primary。标签在右侧，用 bodyLarge。",
     slider: "滑块：M3 Expressive 的粗轨道（高 16dp）和竖长手柄（宽 4dp、高 44dp）。手柄左侧为 primary，右侧为 secondaryContainer。可拖动改变数值。",
+    stepper: "步进器：高 56dp 的胶囊，背景 surfaceContainerHighest；左侧放标签，右侧依次是「−」图标按钮、数字、「＋」图标按钮。每点一次加减 1，不越过 0〜100；数字本身可以输入，输入后直接跳到该值。",
+    sliderInput: "多功能滑块：上层是同款粗滑块，下层是同一数值的输入框加「−」「＋」按钮，三者联动同一个 0〜100 的值；绑定了数值的文字读的就是它。整体是一个圆角 20dp 的容器：滑块占上方 44dp，下面一行放输入框和两个按钮，数字居中并用较大字重。",
     text: "文本：指定的 sp 字号。标题用 onSurface，说明文字用 onSurfaceVariant，行高为字号的 1.3〜1.5 倍。点击时不加涟漪等反馈。",
     image: "图片：圆角 20dp，未指定时使用 surfaceContainerHighest 的占位符。保持宽高比并居中裁剪。",
     camera: "相机预览：圆角 20dp。在此区域显示设备相机画面；未获得权限时，在 inverseSurface 的深色面板上显示相机图标。",
     map: "地图：圆角 20dp。在此区域放置地图 SDK 视图；加载期间在 surfaceContainerHighest 上显示地图图标。",
     divider: "分割线：1dp 的 outlineVariant，左右留 16dp 边距。",
     box: "容器框：只是带指定背景色和圆角的容器，作为叠放在其上的组件的背景，本身没有任何行为。设为滚动的容器框就是一个视口：内容沿指定方向滑动，超出部分裁掉，该边缘显示一条细滚动条。",
+    invGrid:
+      "格子框：框内先放一层子容器框（surfaceContainerHighest、圆角 18dp、内边距 8dp），格子在它上面按行列排布。每个格子是 surfaceContainerLow 的方块，1dp outlineVariant 描边、圆角 10dp，格子间距约为格子大小的 16%；指定了图标就画在每个格子正中。格子大小不随框的大小改变，变的只是能放下的数量。整个框是视口：行数超出时上下滚动，边缘显示一条细滚动条。",
     loadingIndicator: "加载指示：使用 M3 Expressive 形状变化的 LoadingIndicator（旋转并在多边形之间变形）。带容器的放在 secondaryContainer 的圆形中。",
     linearProgress: "线性进度条：使用指定的轨道粗细（未指定则为 4dp）和圆形端帽。指定波浪形时使用 M3 Expressive 的 wavy 样式。轨道为 secondaryContainer，进度为 primary。",
     progressBar: "进度条：按指定的宽度和高度画细长条，两端圆角为高度的一半。未填充的轨道默认透明，只有指定了背景色才画出来；填充用 primary。有文字时居中放在条内，并保证文字在填充段与未填充段上都清晰可读。",
@@ -1183,12 +1255,16 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind, string>>> = {
     switch: "스위치: M3 표준 크기(트랙 52×32dp). 켜짐은 primary, 꺼짐은 surfaceContainerHighest와 outline 테두리. 레이블은 왼쪽, 스위치는 오른쪽에 둔다.",
     checkbox: "체크박스: 18dp 사각형, 모서리 2dp, 선택 시 primary. 레이블은 오른쪽에 bodyLarge로 표시한다.",
     slider: "슬라이더: M3 Expressive의 두꺼운 16dp 트랙과 4×44dp 세로 핸들. 핸들 왼쪽은 primary, 오른쪽은 secondaryContainer이며 드래그로 값을 바꾼다.",
+    stepper: "스테퍼: 높이 56dp 알약 모양, 배경은 surfaceContainerHighest. 왼쪽에 레이블, 오른쪽에 − 아이콘 버튼·숫자·＋ 아이콘 버튼을 둔다. 한 번 누를 때마다 값을 1씩 바꾸고 0~100을 넘지 않는다. 숫자는 직접 입력할 수 있고 입력하면 그 값으로 이동한다.",
+    sliderInput: "슬라이더 입력: 같은 두꺼운 슬라이더 위에, 같은 값을 가진 숫자 입력과 −·＋ 버튼을 한 줄로 둔다. 셋이 하나의 0~100 값을 공유하고, 값을 읽는 텍스트는 이 숫자를 표시한다. 모서리 20dp의 둥근 컨테이너로 그리고 슬라이더가 위 44dp, 아래 줄이 나머지를 차지한다.",
     text: "텍스트: 지정된 sp 크기. 제목은 onSurface, 설명은 onSurfaceVariant, 줄 높이는 글자 크기의 1.3~1.5배. 탭 반응은 넣지 않는다.",
     image: "이미지: 모서리 20dp. 이미지가 없으면 surfaceContainerHighest 자리표시자를 사용하고 비율을 유지해 가운데에서 자른다.",
     camera: "카메라 미리보기: 모서리 20dp. 이 영역에 기기 카메라 화면을 표시하고, 권한이 없는 동안은 inverseSurface의 어두운 면 위에 카메라 아이콘을 둔다.",
     map: "지도: 모서리 20dp. 이 영역에 지도 SDK 뷰를 두고, 불러오는 동안은 surfaceContainerHighest 위에 지도 아이콘을 둔다.",
     divider: "구분선: 1dp outlineVariant, 좌우 여백 16dp.",
     box: "상자: 지정된 배경 토큰과 모서리를 가진 단순 컨테이너. 겹쳐 놓은 부품의 배경으로 사용하며 자체 동작은 넣지 않는다. 스크롤로 지정한 상자는 표시 영역이며, 내용이 지정한 방향으로 움직이고 넘치는 부분은 잘리며 그 가장자리에 얇은 스크롤 막대가 놓인다.",
+    invGrid:
+      "슬롯 그리드: 프레임 안에 자식 프레임(surfaceContainerHighest, 모서리 18dp, 안쪽 여백 8dp)을 두고 그 위에 셀을 격자로 배치한다. 셀은 surfaceContainerLow 바탕에 outlineVariant 1dp 테두리, 모서리 10dp이며 셀 사이 간격은 셀 크기의 약 16%이고, 아이콘을 지정하면 모든 셀 가운데에 그린다. 셀 크기는 프레임 크기와 무관하게 일정하고 들어가는 개수만 달라진다. 프레임은 표시 영역이므로 행이 넘치면 위아래로 스크롤되며 가장자리에 얇은 스크롤 막대가 놓인다.",
     loadingIndicator: "로딩: 다각형이 회전하며 형태가 바뀌는 M3 Expressive LoadingIndicator를 사용한다. 컨테이너형은 secondaryContainer 원 안에 둔다.",
     linearProgress: "선형 진행 표시기: 지정된 트랙 두께(지정이 없으면 4dp)와 둥근 끝을 사용한다. 지정된 경우 M3 Expressive 물결 스타일을 사용하며 트랙은 secondaryContainer, 진행은 primary로 표시한다.",
     progressBar: "진행 표시줄: 지정한 너비와 높이의 가느다란 막대. 끝은 높이의 절반만큼 둥글게 한다. 트랙은 배경색을 지정하지 않으면 투명하고, 지정한 경우에만 그 색으로 채운다. 채워진 부분은 primary. 텍스트가 있으면 막대 가운데에 놓고 채워진 부분과 빈 부분 모두에서 읽히도록 색을 정한다.",
@@ -1617,7 +1693,7 @@ export function buildPrompt(doc: Doc, widths: Record<string, number>, onlyFrameI
       lines.push(
         isOverlayFrame(f)
           ? ph.overlayHead(q(f.name || ph.screen), overlayLevelText(overlayLevelOfFrame(f), lang), sizeLabel(f, viewport, lang))
-          : ph.screenHead(q(f.name || ph.screen), f.bg && f.bg !== "surface" ? f.bg : undefined, gs.length > 0, sizeLabel(f, viewport, lang)),
+          : ph.screenHead(q(f.name || ph.screen), f.bg && f.bg !== "surface" ? fillWord(f.bg, lang) : undefined, gs.length > 0, sizeLabel(f, viewport, lang)),
       );
       if (gs.length > 0 && f.place && f.place !== "top") lines.push(ph.placement(f.place));
       describeScreen(lines, gs, frameRect(f), widths, lang);

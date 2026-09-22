@@ -4,7 +4,7 @@ import { contrastRatio } from "./color";
 import { itemNameOf } from "./flow";
 import { getLang, KIND_TEXT } from "./i18n";
 
-import { BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill, childShown, connectedButton, DIALOG_COLOR, childDrawn, badgeSurface, buttonScale, findItemIn, foldMargins, radiiOfRuns, roundByNature, runPartRadii, ROUND_SHAPES, foldPlace, foldShift, layoutOf, NO_FOLD, fitTabPanels, keepPanelSlots, liftAbove, isStateEffect, STATE_EFFECTS, START_LOOK, firstTapStep, firstDueStep, waitLeft, lookItem, lookAt, statesAsFlow, migrateFlows, hasTimedSteps, type PartFlow, type PartLook, type PartStep, type MachineAt, NAV_ICON, NAV_INDICATOR, NAV_INDICATOR_R, NAV_LABEL_FONT, selectedAncestor, takesText, panelSlotFor, refillPanels, restorePanel, slotsOf, resizedChildren, needsTabPanels, tabIndexOf, tabPanelId, tabRenamePatch, tabPanelsPatch, tabStyleOf, TAB_PANEL_H, TAB_ROW_H, onToken, pageTintOf, PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor, scrollContent, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type ItemState, type PlacedItem, type Frame } from "./tokens";
+import { CELL_DEF, CELL_MAX, CELL_MIN, COLS_MAX, ROWS_MAX, cellGap, cellOf, scrollContent, slotGrid, gridCells, cellBox, gridCheckZ, rulePatch, ruleFieldsFor, readoutOf, hasReadout, withGridCells, BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill, childShown, connectedButton, DIALOG_COLOR, childDrawn, badgeSurface, buttonScale, findItemIn, foldMargins, radiiOfRuns, roundByNature, runPartRadii, ROUND_SHAPES, foldPlace, foldShift, layoutOf, NO_FOLD, fitTabPanels, keepPanelSlots, liftAbove, isStateEffect, STATE_EFFECTS, START_LOOK, firstTapStep, firstDueStep, waitLeft, lookItem, lookAt, statesAsFlow, migrateFlows, hasTimedSteps, fillColor, fillInk, TRANSPARENT, cardFillOf, type PartFlow, type PartLook, type PartStep, type MachineAt, NAV_ICON, NAV_INDICATOR, NAV_INDICATOR_R, NAV_LABEL_FONT, selectedAncestor, takesText, panelSlotFor, refillPanels, restorePanel, slotsOf, resizedChildren, needsTabPanels, tabIndexOf, tabPanelId, tabRenamePatch, tabPanelsPatch, tabStyleOf, TAB_PANEL_H, TAB_ROW_H, onToken, pageTintOf, PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type Kind, type ItemState, type PlacedItem, type Frame } from "./tokens";
 
 afterEach(() => setGlobalShape("rounded")); // restore the module default
 
@@ -1042,6 +1042,70 @@ describe("a look a step latches onto a part", () => {
   });
 });
 
+describe("a text that reads another part", () => {
+  /* A number beside a slider is the commonest readout in a game UI: the text carries the id of the
+     part it reads, and the value it shows is the live one, so the drag moves both. */
+  it("reads a moving control as a percentage, a row as its choice, and a switch as on or off", () => {
+    const slider = { ...makeItem("slider"), id: "s", value: 40 };
+    expect(readoutOf(slider, undefined, "en")).toBe("40%");
+    expect(readoutOf(slider, 73, "en")).toBe("73%");
+    /* out of the range is clamped, not wrapped: a readout never says 120 */
+    expect(readoutOf(slider, 120, "en")).toBe("100%");
+    const bar = { ...makeItem("progressBar"), value: 8 };
+    expect(readoutOf(bar, undefined, "zh")).toBe("8%");
+    const tabs = { ...makeItem("tabs"), selected: 1 };
+    expect(readoutOf(tabs, undefined, "en")).toBe((tabs.tabs ?? [])[1].label);
+    const pick = { ...makeItem("select"), selected: undefined };
+    expect(readoutOf(pick, undefined, "en")).toBe((pick.tabs ?? [])[0].label);
+    const sw = { ...makeItem("listItem"), switch: true, checked: true };
+    expect(readoutOf(sw, undefined, "en")).toBe("On");
+    expect(readoutOf({ ...sw, checked: false }, undefined, "zh")).toBe("关");
+    /* and only the parts with something to read are offered as a source */
+    expect(hasReadout(slider)).toBe(true);
+    expect(hasReadout(makeItem("stepper"))).toBe(true);
+    expect(hasReadout(makeItem("sliderInput"))).toBe(true);
+    expect(hasReadout(sw)).toBe(true);
+    expect(hasReadout(makeItem("button"))).toBe(false);
+    expect(hasReadout(makeItem("text"))).toBe(false);
+  });
+});
+
+describe("the properties a step may change on another part", () => {
+  /* A rule writes only what it names: a step that shows a board's boxes must leave the board's
+     colour alone, and the properties on offer are the ones the target really draws with. */
+  it("writes the properties it names and nothing else", () => {
+    expect(rulePatch({ kind: "look", target: "board", checkboxes: true })).toEqual({ checkboxes: true });
+    expect(rulePatch({ kind: "look", label: "已装备", color: "primary", hidden: true })).toEqual({ label: "已装备", color: "primary", hidden: true });
+    /* an icon set to nothing is the part drawn bare, which is why an empty string reads as null */
+    expect(rulePatch({ kind: "look", icon: "" })).toEqual({ icon: null });
+    expect(rulePatch({ kind: "look", icon: "swords" })).toEqual({ icon: "swords" });
+    /* a step that names nothing writes nothing */
+    expect(rulePatch({ kind: "look", target: "board" })).toEqual({});
+  });
+
+  it("offers each kind only the properties it draws with", () => {
+    const fields = (kind: Kind) => ruleFieldsFor(makeItem(kind));
+    expect(fields("invGrid")).toContain("checkboxes");
+    expect(fields("box")).not.toContain("checkboxes");
+    expect(fields("box")).toContain("fill");
+    expect(fields("switch")).toContain("checked");
+    expect(fields("text")).not.toContain("checked");
+    expect(fields("slider")).toContain("value");
+    expect(fields("button")).not.toContain("value");
+    /* a row with options can have one of them chosen; one with none cannot */
+    expect(fields("select")).toContain("selected");
+    expect(fields("tabs")).toContain("selected");
+    expect(ruleFieldsFor({ ...makeItem("tabs"), tabs: [] })).not.toContain("selected");
+    /* the three flags every part can be given, whatever it is */
+    for (const kind of ["box", "invGrid", "button", "text"] as Kind[]) {
+      expect(fields(kind)).toEqual(expect.arrayContaining(["color", "disabled", "hidden", "grow"]));
+    }
+    /* only the fields a kind really has: a text has words, a divider has none */
+    expect(fields("text")).toContain("label");
+    expect(fields("divider")).not.toContain("label");
+  });
+});
+
 describe("the name an author gives a part", () => {
   /* Renaming a row in the layers panel names that part and never writes over what it shows, so a
    * badge keeps its count and a button keeps its words. The name is what the row and the prompt
@@ -1051,5 +1115,232 @@ describe("the name an author gives a part", () => {
     expect(itemNameOf(named({ name: "分享按钮" }), "zh")).toBe("分享按钮");
     expect(itemNameOf(named({}), "zh")).toBe("分享");
     expect(itemNameOf(named({ label: "", name: "" }), "zh")).toBe("按钮");
+  });
+});
+
+describe("a background that paints nothing", () => {
+  /* Every background picker offers 透明 first: a part left bare on the page, or a container drawn
+   * over a picture, is a design the author means as often as a coloured one. */
+  const p = paletteOf("purple");
+
+  it("paints nothing and inks the page's own text colour", () => {
+    expect(fillColor(TRANSPARENT, p, "surfaceContainerLow")).toBe("transparent");
+    expect(fillInk(TRANSPARENT, p, "surfaceContainerLow")).toBe(p.onSurface);
+    /* a role still reads as itself, and a missing fill falls back to the caller's default */
+    expect(fillColor("primaryContainer", p, "surface")).toBe(p.primaryContainer);
+    expect(fillColor(undefined, p, "surfaceContainerLow")).toBe(p.surfaceContainerLow);
+    expect(fillInk(undefined, p, "surfaceContainerLow")).toBe(onToken("surfaceContainerLow", p));
+  });
+
+  it("is a colour a part may carry as its own, and a card's fill", () => {
+    const card: Item = { ...makeItem("card"), fill: TRANSPARENT };
+    expect(cardFillOf(card)).toBe(TRANSPARENT);
+    expect(isCustomColor(TRANSPARENT)).toBe(true);
+    expect(colorOverrideOf({ ...makeItem("box"), color: TRANSPARENT }, p)).toEqual({ main: "transparent", on: p.onSurface });
+    /* and a progress bar with a transparent track draws none at all */
+    expect(progressTrack({ ...makeItem("progressBar"), fill: TRANSPARENT }, p)).toMatchObject({ color: "transparent" });
+  });
+});
+
+describe("the board a slot grid draws", () => {
+  const grid = (patch: Partial<Item> = {}, size = 380, size2 = 320): Item => ({ ...makeItem("invGrid"), id: "g", size, size2, ...patch });
+
+  it("fills the frame with as many cells of the author's size as fit", () => {
+    /* Auto counts answer the frame, which is the point of the part: a wider frame really holds more
+       cells rather than stretching the ones already there. */
+    const short = slotGrid(grid({}, 380, 200), {});
+    const tall = slotGrid(grid({}, 380, 400), {});
+    const narrow = slotGrid(grid({}, 300, 320), {});
+    const wide = slotGrid(grid({}, 380, 320), {});
+    expect(tall.rows).toBeGreaterThan(short.rows);
+    expect(wide.cols).toBeGreaterThan(narrow.cols);
+    /* whatever the frame measures, a cell is the size the author set */
+    expect(tall.cell).toBe(short.cell);
+    expect(wide.cell).toBe(narrow.cell);
+    expect(short.autoCols).toBe(true);
+    expect(short.autoRows).toBe(true);
+    /* the last cell of the board still sits inside the child frame */
+    const last = short.cellAt(short.cols - 1, short.rows - 1);
+    expect(last.x + short.cell).toBeLessThanOrEqual(short.panel.x + short.panel.w + 1);
+    expect(last.y + short.cell).toBeLessThanOrEqual(short.panel.y + short.panel.h + 1);
+    expect(short.count).toBe(short.cols * short.rows);
+  });
+
+  it("grows the child frame past the viewport when the author pins more rows than fit", () => {
+    const auto = slotGrid(grid(), {});
+    /* nothing to move while the rows are the ones that fit */
+    expect(scrollRange(grid(), {})).toEqual({ x: 0, y: 0 });
+    const pinned = grid({ gridRows: auto.rows + 4 });
+    const g = slotGrid(pinned, {});
+    expect(g.rows).toBe(auto.rows + 4);
+    expect(g.autoRows).toBe(false);
+    /* the board is taller than the frame, the child frame follows the board, and that is what
+       the frame slides over */
+    expect(g.panel.h).toBeGreaterThan(auto.panel.h);
+    expect(scrollContent(pinned, {}).h).toBeGreaterThan(320);
+    expect(scrollRange(pinned, {})).toEqual({ x: 0, y: scrollContent(pinned, {}).h - 320 });
+    /* every slot on that board is a cell the author can put something in */
+    expect(gridCells(pinned, {}).length).toBe(g.count);
+    /* and a cell the author ticked is kept on the board too, shrink or not */
+    const ticked: Item = { ...grid({}, 380, 140), children: gridCells({ ...grid({}, 380, 140), gridRows: 9 }, {}).map((c) => (c.cellRow === 7 ? { ...c, checked: true } : c)) };
+    expect(slotGrid({ ...ticked, gridRows: undefined }, {}).rows).toBe(8);
+  });
+
+  it("keeps a pinned column count but never draws a row wider than the frame", () => {
+    const three = slotGrid(grid({ gridCols: 3 }), {});
+    expect(three.cols).toBe(3);
+    expect(three.autoCols).toBe(false);
+    /* twelve columns do not fit a phone-wide frame: the frame draws the ones that do, since a row
+       too wide to see is a row the author could never reach by moving up and down */
+    const many = slotGrid(grid({ gridCols: COLS_MAX }), {});
+    expect(many.cols).toBeLessThan(COLS_MAX);
+    expect(many.cellAt(many.cols - 1, 0).x + many.cell).toBeLessThanOrEqual(many.panel.x + many.panel.w + 1);
+  });
+
+  it("holds the cell size inside the range the inspector offers", () => {
+    expect(cellOf(grid())).toBe(CELL_DEF);
+    expect(cellOf(grid({ cell: 2 }))).toBe(CELL_MIN);
+    expect(cellOf(grid({ cell: 9999 }))).toBe(CELL_MAX);
+    /* the room between cells follows the cell, so one control changes the whole board */
+    expect(cellGap(CELL_MAX)).toBeGreaterThan(cellGap(CELL_MIN));
+  });
+
+  it("gives every slot a container of its own, in reading order", () => {
+    /* Each cell is a real box, which is what lets an author drop an icon button into one and have
+       the layers panel, the prompt and the preview all agree that it is in there. */
+    const board = makeItem("invGrid");
+    const g = slotGrid(board, {});
+    const kids = board.children ?? [];
+    expect(kids.length).toBe(g.cols * g.rows);
+    kids.forEach((c, i) => {
+      const col = i % g.cols;
+      const row = Math.floor(i / g.cols);
+      expect(c.kind).toBe("box");
+      expect(c.cellCol).toBe(col);
+      expect(c.cellRow).toBe(row);
+      expect(c.size).toBe(g.cell);
+      expect(c.size2).toBe(g.cell);
+      expect({ x: c.x, y: c.y }).toEqual(g.cellAt(col, row));
+      expect(c.children).toBeUndefined();
+      expect(c.name).toBeTruthy();
+    });
+    /* and laying the board out again changes nothing, so a patch that touches only the look of a
+       board does not churn its cells */
+    expect(gridCells(board, {})).toEqual(kids);
+  });
+
+  it("keeps what a cell holds when the frame, the cell size or the counts change", () => {
+    const board = { ...makeItem("invGrid"), id: "g", size: 380, size2: 320 } as Item;
+    const part = { ...makeItem("iconButton"), id: "ib", icon: "swords" } as PlacedItem;
+    const filled = (it: Item): Item => ({ ...it, children: (it.children ?? []).map((c) => (c.cellCol === 2 && c.cellRow === 1 ? { ...c, checked: true, children: [part] } : c)) });
+    const before = slotGrid(filled(board), {});
+    /* the frame is made wider: the same cell is still the one holding the part */
+    const wider = resizedChildren(filled(board), { size: 412 }, {}) ?? [];
+    const cell = wider.find((c) => c.cellCol === 2 && c.cellRow === 1)!;
+    expect(cell.children?.[0].id).toBe("ib");
+    expect(cell.checked).toBe(true);
+    expect(cell.x).not.toBe(slotGrid(filled(board), {}).cellAt(2, 1).x);
+    expect(cell.x).toBe(slotGrid({ ...filled(board), size: 412 }, {}).cellAt(2, 1).x);
+    /* a smaller frame hides nothing: the board reaches the rows that hold something */
+    const shorter = resizedChildren(filled(board), { size2: 140 }, {}) ?? [];
+    const still = shorter.filter((c) => c.cellCol === 2 && c.cellRow === 1);
+    expect(still).toHaveLength(1);
+    expect(still[0].children?.[0].id).toBe("ib");
+    const board2 = { ...filled(board), size2: 140 };
+    expect(slotGrid(board2, {}).rows).toBeGreaterThanOrEqual(2);
+    expect(scrollRange({ ...board2, children: shorter }, {})).toEqual({ x: 0, y: slotGrid(board2, {}).content.h - 140 });
+    /* the cell size is one control for the whole board */
+    const bigger = resizedChildren(board, { cell: 80 }, {}) ?? [];
+    expect(bigger.every((c) => c.size === 80 && c.size2 === 80)).toBe(true);
+    expect(before.cell).toBe(CELL_DEF);
+  });
+
+  it("gives a document written before cells were containers its cells on the way in", () => {
+    const bare: Item = { ...makeItem("invGrid"), id: "g", children: undefined };
+    const old: Group = { id: "grp", x: 0, y: 0, axis: "x", items: [bare] };
+    const read = withGridCells([old]);
+    expect((read[0].items[0].children ?? []).length).toBe(slotGrid(read[0].items[0], {}).count);
+    /* a board that already has them keeps the cells that hold something, identity included */
+    const part = { ...makeItem("iconButton"), id: "ib" } as PlacedItem;
+    const board = makeItem("invGrid");
+    const withPart: Item = { ...board, children: (board.children ?? []).map((c, i) => (i === 3 ? { ...c, children: [part] } : c)) };
+    const again = withGridCells([{ id: "grp", x: 0, y: 0, axis: "x", items: [withPart] }])[0].items[0];
+    expect((again.children ?? []).find((c) => c.children?.length)?.children?.[0].id).toBe("ib");
+    expect((again.children ?? []).length).toBe((withPart.children ?? []).length);
+  });
+
+  it("keeps its cells, and what they hold, at or above the board's own layer", () => {
+    /* A child that sits below its parent is not drawn at all, so a board the author lifted — or one
+       nested inside something, which lifts it — has to carry its cells up with it, or the whole
+       board would show nothing but its own frame. */
+    const bare = makeItem("invGrid");
+    const part = { ...makeItem("iconButton"), id: "ib" } as PlacedItem;
+    const withPart: Item = { ...bare, children: (bare.children ?? []).map((c, i) => (i === 0 ? { ...c, children: [part] } : c)) };
+    /* at the default level nothing is written down: a cell is drawn where it stands */
+    expect(gridCells(bare, {}).every((c) => c.z === undefined)).toBe(true);
+    const raised: Item = { ...withPart, z: 14 };
+    const cells = gridCells(raised, {});
+    expect(cells.length).toBe((bare.children ?? []).length);
+    expect(cells.every((c) => childShown(raised, c))).toBe(true);
+    const filled = cells.find((c) => c.children?.length)!;
+    expect(layerOf(filled)).toBeGreaterThanOrEqual(layerOf(raised));
+    expect(layerOf(filled.children![0])).toBeGreaterThanOrEqual(layerOf(filled));
+    /* and a cell the author had lifted higher on purpose keeps its own level */
+    const high: Item = { ...raised, children: (withPart.children ?? []).map((c, i) => (i === 0 ? { ...c, z: 30 } : c)) };
+    expect(gridCells(high, {}).find((c) => c.z === 30)?.z).toBe(30);
+    /* the patch path is what a layer the author raises goes through */
+    const patched = resizedChildren(withPart, { z: 20 }, {}) ?? [];
+    expect(patched.every((c) => childShown({ ...withPart, z: 20 }, c))).toBe(true);
+  });
+
+  it("puts a cell's checkbox ten layers above it, so the layer control decides what wins", () => {
+    /* The board's boxes are chrome: a part dropped into a cell gets the cell's level + 1, so the box
+       is above it without anyone thinking about it. Raising a part past `cell + 10` — which the
+       inspector's layer control does — is then the one way to put that part over the box. */
+    const flat = cellBox(0, 0, 56, { x: 0, y: 0 });
+    expect(gridCheckZ(flat)).toBe(20);
+    expect(gridCheckZ(flat)).toBeGreaterThan(layerOf(flat) + 1);
+    const lifted: Item = { ...flat, z: 30 };
+    expect(gridCheckZ(lifted)).toBe(40);
+    /* a board the author lifts takes its cells and their boxes with it */
+    const board = { ...makeItem("invGrid"), z: 25 } as Item;
+    const cells = gridCells(board, {});
+    expect(gridCheckZ(cells[0])).toBeGreaterThan(layerOf(board) + 1);
+    /* and a cell the author lifts carries what it holds, so nothing vanishes under it */
+    const part = { ...makeItem("iconButton"), id: "ib" } as PlacedItem;
+    const held: PlacedItem = { ...flat, children: [part] };
+    const raised = resizedChildren(held, { z: 30 }, {}) ?? [];
+    expect(layerOf(raised[0])).toBeGreaterThanOrEqual(30);
+    /* a cell with nothing in it has nothing to carry */
+    expect(resizedChildren(flat, { z: 30 }, {})).toBeUndefined();
+  });
+
+  it("follows the screen it is carried to, the way a box does", () => {
+    /* A grid drawn to the phone's content width and as tall as its screen is a layout, not a size:
+       carrying it to another screen takes the new width and height, which is how the board inside
+       it follows the frame the author resized. */
+    const from = { w: PHONE_W, h: PHONE_H };
+    const to = { w: 600, h: 700 };
+    const grid0: Item = { ...makeItem("invGrid"), id: "g", size: CONTENT_W, size2: PHONE_H };
+    const box0: Item = { ...makeItem("box"), id: "b", size: CONTENT_W, size2: PHONE_H };
+    const carried = carryItemSize(grid0, from, to);
+    const box = carryItemSize(box0, from, to);
+    expect(carried.size).toBe(600 - 32);
+    expect(carried.size2).toBe(700);
+    expect(carried.size).toBe(box.size);
+    expect(carried.size2).toBe(box.size2);
+    /* and a frame the author sized by hand stays the size they drew */
+    const own: Item = { ...grid0, size: 300, size2: 240 };
+    expect(carryItemSize(own, from, to)).toBe(own);
+  });
+
+  it("counts a frame too small for even one cell as one cell, capped at the offered range", () => {
+    const pinned = slotGrid(grid({ gridCols: 4, gridRows: 5 }), {});
+    expect(pinned.count).toBe(20);
+    expect(slotGrid(grid({ gridRows: 999 }), {}).rows).toBe(ROWS_MAX);
+    const tiny = slotGrid(grid({}, 8, 8), {});
+    expect(tiny.cols).toBe(1);
+    expect(tiny.rows).toBe(1);
+    expect(tiny.panel.w).toBeGreaterThanOrEqual(tiny.cell);
   });
 });

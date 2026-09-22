@@ -61,10 +61,20 @@ const validRuleAction = (a: unknown): boolean => {
   if (a.kind === "goto") return typeof a.to === "string" && typeof a.transition === "string";
   if (a.kind === "back" || a.kind === "close") return true;
   /* a look only sets the fields it names; an empty one is a rule that does nothing, which is allowed */
-  if (a.kind === "look")
+  if (a.kind === "look") {
+    /* What a step writes onto a part: every property it may name, checked against the type that
+       property is drawn with. A value this build cannot read would be applied by a truthiness test —
+       a star colour would turn a switch on — so they are checked rather than trusted. */
+    const texts = [a.target, a.icon, a.label, a.color, a.fill];
+    const bools = [a.checkboxes, a.checked, a.disabled, a.hidden, a.grow];
+    const nums = [a.selected, a.value];
     return (
-      [a.target, a.icon, a.label, a.color].every((v) => v === undefined || typeof v === "string") && (a.variant === undefined || isVariant(a.variant))
+      texts.every((v) => v === undefined || typeof v === "string") &&
+      (a.variant === undefined || isVariant(a.variant)) &&
+      bools.every((v) => v === undefined || typeof v === "boolean") &&
+      nums.every((v) => v === undefined || Number.isFinite(v))
     );
+  }
   /* a step written while variables existed may still carry a write: the machine's reader drops it,
      and the file has to open for that to happen */
   return typeof a.varId === "string";
@@ -93,6 +103,15 @@ const validItem = (item: unknown): boolean =>
   (item.hidden === undefined || typeof item.hidden === "boolean") &&
   (item.modal === undefined || typeof item.modal === "boolean") &&
   (item.z === undefined || Number.isFinite(item.z)) &&
+  /* a slot grid's cell size and counts decide its whole layout, so a value this build cannot read
+     would lay out a board of NaN: the fields are checked rather than trusted */
+  (item.cell === undefined || Number.isFinite(item.cell)) &&
+  (item.gridCols === undefined || (Number.isFinite(item.gridCols) && (item.gridCols as number) >= 1)) &&
+  (item.gridRows === undefined || (Number.isFinite(item.gridRows) && (item.gridRows as number) >= 1)) &&
+  (item.checkboxes === undefined || typeof item.checkboxes === "boolean") &&
+  (item.cellCol === undefined || Number.isFinite(item.cellCol)) &&
+  (item.cellRow === undefined || Number.isFinite(item.cellRow)) &&
+  (item.shows === undefined || typeof item.shows === "string") &&
   (item.states === undefined || (Array.isArray(item.states) && item.states.every(validState))) &&
   (item.slotStates === undefined ||
     (isRecord(item.slotStates) && Object.values(item.slotStates).every((list) => Array.isArray(list) && list.every(validState)))) &&

@@ -79,6 +79,9 @@ import {
   CustomPart,
   compositeInstance,
   resizedChildren,
+  withGridCells,
+  isGridCell,
+  readoutOf,
   byLayer,
   copySubtree,
   itemsOf,
@@ -124,8 +127,9 @@ import {
   railMetrics,
   RAIL_TOP,
   migrateFlows,
+  fillColor,
 } from "@/lib/tokens";
-import { Icon, M3Node, M3Static, MeasuredContent } from "@/components/M3Node";
+import { GridCellMarks, Icon, M3Node, M3Static, MeasuredContent } from "@/components/M3Node";
 import { LayersPanel } from "@/components/Layers";
 import { AuditPanel } from "@/components/Audit";
 import { FrameInspector, FrameSizePicker, Inspector, type DialogChoice } from "@/components/Inspector";
@@ -254,6 +258,13 @@ const SIZE_TRANSITION = `width ${SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1), height
 /** the breathing room a new container leaves around the parts it takes in */
 const CONTAINER_PAD = 16;
 
+/** The box a part is placed in when the canvas puts it down by hand: on a screen as a run, as a
+ *  container's child, or loose on a screen. It is a flex box on purpose. A part that lays itself
+ *  out inline — a text, a badge, a chip — would otherwise stand on the line box its block parent
+ *  makes, and the strut under that line would push it a few dp down the screen. The preview wraps
+ *  every part in a flex box as well, and the two have to draw the part in the same place. */
+const PLACED: React.CSSProperties = { position: "absolute", display: "flex" };
+
 /** A document, or one undo step of it, in the language the author is working in: the defaults it
  *  was drawn with are carried over, everything they typed is left alone. */
 const translateSnapshot = (snap: Snapshot, lang: Lang): Snapshot => translateDoc(snap, lang);
@@ -285,7 +296,7 @@ const pruneItems = (items: Item[], gone: Set<string>): Item[] => pruneParts(item
  *  bar flush with the old 80dp bottom; keep it on the bottom edge. */
 function migrateGroups(groups: Group[], frames: Frame[]): Group[] {
   const oldNavH = KIND_SPEC.bottomNav.h - NAV_BAR_H;
-  return groups.map((g) => {
+  return withGridCells(groups).map((g) => {
     if (g.items.length !== 1 || g.items[0].kind !== "bottomNav") return g;
     const f = frames.find((fr) => {
       const r = frameRect(fr);
@@ -1125,6 +1136,21 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const sx = useSpring(0, CARRY);
   const sy = useSpring(0, CARRY);
 
+  /** A text bound to another part reads it: on the canvas and in an export that is the value the
+   *  author set, which is where a visitor's drag starts from. Nothing else about the tree changes, so
+   *  the canvas keeps editing the document itself and only draws this reading of it. */
+  const shownGroups = useMemo(() => {
+    const bind = (it: Item): Item => {
+      const kids = it.children?.map(bind) as PlacedItem[] | undefined;
+      const next: Item = kids ? { ...it, children: kids } : it;
+      if (!next.shows) return next;
+      const target = itemsOf(groups).find((x) => x.id === next.shows);
+      return target ? { ...next, label: readoutOf(target, undefined, lang) } : next;
+    };
+    const same = groups.every((g) => g.items.every((it) => !it.shows && !(it.children ?? []).some((c) => c.shows)));
+    return same ? groups : groups.map((g) => ({ ...g, items: g.items.map(bind) }));
+  }, [groups, lang]);
+
   /** Every part on the canvas with its rect in canvas coordinates. A container's children sit
    *  inside it, so they follow it: marquee selection, overlap tests and the alignment guides all
    *  read them too, which is how a part inside a box lines up with what is around it. */
@@ -1722,7 +1748,10 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
         const held = g.ox + dx;
         const heldY = g.oy + dy;
         const at = itemRects().find((r) => r.id === g.parentId);
-        const guide = loose || g.free || g.over || !at ? null : guideFor(at.l + held + f.dx, at.t + heldY + f.dy, sizeRef(kid), new Set([g.id]));
+        /* a free child (one inside a scrolling container, or one the author picked in the layers
+           panel) lines up like any other: only handing it to another container makes its place
+           inside this one stop mattering */
+        const guide = loose || g.over || !at ? null : guideFor(at.l + held + f.dx, at.t + heldY + f.dy, sizeRef(kid), new Set([g.id]));
         const nx = Math.round(Math.min(room.w, Math.max(0, held + (guide ? guide.x! - (at!.l + held + f.dx) : 0)))) - f.dx;
         const ny = Math.round(Math.min(room.h, Math.max(0, heldY + (guide ? guide.y! - (at!.t + heldY + f.dy) : 0)))) - f.dy;
         g.guide = guide;
@@ -1890,6 +1919,21 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
 
   /** writes one field of one part, wherever it sits: the canvas itself uses this for the
    *  controls a component carries (a navigation bar's collapse button, say). */
+  /** Ticks every cell of the board in hand that holds something, or clears them all: saying it once
+   *  is the point of the switch, and a cell's tick is written down like the author left it. Clearing
+   *  takes the lot, so no tick is left behind on a cell that no longer shows one. */
+  const setCellsChecked = useCallback(
+    (checked: boolean) => {
+      if (!primaryId) return;
+      const grid = groupsRef.current.map((g) => findItemIn(g.items, primaryId)).find(Boolean);
+      if (!grid || grid.kind !== "invGrid") return;
+      snapshotFor(`${grid.id}:cells`);
+      const kids = (grid.children ?? []).map((c) => (checked && c.children?.length ? { ...c, checked: true } : { ...c, checked: undefined }));
+      setGroups((prev) => prev.map((g) => (findItemIn(g.items, grid.id) ? { ...g, items: patchItemIn(g.items, grid.id, { children: kids }) } : g)));
+    },
+    [primaryId, snapshotFor],
+  );
+
   const patchItemById = useCallback(
     (id: string, patch: Partial<Item>) => {
       if ("railExpanded" in patch || "railModal" in patch) {
@@ -3269,13 +3313,22 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   /** a container's children as the plain, deterministic renderer needs them */
   const staticChildren = (parent: Item): React.ReactNode =>
     (parent.children ?? []).filter((c, i) => childDrawn(parent, c, i)).sort(byLayer).map((c) => (
-      <div key={c.id} style={{ position: "absolute", left: c.x + foldPlace(c, widths).dx, top: c.y + foldPlace(c, widths).dy }}>
-        <M3Static item={c} palette={p} overlay={staticChildren(c)} />
+      <div key={c.id} style={{ ...PLACED, left: c.x + foldPlace(c, widths).dx, top: c.y + foldPlace(c, widths).dy }}>
+        <M3Static
+          item={c}
+          palette={p}
+          overlay={
+            <>
+              {staticChildren(c)}
+              {parent.kind === "invGrid" && <GridCellMarks grid={parent} cell={c} checked={!!c.checked} p={p} />}
+            </>
+          }
+        />
       </div>
     ));
 
   const renderExport = (f: Frame) => {
-    const gs = groups.filter((g) => frameOfGroup(g, frames, widths)?.id === f.id);
+    const gs = shownGroups.filter((g) => frameOfGroup(g, frames, widths)?.id === f.id);
     const { w, h } = frameSizeOf(f);
     return (
       <div
@@ -3284,7 +3337,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           position: "relative",
           width: w,
           height: h,
-          background: p[f.bg ?? "surface"],
+          background: fillColor(f.bg, p, "surface"),
           overflow: "hidden",
         }}
       >
@@ -3292,7 +3345,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           g.free ? (
             ((corners) =>
             layoutOf(g, widths).map((pl) => (
-              <div key={pl.item.id} style={{ position: "absolute", left: pl.x - f.x, top: pl.y - f.y, zIndex: modalRailOf(g) ? 2 : undefined }}>
+              <div key={pl.item.id} style={{ ...PLACED, left: pl.x - f.x, top: pl.y - f.y, zIndex: modalRailOf(g) ? 2 : undefined }}>
                 <M3Static
                   item={pl.item}
                   palette={p}
@@ -3693,9 +3746,12 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     const page = owner ? frameOfGroup(owner, frames, widths) : undefined;
     const here = page ? groups.filter((g) => frameOfGroup(g, frames, widths)?.id === page.id) : groups;
     const named = (it: Item) => it.label.trim() || KIND_TEXT[lang][it.kind]?.noun || KIND_SPEC[it.kind].label;
+    /* The kind comes along, because the properties a step may change are the ones that part really
+       draws with, and so does its icon, which is what tells two parts of the same kind apart in the
+       list. A board's own cells are left out: they are the board's slots, not parts of the screen. */
     return itemsOf(here)
-      .filter((it) => it.id !== selected.id)
-      .map((it) => ({ id: it.id, name: named(it) }));
+      .filter((it) => it.id !== selected.id && !isGridCell(it))
+      .map((it) => ({ id: it.id, name: named(it), kind: it.kind, icon: KIND_SPEC[it.kind].paletteIcon, item: it }));
   }, [selected, groups, frames, widths, lang]);
 
   const doc: Doc = useMemo(
@@ -3909,12 +3965,17 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
 
   /** A part being moved inside its container: the pointer moves it in the container's own
    *  coordinates, so it stays inside the box it belongs to. */
-  const dragChildFrom = (clientX: number, clientY: number, shift: boolean, g: Group, parent: Item, child: PlacedItem) => {
+  /** Picks one part as the selection: what a press on the canvas means before it means a drag. */
+  const selectOne = (id: string, shift: boolean) => {
     flushPending();
-    setSelectedIds((cur) => (shift ? [...cur.filter((x) => x !== child.id), child.id] : [child.id]));
+    setSelectedIds((cur) => (shift ? [...cur.filter((x) => x !== id), id] : [id]));
     setSelectedFrameId(null);
     setSelectedLinkId(null);
     setRightTab("edit");
+  };
+
+  const dragChildFrom = (clientX: number, clientY: number, shift: boolean, g: Group, parent: Item, child: PlacedItem) => {
+    selectOne(child.id, shift);
     /* A child that fills its container edge to edge has nowhere to go inside it — a bar or a rail
        laid in a box of its own size is the case this exists for. Dragging it moves the container,
        which is the only thing left that can happen; leaving it a child drag would make the whole
@@ -3951,6 +4012,12 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     e.stopPropagation();
     /* A part the author picked in the layers panel takes the drag, even when the press lands on a
        part drawn over it: they chose the container, not whatever covers it. */
+    /* A board's cell sits in its slot: there is nowhere to drag it to, so a press only picks it.
+       Whatever is inside the cell drags as usual — that is how a part moves from one cell to another. */
+    if (parent.kind === "invGrid" && isGridCell(child)) {
+      selectOne(child.id, e.shiftKey);
+      return;
+    }
     const picked = selectedAncestor(groupsRef.current, child.id, selectedIds);
     if (picked && picked.id !== child.id) {
       const up = parentOf(groupsRef.current, picked.id);
@@ -3993,10 +4060,15 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   };
 
   /** the children of one part, drawn inside its box in the order their levels ask for */  /** the children of one part, drawn inside its box in the order their levels ask for */
-  const childNodes = (parent: Item, g: Group): React.ReactNode =>
-    (parent.children ?? []).filter((c, i) => childDrawn(parent, c, i)).sort(byLayer).map((c) => (
+  const childNodes = (parent: Item, g: Group): React.ReactNode => {
+    /* A board's cells can be ticked right on the canvas, but only while the author is working in
+       that board: the first click into it selects what was clicked, and from then on the little
+       box over a cell answers. Ticking is never what a plain click on a cell means, so selecting a
+       cell and putting something in it stay the same gesture they are everywhere else. */
+    const ticking = !!parent.checkboxes && (selectedSet.has(parent.id) || (parent.children ?? []).some((k) => selectedSet.has(k.id)));
+    return (parent.children ?? []).filter((c, i) => childDrawn(parent, c, i)).sort(byLayer).map((c) => (
       /* a navigation part inside a container folds the same way it does on a screen */
-      <div key={c.id} style={{ position: "absolute", left: c.x + foldPlace(c, widths).dx, top: c.y + foldPlace(c, widths).dy }}>
+      <div key={c.id} style={{ ...PLACED, left: c.x + foldPlace(c, widths).dx, top: c.y + foldPlace(c, widths).dy }}>
         <M3Node
           item={c}
           palette={p}
@@ -4009,12 +4081,22 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           overlay={
             <>
               {childNodes(c, g)}
+              {parent.kind === "invGrid" && (
+                <GridCellMarks
+                  grid={parent}
+                  cell={c}
+                  checked={!!c.checked}
+                  onToggle={ticking ? () => patchItemById(c.id, { checked: c.checked ? undefined : true }) : undefined}
+                  p={p}
+                />
+              )}
               {navToggleNode(c, (e) => dragChildFrom(e.clientX, e.clientY, e.shiftKey, g, parent, c))}
             </>
           }
         />
       </div>
     ));
+  };
 
   const renderGroup = (g: Group, ox: number, oy: number) => {
     const modalRail = modalRailOf(g);
@@ -4040,7 +4122,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           style={{ position: "absolute", left: 0, top: 0, zIndex: modalRail ? 2 : undefined, isolation: "isolate" }}
         >
           {layoutOf(g, widths).map((pl) => (
-            <div key={pl.item.id} style={{ position: "absolute", left: pl.x - g.x, top: pl.y - g.y }}>
+            <div key={pl.item.id} style={{ ...PLACED, left: pl.x - g.x, top: pl.y - g.y }}>
               <M3Node
                 item={pl.item}
                 palette={p}
@@ -4283,7 +4365,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       {drag?.active && (
         <motion.div
           style={{
-            position: "absolute",
+            ...PLACED,
             left: 0,
             top: 0,
             x: sx,
@@ -4608,7 +4690,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   /* a dialog is marked by the frame drawn around it, not by its surface: what the
                      author sees inside stays the design, exactly as on a screen */
                   const tint = pageTintOf(f, p);
-                  const bg = p[f.bg ?? "surface"];
+                  const bg = fillColor(f.bg, p, "surface");
                   const { w, h } = frameSizeOf(f);
                   const radius = frameRadius(f);
                   return (
@@ -4703,7 +4785,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                             transition: SIZE_TRANSITION,
                           }}
                         >
-                          {groups
+                          {shownGroups
                             .filter((g) => frameOf.get(g.id) === f.id)
                             .map((g) => renderGroup(g, f.x, f.y))}
                           {groups.some((g) => frameOf.get(g.id) === f.id && modalRailOf(g)) && (
@@ -5160,6 +5242,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   onUnlink={selectedIds.length > 0 ? unlinkSelected : undefined}
                   dialog={dialogChoices}
                   onSaveComposite={selected ? () => setSaveAsk({ itemId: selected.id, name: "" }) : undefined}
+                  onCellsChecked={selected?.kind === "invGrid" ? setCellsChecked : undefined}
                   childCount={selected?.children?.length ?? 0}
                   inContainer={!!selected && !!parentOf(groups, selected.id)}
                   widths={widths}

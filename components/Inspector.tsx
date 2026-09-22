@@ -35,6 +35,7 @@ import {
   TRACK_MIN,
   maxRingThickness,
   progressThickness,
+  PROGRESS_DEFAULT,
   contentWidth,
   defaultTabsFor,
   framePresetOf,
@@ -96,6 +97,19 @@ import {
   type PartLook,
   type PartStep,
   type RuleAction,
+  RULE_FIELDS,
+  ruleFieldsFor,
+  hasReadout,
+  type FillToken,
+  type RuleField,
+  /* the cell board a slot grid draws */
+  slotGrid,
+  isGridCell,
+  gridCheckZ,
+  CELL_MAX,
+  CELL_MIN,
+  COLS_MAX,
+  ROWS_MAX,
 } from "@/lib/tokens";
 import { IconPicker } from "./IconPicker";
 import { Popover } from "./Menus";
@@ -783,6 +797,7 @@ export function Inspector({
   inContainer = false,
   widths = {},
   lookTargets = [],
+  onCellsChecked,
 }: {
   /** the AI button beside the behavior field */
   ai: AiHooks;
@@ -820,7 +835,9 @@ export function Inspector({
   /** measured widths, so a scrolling container's content measures the way the canvas measures it */
   widths?: Record<string, number>;
   /** the other parts on this page, so a rule can aim a look at one of them */
-  lookTargets?: { id: string; name: string }[];
+  lookTargets?: { id: string; name: string; kind: Kind; icon?: string; item?: Item }[];
+  /** ticks every cell of the board in hand, or clears them all */
+  onCellsChecked?: (checked: boolean) => void;
 }) {
   const lang = useLang();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -914,6 +931,8 @@ export function Inspector({
   /* how much room a scrolling container has to move in: its content, and its own viewport */
   const scroll = item.scroll ? scrollRange(item, widths) : { x: 0, y: 0 };
   const scrollView = sizeOf(item, widths);
+  /* the parts of this page a text may read a value from: a slider, a stepper, a bar, a row */
+  const readable = lookTargets.filter((x) => !!x.item && hasReadout(x.item));
   const mapWidthPreset = (v: number) =>
     v === PHONE_W ? frameSize.w : v === CONTENT_W ? contentWidth(frameSize.w) : v === HALF_W ? halfWidth(frameSize.w) : v;
   const mapHeightPreset = (v: number) => (v === PHONE_H ? frameSize.h : v === PHONE_H / 2 ? frameSize.h / 2 : v);
@@ -1013,6 +1032,7 @@ export function Inspector({
     item.kind === "image" ||
     item.kind === "camera" ||
     item.kind === "map" ||
+    item.kind === "invGrid" ||
     item.kind === "box";
 
   return (
@@ -1056,6 +1076,19 @@ export function Inspector({
 
       {onAlign && !editOn && <AlignSection single onAlign={onAlign} p={p} />}
 
+      {isGridCell(item) && !editOn && (
+        <Section id="cell" icon="check_box" title={t("gridCells", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "2px 0" }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>
+              {t("gridCellAt", lang).replace("{r}", String((item.cellRow ?? 0) + 1)).replace("{c}", String((item.cellCol ?? 0) + 1))}
+            </div>
+            <Toggle on={!!item.checked} onChange={(checked) => onChange({ checked: checked || undefined })} p={p} icon="check_box" label={t("gridTicked", lang)} grow />
+            <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("gridCellHint", lang)}</div>
+            <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("gridCellSizeHint", lang)}</div>
+          </div>
+        </Section>
+      )}
+
       {(spec.hasLabel || spec.hasSupporting) && (
         <Section id="text" icon="title" title={t("text", lang)} p={p}>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1078,6 +1111,26 @@ export function Inspector({
                     title={t("bold", lang)}
                   />
                 )}
+              </div>
+            )}
+            {item.kind === "text" && !editOn && (
+              /* A text can read another part instead of saying its own words: the number beside the
+                 slider that moves as the visitor drags it, without either part knowing about rules. */
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: "0 0 auto" }}>{t("showsValue", lang)}</span>
+                  <Pick
+                    options={[
+                      { key: "", label: t("showsNothing", lang), icon: "block" },
+                      ...readable.map((x) => ({ key: x.id, label: x.name, icon: x.icon })),
+                    ]}
+                    value={item.shows ?? ""}
+                    onChange={(shows) => onChange({ shows: shows || undefined })}
+                    p={p}
+                    title={t("showsValue", lang)}
+                  />
+                </div>
+                {item.shows && <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("showsHint", lang)}</div>}
               </div>
             )}
             {spec.hasSupporting && !editOn && (
@@ -1332,6 +1385,9 @@ export function Inspector({
               />
             )}
           </div>
+          {item.kind === "invGrid" && (
+            <div style={{ marginTop: 8, fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("gridIconHint", lang)}</div>
+          )}
         </Section>
       )}
 
@@ -1389,6 +1445,121 @@ export function Inspector({
           />
         </Section>
       )}
+
+      {item.kind === "invGrid" && !editOn && (() => {
+        /* A slot grid is its board: the author sets the cell size once and the counts decide how
+         * much of it the frame shows. Auto hands a count back to the frame, which is what makes the
+         * part follow a resize; pinning rows is what turns the frame into a window that slides. */
+        const g = slotGrid(item, widths);
+        return (
+          <Section id="grid" icon="grid_view" title={t("gridCells", lang)} p={p}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "2px 0" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <Toggle
+                  on={g.autoCols}
+                  onChange={(auto) => onChange({ gridCols: auto ? undefined : g.cols })}
+                  p={p}
+                  icon="view_column"
+                  label={`${t("gridCols", lang)} · ${t("gridAuto", lang)}`}
+                  grow
+                />
+                {!g.autoCols && (
+                  <Slider
+                    icon="view_column"
+                    title={t("gridCols", lang)}
+                    value={item.gridCols ?? g.cols}
+                    min={1}
+                    max={COLS_MAX}
+                    step={1}
+                    onChange={(gridCols) => onChange({ gridCols })}
+                    p={p}
+                  />
+                )}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <Toggle
+                  on={g.autoRows}
+                  onChange={(auto) => onChange({ gridRows: auto ? undefined : g.rows })}
+                  p={p}
+                  icon="table_rows"
+                  label={`${t("gridRows", lang)} · ${t("gridAuto", lang)}`}
+                  grow
+                />
+                {!g.autoRows && (
+                  <Slider
+                    icon="table_rows"
+                    title={t("gridRows", lang)}
+                    value={item.gridRows ?? g.rows}
+                    min={1}
+                    max={ROWS_MAX}
+                    step={1}
+                    onChange={(gridRows) => onChange({ gridRows })}
+                    p={p}
+                  />
+                )}
+              </div>
+              <Slider
+                icon="crop_square"
+                title={t("gridCell", lang)}
+                value={g.cell}
+                min={CELL_MIN}
+                max={CELL_MAX}
+                step={4}
+                onChange={(cell) => onChange({ cell })}
+                p={p}
+                unit="dp"
+              />
+              <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>
+                {t("gridCount", lang).replace("{c}", String(g.cols)).replace("{r}", String(g.rows)).replace("{n}", String(g.count))}
+              </div>
+              <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("gridHint", lang)}</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <Toggle
+                  on={!!item.checkboxes}
+                  onChange={(checkboxes) => onChange({ checkboxes: checkboxes || undefined })}
+                  p={p}
+                  icon="check_box"
+                  label={t("gridCheck", lang)}
+                  grow
+                />
+                {item.checkboxes && (
+                  <>
+                    {onCellsChecked && (
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {([true, false] as const).map((on, i) => (
+                          <button
+                            key={String(on)}
+                            onClick={() => onCellsChecked(on)}
+                            title={t(on ? "gridAll" : "gridNone", lang)}
+                            className="m3-press"
+                            style={{
+                              flex: 1,
+                              height: 40,
+                              border: "none",
+                              borderRadius: `${i === 0 ? 20 : 8}px ${i === 0 ? 8 : 20}px ${i === 0 ? 8 : 20}px ${i === 0 ? 20 : 8}px`,
+                              background: p.surfaceContainerHigh,
+                              color: p.onSurface,
+                              fontSize: 13,
+                              fontWeight: 600,
+                              cursor: "pointer",
+                            }}
+                          >
+                            {t(on ? "gridAll" : "gridNone", lang)}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>
+                      {/* the same number twice: the layer the boxes are drawn at */}
+                      {t("gridCheckHint", lang).replaceAll("{z}", String(gridCheckZ(item)))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </Section>
+        );
+      })()}
 
       {SHAPED.includes(item.kind) && !editOn && (() => {
         /* An icon button and a FAB are circles by nature, so the shapes they can take are the circle
@@ -1591,7 +1762,9 @@ export function Inspector({
                       const view = Math.round(item.scroll === "x" ? scrollView.w : scrollView.h);
                       /* an empty container and one whose content fits both leave the slider with
                          nothing to move, and each says which of the two it is */
-                      if (!(item.children?.length ?? 0)) return t("scrollEmpty", lang);
+                      /* a slot grid holds cells rather than children, so "no children yet" is
+                         not what it means: its own board is what the frame moves over */
+                      if (item.kind !== "invGrid" && !(item.children?.length ?? 0)) return t("scrollEmpty", lang);
                       const room = (item.scroll === "x" ? scroll.x : scroll.y) > 0;
                       return t(room ? "scrollHint" : "scrollFits", lang).replace("{c}", String(content)).replace("{v}", String(view));
                     })()}
@@ -1656,7 +1829,9 @@ export function Inspector({
                 p={p}
               />
             )}
-            {spec.size && (
+            {/* a board's cell is sized by the board: one control sets every cell, and a cell that
+                could be dragged to its own size would only be put back by the next layout */}
+            {spec.size && !isGridCell(item) && (
               <>
                 <Slider
                   icon={spec.size.icon}
@@ -1751,14 +1926,16 @@ export function Inspector({
                 p={p}
               />
             )}
-            {hasRadius && (item.kind === "card" || item.kind === "box") && (() => {
+            {hasRadius && (item.kind === "card" || item.kind === "box" || item.kind === "invGrid") && (() => {
               /* One radius for every corner until the author asks for each. The seeds match what the
-               * canvas draws: a box's unset side is 0, a card's unset radius is the scaled kind default.
-               * A box saved with different top and bottom radii opens straight in per-corner mode. */
-              const isBox = item.kind === "box";
-              const top = item.radiusTop ?? (isBox ? 0 : scaleR(spec.radius));
-              const bottom = isBox ? (item.radiusBottom ?? 0) : top;
-              const corners = item.corners ?? (isBox && top !== bottom ? { tl: top, tr: top, bl: bottom, br: bottom } : undefined);
+               * canvas draws: a box's unset side is 0, a card's and a slot grid's unset radius is the
+               * scaled kind default. A box saved with different top and bottom radii opens straight in
+               * per-corner mode; the two sides of a box or a frame move together until then. */
+              const pairs = item.kind === "box" || item.kind === "invGrid";
+              const box = item.kind === "box";
+              const top = item.radiusTop ?? (box ? 0 : scaleR(spec.radius));
+              const bottom = box ? (item.radiusBottom ?? 0) : top;
+              const corners = item.corners ?? (top !== bottom ? { tl: top, tr: top, bl: bottom, br: bottom } : undefined);
               return (
                 <>
                   {!corners && (
@@ -1769,7 +1946,7 @@ export function Inspector({
                       min={0}
                       max={48}
                       step={1}
-                      onChange={(r) => onChange(isBox ? { radiusTop: r, radiusBottom: r } : { radiusTop: r })}
+                      onChange={(r) => onChange(pairs ? { radiusTop: r, radiusBottom: r } : { radiusTop: r })}
                       p={p}
                     />
                   )}
@@ -1779,7 +1956,7 @@ export function Inspector({
                       onChange(
                         each
                           ? { corners: { tl: top, tr: top, bl: bottom, br: bottom } }
-                          : { corners: undefined, radiusTop: corners?.tl ?? top, radiusBottom: isBox ? (corners?.tl ?? top) : undefined },
+                          : { corners: undefined, radiusTop: corners?.tl ?? top, radiusBottom: pairs ? (corners?.tl ?? top) : undefined },
                       )
                     }
                     p={p}
@@ -2020,6 +2197,125 @@ function seededAction(kind: RuleAction["kind"], from: RuleAction, item: Item, fr
   return { kind: kind as "back" | "close" };
 }
 
+/** How each property a step may change is named and drawn, in the row that carries it, in the menu
+ *  that adds it, and in the flow the step is part of. */
+const RULE_FIELD_UI: Record<RuleField, { icon: string; title: UIKey }> = {
+  label: { icon: "edit", title: "text" },
+  icon: { icon: "emoji_symbols", title: "icon" },
+  color: { icon: "palette", title: "propColor" },
+  fill: { icon: "format_color_fill", title: "background" },
+  checkboxes: { icon: "check_box", title: "gridCheck" },
+  checked: { icon: "check_circle", title: "propChecked" },
+  selected: { icon: "list", title: "propSelected" },
+  value: { icon: "percent", title: "propValue" },
+  disabled: { icon: "block", title: "state_disable" },
+  hidden: { icon: "visibility_off", title: "state_hide" },
+  grow: { icon: "open_in_full", title: "state_grow" },
+};
+
+/** The value a property starts at when the author adds it: the target's own, so switching a property
+ *  on never changes how the part looks until they say what it should become. */
+function ruleSeed(target: Item, key: RuleField): string | number | boolean | null {
+  switch (key) {
+    case "label":
+      return target.label;
+    case "icon":
+      return target.icon ?? null;
+    case "color":
+      return target.color ?? "primary";
+    case "fill":
+      return target.fill ?? "surfaceContainerLow";
+    case "checkboxes":
+    case "disabled":
+    case "hidden":
+    case "grow":
+      return true;
+    case "checked":
+      return target.checked ?? true;
+    case "selected":
+      return target.selected ?? 0;
+    case "value":
+      return target.value ?? PROGRESS_DEFAULT;
+  }
+}
+
+/** The control one changed property needs: words for a text, the picker for an icon, the colours for
+ *  a colour, and the two-value switch for everything that is simply on or off. */
+function RuleFieldValue({
+  action,
+  field,
+  target,
+  onChange,
+  p,
+}: {
+  action: Extract<RuleAction, { kind: "look" }>;
+  field: RuleField;
+  target: Item;
+  onChange: (a: RuleAction) => void;
+  p: Palette;
+}) {
+  const lang = useLang();
+  const set = (value: unknown) => onChange({ ...action, [field]: value } as RuleAction);
+  const bool = (v: boolean) => (
+    <Segmented<"on" | "off">
+      options={[
+        { key: "on", icon: "check", label: t("boolYes", lang), title: t("boolYes", lang) },
+        { key: "off", icon: "close", label: t("boolNo", lang), title: t("boolNo", lang) },
+      ]}
+      value={v ? "on" : "off"}
+      onChange={(k) => set(k === "on")}
+      p={p}
+      height={36}
+    />
+  );
+  switch (field) {
+    case "label":
+      return <Field value={(action.label as string) ?? ""} onChange={set} p={p} placeholder={t("label", lang)} icon="edit" multiline rows={1} grow />;
+    case "icon":
+      return <IconPicker value={(action.icon as string | null) ?? null} onChange={(icon) => set(icon ?? "")} onClose={() => {}} palette={p} />;
+    case "color":
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <CustomColorDisc value={action.color} onChange={set} p={p} />
+          <span style={{ fontSize: 12, color: p.onSurfaceVariant }}>{(action.color as string) ?? t("autoColor", lang)}</span>
+        </div>
+      );
+    case "fill":
+      return <TokenChips value={(action.fill ?? "surfaceContainerLow") as FillToken} onChange={set} p={p} />;
+    case "checkboxes":
+      return (
+        <Segmented<"show" | "hide">
+          options={[
+            { key: "show", icon: "check_box", label: t("actionShow", lang), title: t("actionShow", lang) },
+            { key: "hide", icon: "check_box_outline_blank", label: t("actionHide", lang), title: t("actionHide", lang) },
+          ]}
+          value={action.checkboxes ? "show" : "hide"}
+          onChange={(k) => set(k === "show")}
+          p={p}
+          height={36}
+        />
+      );
+    case "selected":
+      return (
+        <Pick
+          options={(target.tabs ?? []).map((tab, i) => ({ key: String(i), label: tab.label.trim() || String(i + 1), icon: tab.icon || undefined }))}
+          value={String(action.selected ?? 0)}
+          onChange={(k) => set(Number(k))}
+          p={p}
+          title={t("propSelected", lang)}
+        />
+      );
+    case "value":
+      return <Slider icon="percent" title={t("propValue", lang)} value={(action.value as number) ?? PROGRESS_DEFAULT} min={0} max={100} step={1} onChange={set} p={p} unit="%" />;
+    case "disabled":
+      return bool(!!action.disabled);
+    case "hidden":
+      return bool(!!action.hidden);
+    case "grow":
+      return bool(!!action.grow);
+  }
+}
+
 /** The fields one rule action needs, under the picker that chose it. */
 function ActionFields({
   action,
@@ -2035,11 +2331,20 @@ function ActionFields({
   /** the part the action belongs to: a look starts from what it shows now */
   item: Item;
   /** the other parts on the page, for a look aimed at one of them */
-  lookTargets?: { id: string; name: string }[];
+  lookTargets?: { id: string; name: string; kind: Kind; icon?: string; item?: Item }[];
   p: Palette;
 }) {
   const lang = useLang();
   const a = action;
+  /* The part this step changes: the one it names, or the part the step belongs to. Its kind is what
+     decides which properties are on offer — a board has a bulk-tick mode, a switch has a state, a
+     progress bar has a number — and its own values are what a property starts at. */
+  const aimed = a.kind === "look" ? a.target : undefined;
+  const found = aimed ? lookTargets.find((x) => x.id === aimed) : undefined;
+  const targetItem = found?.item ?? item;
+  const available = ruleFieldsFor(targetItem);
+  const changed = a.kind === "look" ? RULE_FIELDS.filter((k) => available.includes(k) && (a as Record<string, unknown>)[k] !== undefined) : [];
+  const free = a.kind === "look" ? available.filter((k) => !changed.includes(k)) : [];
   return (
     <>
       {a.kind === "goto" && (
@@ -2050,45 +2355,55 @@ function ActionFields({
       )}
       {a.kind === "look" && (
         <>
-          {/* what the part looks like: the same choices a look elsewhere offers, and it can be aimed
-              at another part of the same page — the gift a claim button marks as claimed */}
+          {/* What the step changes, and which part it changes it on. A look is aimed at another part
+              of the same page when the author picks one — the gift a claim button marks as claimed —
+              and left alone when they mean the part the step belongs to. */}
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: "0 0 auto" }}>{t("lookTarget", lang)}</span>
             <Pick
-              options={[{ key: "", label: t("lookSelf", lang) }, ...lookTargets.map((x) => ({ key: x.id, label: x.name }))]}
+              options={[
+                { key: "", label: t("lookSelf", lang), icon: KIND_SPEC[item.kind].paletteIcon },
+                ...lookTargets.map((x) => ({ key: x.id, label: x.name, icon: x.icon })),
+              ]}
               value={a.target ?? ""}
               onChange={(target) => onChange({ ...a, target: target || undefined })}
               p={p}
               title={t("lookTarget", lang)}
             />
           </div>
-          <IconPicker value={a.icon ?? null} onChange={(icon) => onChange({ ...a, icon: icon ?? "" })} onClose={() => {}} palette={p} />
-          {/* each field says what it is: a look changes one thing, and a title is cheaper than
-              guessing which row the text field is */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("lookText", lang)}</div>
-            {/* the words a look puts on the part: a text box that wraps and grows, since the line
-                may be a whole sentence and the canvas wraps it itself */}
-            <Field value={a.label ?? ""} onChange={(label) => onChange({ ...a, label })} p={p} placeholder={t("label", lang)} icon="edit" multiline rows={1} grow />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("lookColor", lang)}</div>
-            {/* the one colour, not a palette to choose from alongside it: a look recolours a part,
-                it does not restyle the scheme */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <CustomColorDisc value={a.color} onChange={(color) => onChange({ ...a, color })} p={p} />
-              {a.color !== undefined && (
-                <button
-                  type="button"
-                  onClick={() => onChange({ ...a, color: undefined })}
-                  className="m3-press"
-                  style={{ height: 30, padding: "0 12px", borderRadius: 15, border: `1px solid ${p.outlineVariant}`, background: "transparent", color: p.onSurfaceVariant, fontSize: 12, fontWeight: 600, cursor: "pointer" }}
-                >
-                  {t("autoColor", lang)}
-                </button>
-              )}
+          {/* One row per property the step changes, each with the control that property needs, and a
+              picker for the properties that part has not been given yet. The list is the target's
+              own properties, so it reads as "what can this component do" rather than a field dump. */}
+          {changed.map((key) => (
+            <div key={key} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Icon name={(RULE_FIELD_UI[key] ?? { icon: "tune" }).icon} size={16} color={p.onSurfaceVariant} />
+                <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>
+                  {t((RULE_FIELD_UI[key] ?? { title: "style" }).title, lang)}
+                </span>
+                <IconBtn
+                  icon="close"
+                  p={p}
+                  title={t("removeRule", lang)}
+                  size={24}
+                  onClick={() => onChange({ ...a, [key]: undefined } as RuleAction)}
+                />
+              </div>
+              <RuleFieldValue action={a} field={key} target={targetItem} onChange={onChange} p={p} />
             </div>
-          </div>
+          ))}
+          {free.length > 0 && (
+            <Pick
+              options={[
+                { key: "", label: t("flowAddProp", lang), icon: "add" },
+                ...free.map((key) => ({ key, label: t((RULE_FIELD_UI[key] ?? { title: "style" }).title, lang), icon: (RULE_FIELD_UI[key] ?? { icon: "tune" }).icon })),
+              ]}
+              value=""
+              onChange={(key) => key && onChange({ ...a, [key]: ruleSeed(targetItem, key) } as RuleAction)}
+              p={p}
+              title={t("flowAddProp", lang)}
+            />
+          )}
           <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("ruleLookHint", lang)}</div>
         </>
       )}
@@ -2123,7 +2438,7 @@ function LookPreview({ item, look, p }: { item: Item; look?: PartLook; p: Palett
   const k = Math.min(1, 132 / Math.max(1, size.w), 44 / Math.max(1, size.h));
   return (
     <div style={{ width: 132, height: 44, borderRadius: 10, background: p.surfaceContainerHigh, display: "grid", placeItems: "center", overflow: "hidden", flex: "0 0 auto" }}>
-      <div style={{ transform: `scale(${k})`, pointerEvents: "none" }}>
+      <div style={{ transform: `scale(${k})`, pointerEvents: "none", display: "flex" }}>
         <M3Static item={drawn} palette={p} />
       </div>
     </div>
@@ -2149,7 +2464,7 @@ function StepRow({
   onRemove: () => void;
   item: Item;
   frames: Frame[];
-  lookTargets: { id: string; name: string }[];
+  lookTargets: { id: string; name: string; kind: Kind; icon?: string; item?: Item }[];
   /** the action a new line of the list starts from, or null when there is nothing to seed it with */
   extra: RuleAction | null;
   p: Palette;
@@ -2226,7 +2541,7 @@ function FlowEditor({
   flow: PartFlow | undefined;
   onFlow: (flow: PartFlow | undefined) => void;
   frames: Frame[];
-  lookTargets?: { id: string; name: string }[];
+  lookTargets?: { id: string; name: string; kind: Kind; icon?: string; item?: Item }[];
   p: Palette;
 }) {
   const lang = useLang();
@@ -2386,7 +2701,7 @@ function StateRules({
   slot?: string;
   onSlot?: (key: string) => void;
   /** the other parts on the page, for a look that changes one of them */
-  lookTargets?: { id: string; name: string }[];
+  lookTargets?: { id: string; name: string; kind: Kind; icon?: string; item?: Item }[];
 }) {
   /* a bar's rules belong to one destination; a plain part keeps them on itself */
   const target = slots.length > 0 ? slot || slots[0].key : "";

@@ -339,9 +339,12 @@ function snapEdges(unit: Unit, groups: Map<string, Group>, widths: Record<string
 function evenCorners(groups: Map<string, Group>): boolean {
   const boxes: { g: Group; it: Item; r: number }[] = [];
   const cards: { g: Group; it: Item; r: number }[] = [];
+  /* slot grids wear a box's kind of corner, so they even out among themselves the same way */
+  const grids: { g: Group; it: Item; r: number }[] = [];
   for (const g of groups.values())
     for (const it of g.items) {
       if (it.kind === "card" && !it.corners && it.radiusTop !== undefined) cards.push({ g, it, r: it.radiusTop });
+      else if (it.kind === "invGrid" && !it.corners && it.radiusTop !== undefined) grids.push({ g, it, r: it.radiusTop });
       else if (it.kind === "box" && !it.corners && (it.radiusTop ?? 0) === (it.radiusBottom ?? 0)) boxes.push({ g, it, r: it.radiusTop ?? 0 });
     }
   let changed = false;
@@ -357,6 +360,7 @@ function evenCorners(groups: Map<string, Group>): boolean {
   };
   even(boxes, 28);
   even(cards, scaleR(KIND_SPEC.card.radius));
+  even(grids, scaleR(KIND_SPEC.invGrid.radius));
   return changed;
 }
 

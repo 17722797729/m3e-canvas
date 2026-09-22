@@ -229,6 +229,9 @@ export function CompositeDialog({
                 onPointerDown={(e) => beginDrag(e, it)}
                 style={{
                   position: "absolute",
+                  /* a flex box, like the canvas and the preview: a part that lays itself out inline
+                     would otherwise be pushed down by the line box a block parent makes */
+                  display: "flex",
                   left: it.x,
                   top: it.y,
                   cursor: "grab",

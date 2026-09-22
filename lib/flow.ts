@@ -1,4 +1,4 @@
-import { BACK_TARGET, KIND_SPEC, START_LOOK, actionSlotsOf, actionsOf, frameRect, groupBounds, isOverlayFrame, isWideRail, lookItem, overlayLevelOfFrame, subtreeOf, type Doc, type Group, type Item, type ItemState, type OverlayLevel, type PartFlow, type PartStep, type RuleAction, type StateEffect } from "./tokens";
+import { BACK_TARGET, KIND_SPEC, RULE_FIELDS, START_LOOK, actionSlotsOf, actionsOf, frameRect, groupBounds, isOverlayFrame, isWideRail, lookItem, overlayLevelOfFrame, subtreeOf, type Doc, type Group, type Item, type ItemState, type OverlayLevel, type PartFlow, type PartStep, type RuleAction, type RuleField, type RulePatch, type StateEffect } from "./tokens";
 import { KIND_TEXT, overlayLevelText, t, type Lang } from "./i18n";
 
 /** the level's name in the UI language, for the diagram's node captions */
@@ -49,6 +49,50 @@ export type FlowEdge = {
 export type Flow = { nodes: FlowNode[]; edges: FlowEdge[]; order: string[] };
 
 /** Everything the flow page and the Markdown writer say, in the four UI languages. */
+/** How each property a step may change is named, in the words the flow and the prompt both use: a
+ *  step is read by an author looking at the graph and by a model reading the prompt, and one table
+ *  keeps the two saying the same thing. */
+const FIELD_TEXT: Record<Lang, Record<RuleField, string>> = {
+  ja: {
+    label: "文字は「{v}」", icon: "アイコンは {v}", color: "色は {v}", fill: "背景は {v}", checkboxes: "チェックボックスは {v}",
+    checked: "オン／オフは {v}", selected: "選択中の項目は {v}", value: "値は {v}", disabled: "無効にする: {v}", hidden: "非表示: {v}", grow: "大きくする: {v}",
+  },
+  en: {
+    label: "the words read \"{v}\"", icon: "the icon is {v}", color: "the colour is {v}", fill: "the background is {v}", checkboxes: "its checkboxes are {v}",
+    checked: "its state is {v}", selected: "the selected item is {v}", value: "the value is {v}", disabled: "greyed out: {v}", hidden: "hidden: {v}", grow: "a size up: {v}",
+  },
+  zh: {
+    label: "文字变成「{v}」", icon: "图标是 {v}", color: "颜色是 {v}", fill: "背景是 {v}", checkboxes: "批量勾选：{v}",
+    checked: "勾选状态：{v}", selected: "选中的项：{v}", value: "数值：{v}", disabled: "置灰：{v}", hidden: "隐藏：{v}", grow: "变大：{v}",
+  },
+  ko: {
+    label: "글자는 \"{v}\"", icon: "아이콘은 {v}", color: "색은 {v}", fill: "배경은 {v}", checkboxes: "체크박스는 {v}",
+    checked: "켜짐/꺼짐은 {v}", selected: "선택된 항목은 {v}", value: "값은 {v}", disabled: "비활성: {v}", hidden: "숨김: {v}", grow: "확대: {v}",
+  },
+};
+
+/** How the value of one property reads: a switch as on or off, an emptied icon as none at all, and
+ *  anything else as it stands. */
+export function ruleValueText(lang: Lang, key: RuleField, v: unknown): string {
+  /* a board's boxes are shown or hidden rather than switched on: the mode is what the reader has to
+     picture, and "checkboxes: on" leaves them guessing whether the cells are ticked */
+  if (key === "checkboxes") return { ja: v ? "表示" : "非表示", en: v ? "shown" : "hidden", zh: v ? "显示" : "隐藏", ko: v ? "표시" : "숨김" }[lang];
+  if (typeof v === "boolean") return { ja: v ? "オン" : "オフ", en: v ? "on" : "off", zh: v ? "开" : "关", ko: v ? "켜짐" : "꺼짐" }[lang];
+  if (key === "icon" && !v) return { ja: "なし", en: "none", zh: "无", ko: "없음" }[lang];
+  return String(v);
+}
+
+/** One property a step changes, as the clause the flow and the prompt both read. */
+export function ruleClause(lang: Lang, key: RuleField, v: unknown): string {
+  return FIELD_TEXT[lang][key].replace("{v}", ruleValueText(lang, key, v));
+}
+
+/** The properties one look action names, in the order they are written about. */
+export function lookClauses(lang: Lang, a: RulePatch & { variant?: string }): string[] {
+  const raw = a as Record<string, unknown>;
+  return RULE_FIELDS.filter((k) => raw[k] !== undefined).map((k) => ruleClause(lang, k, raw[k]));
+}
+
 export const FLOW_TEXT: Record<
   Lang,
   {
@@ -81,7 +125,8 @@ export const FLOW_TEXT: Record<
     /** a conditional tap that changes a variable: `when` is empty for a rule with no condition */
     ruleWrite: (item: string, when: string, write: string) => string;
     /** what a part becomes while a look rule holds */
-    look: (action: { icon?: string; label?: string; color?: string; variant?: string }) => string;
+    /** everything a look may change: the words, the look, the colours, and the switches */
+    look: (action: import("./tokens").RulePatch & { variant?: string }) => string;
     jump: (from: string, item: string, to: string) => string;
     jumpMarkdown: (from: string, item: string, to: string) => string;
     jumpLine: (from: string, item: string, to: string) => string;
@@ -127,7 +172,7 @@ export const FLOW_TEXT: Record<
     dialogOpen: (from, item, to) => `${from} の「${item}」→ ${to}（ポップアップ）`,
     dialogLine: (from, item, to) => `${from} の「${item}」をタップすると ${to} のポップアップが開きます。`,
     ruleWrite: (item, when, write) => `「${item}」をタップすると${when ? `${when} のときは` : ""}${write} になります。`,
-    look: (a) => `${a.label ? `表示は「${a.label}」` : ""}${a.icon ? `${a.label ? "、" : ""}アイコンは ${a.icon}` : ""}${a.variant ? `${a.label || a.icon ? "、" : ""}スタイルは ${a.variant}` : ""}${a.color ? `${a.label || a.icon || a.variant ? "、" : ""}色は ${a.color}` : ""}` || "見た目が変わる",
+    look: (a) => lookClauses("ja", a).join('、').length ? lookClauses("ja", a).join('、') : "見た目が変わる",
     tapHow: "タップすると",
     afterHow: (seconds) => `${seconds} 秒後に`,
     drawnLook: "最初の見た目",
@@ -181,7 +226,7 @@ export const FLOW_TEXT: Record<
     dialogOpen: (from, item, to) => `${from} "${item}" → ${to} (dialog)`,
     dialogLine: (from, item, to) => `Tapping "${item}" on ${from} opens the ${to} dialog.`,
     ruleWrite: (item, when, write) => `Tapping "${item}"${when ? ` when ${when}` : ""} sets ${write}.`,
-    look: (a) => [a.label && `the label reads "${a.label}"`, a.icon && `the icon is ${a.icon}`, a.variant && `the style is ${a.variant}`, a.color && `the colour is ${a.color}`].filter(Boolean).join(", ") || "its look changes",
+    look: (a) => lookClauses("en", a).join(', ').length ? lookClauses("en", a).join(', ') : "its look changes",
     tapHow: "Tapping",
     afterHow: (seconds) => `After ${seconds} seconds,`,
     drawnLook: "the drawn look",
@@ -235,7 +280,7 @@ export const FLOW_TEXT: Record<
     dialogOpen: (from, item, to) => `${from} 的「${item}」→ ${to}（弹框）`,
     dialogLine: (from, item, to) => `点击 ${from} 的「${item}」弹出 ${to} 弹框。`,
     ruleWrite: (item, when, write) => `点击「${item}」${when ? `且 ${when} 时` : ""}，${write}。`,
-    look: (a) => [a.label && `文字变成「${a.label}」`, a.icon && `图标是 ${a.icon}`, a.variant && `样式是 ${a.variant}`, a.color && `颜色是 ${a.color}`].filter(Boolean).join("，") || "外观改变",
+    look: (a) => lookClauses("zh", a).join('，').length ? lookClauses("zh", a).join('，') : "外观改变",
     tapHow: "点击后",
     afterHow: (seconds) => `${seconds} 秒后`,
     drawnLook: "起始外观",
@@ -289,7 +334,7 @@ export const FLOW_TEXT: Record<
     dialogOpen: (from, item, to) => `${from}의 "${item}" → ${to}(팝업)`,
     dialogLine: (from, item, to) => `${from}의 "${item}"을(를) 탭하면 ${to} 팝업이 열립니다.`,
     ruleWrite: (item, when, write) => `"${item}"을(를) 탭하면${when ? ` ${when}일 때` : ""} ${write}이(가) 됩니다.`,
-    look: (a) => [a.label && `글자는 "${a.label}"`, a.icon && `아이콘은 ${a.icon}`, a.variant && `스타일은 ${a.variant}`, a.color && `색은 ${a.color}`].filter(Boolean).join(", ") || "모양이 바뀐다",
+    look: (a) => lookClauses("ko", a).join(', ').length ? lookClauses("ko", a).join(', ') : "모양이 바뀐다",
     tapHow: "탭하면",
     afterHow: (seconds) => `${seconds}초 뒤에`,
     drawnLook: "처음 모양",

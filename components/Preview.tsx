@@ -5,6 +5,8 @@ import type { Item } from "@/lib/tokens";
 import { AnimatePresence, animate, motion, useMotionValue, useTransform, useReducedMotion, useIsPresent } from "motion/react";
 import type { TargetAndTransition, Variants } from "motion/react";
 import {
+  fillColor,
+  fillInk,
   Action,
   BACK_TARGET,
   BEZEL,
@@ -71,6 +73,9 @@ import {
   popLayer,
   pushLayer,
   scrollOffset,
+  rulePatch,
+  readoutOf,
+  type RulePatch,
   withLayers,
   type MachineAt,
   type PartFlow,
@@ -79,8 +84,9 @@ import {
   type LayerTrail,
   type RuleAction,
   type OverlayLevel,
+  type Kind,
 } from "@/lib/tokens";
-import { Icon, M3Node } from "./M3Node";
+import { GridCellMarks, Icon, M3Node, ValueContext } from "./M3Node";
 import { IconBtn } from "./ui";
 import { t, useLang } from "@/lib/i18n";
 import { constrainModalRails, modalRailOf, updateRail } from "@/lib/rail";
@@ -164,12 +170,23 @@ const TOGGLES = ["switch", "checkbox", "chip"] as const;
 /** A tap no longer swaps a button for a second look: the toggle feature is gone. */
 const flips = (_it: Item) => false;
 
+/** The kinds whose value a visitor changes: a slider to scrub, a stepper to walk, a slider field to
+ *  do both. One list, because a part of one of these kinds has to answer the same way wherever it
+ *  stands — on the screen, inside a container, or inside a dialog panel. */
+const VALUE_KINDS: Kind[] = ["slider", "sliderInput", "stepper"];
+const SCRUBS: Kind[] = ["slider", "sliderInput"];
+const STEPS: Kind[] = ["stepper", "sliderInput"];
+
+/** Whether a board's cell is ticked right now: how the author left it, flipped by every tap since
+ *  the preview opened — the same rule the visitor's own taps follow everywhere else. */
+const cellChecked = (flipped: Set<string>) => (c: Item) => (flipped.has(c.id) ? !c.checked : !!c.checked);
+
 /** Where every part's own machine is, shared down the screen */
 type StateRuntime = {
   /** the look each part is in and when it got there, keyed the way taps are: `id`, or `id:slot` */
   at: MachineAt;
   /** the look a step latched onto a part, by part: a change the machine makes once, on the way past */
-  pinned: Record<string, Partial<Item>>;
+  pinned: Record<string, RulePatch>;
   now: number;
   /** Takes the step a tap calls for; false leaves the tap to the plain action and the rules below.
    *  `owner` is the part an untargeted look action changes. */
@@ -246,11 +263,29 @@ function Tappable({
   onNavToggle,
   scrollRt,
   looks,
+  checkOf,
+  liveValue,
+  onSet,
+  setValue,
+  readout,
+  marks,
 }: {
   item: Item;
   p: Palette;
   radii: ReturnType<typeof baseRadii>;
   widths: Record<string, number>;
+  /** Whether a board cell's checkbox is ticked right now: how the author left it, flipped by taps */
+  checkOf?: (it: Item) => boolean;
+  /** The live value the visitor has moved a slider to, by part */
+  liveValue?: (it: Item) => number | undefined;
+  /** A control inside the part asking for a value of its own: the box and the buttons of a stepper */
+  onSet?: (v: number) => void;
+  /** The screen's own setter, for a control inside a part the container holds */
+  setValue?: (id: string, v: number) => void;
+  /** How a text bound to another part reads it: where to find the part, and its live value */
+  readout?: { find: (id: string) => Item | null; live: (id: string) => number | undefined; text: (it: Item, live?: number) => string };
+  /** what the part's own container draws over it, a board's cell checkbox included */
+  marks?: React.ReactNode;
   onTap?: () => void;
   /** passed down so a part inside a container can open a screen of its own */
   onAction?: (a: Action) => void;
@@ -275,7 +310,7 @@ function Tappable({
   /** the live scroll of the containers on screen, for the ones that scroll */
   scrollRt?: ScrollRuntime;
   /** the looks the machine latched onto parts of this screen, by part */
-  looks?: Record<string, Partial<Item>>;
+  looks?: Record<string, RulePatch>;
 }) {
   const lang = useLang();
   const [pressed, setPressed] = useState(false);
@@ -288,12 +323,11 @@ function Tappable({
   /* the machine's own look sits on top: the part as drawn, then whatever a step latched onto it,
      then the look its own flow has moved it to */
   const own = states ? resolveStates(asked, states.at, states.now) : null;
-  if (own?.hidden) return null;
   const view0 = own ? own.item : asked;
   const current = !!states && states.activeId === item.id && SHAPED.includes(item.kind) && !own?.disabled && !own?.hidden;
   const view = current && !view0.color ? { ...view0, color: "primaryContainer" } : view0;
-  const frozen = !!own?.disabled;
-  const grown = !!own?.grown;
+  const frozen = !!own?.disabled || !!pin?.disabled;
+  const grown = !!own?.grown || !!pin?.grow;
   const menu = !!menuOpen;
   /* a tab row with more tabs than fit scrolls: by wheel, touch, or dragging the row; a chosen tab is brought into view */
   const scrollTabs = isScrollableTabs(item);
@@ -403,6 +437,12 @@ function Tappable({
     };
   }, [menu, onMenu]);
 
+  /* A part its own machine hides, or one a step latched "hidden" onto — which is how a button outside
+     it puts a panel or a reward away — draws nothing at all. The check sits below every hook on
+     purpose: a part that goes away on a later render still has to run the same hooks it ran before,
+     or React tears the whole screen down instead of drawing the parts that are left. */
+  if (own?.hidden || pin?.hidden) return null;
+
   const dragValue = (e: React.PointerEvent) => {
     const r = ref.current?.getBoundingClientRect();
     if (!r || !onValue) return;
@@ -480,26 +520,59 @@ function Tappable({
   }
 
 
+  /* A board's cells are its children: each is a container the author put parts in, and the
+     checkbox over it belongs to the board — the visitor's tap ticks it. */
+  /* a board's cell is tappable to tick when the board shows boxes and the cell holds something:
+     an empty slot has no box, so a tap on it has nothing to do either */
+  /* what decides whether the boxes are on is the part *as drawn*: a step that latched a look onto
+     this board is what a button outside it uses to switch the bulk-tick mode on and off */
+  const board = view.kind === "invGrid" && !!view.checkboxes;
+  const grid = view.kind === "invGrid" ? view : null;
+
   /* A container's children are tappable in their own right: the one with a target opens
    * that screen, and a toggle inside a container flips just like one on the screen. */
-  const childNodes = (item.children ?? []).filter((c, i) => childDrawn(item, c, i)).sort(byLayer).map((c) => (
+  const childNodes = (item.children ?? []).filter((c, i) => childDrawn(item, c, i)).sort(byLayer).map((c) => {
+    const ticks = board && !!c.children?.length;
+    /* A slider inside a container is still a slider: the value the visitor moved it to has to reach
+       it exactly as it reaches one standing on the screen, or the controls of a dialog panel would
+       be dead while the same part works on the page behind it. */
+    const live = VALUE_KINDS.includes(c.kind) ? liveValue?.(c) : undefined;
+    const read = c.shows && readout ? (() => { const t = readout.find(c.shows!); return t ? readout.text(t, readout.live(t.id)) : null; })() : null;
+    const shownChild = { ...c, ...(live !== undefined ? { value: live } : {}), ...(read !== null ? { label: read } : {}) };
+    return (
     /* a navigation part inside a container folds the same way it does on a screen */
     <div key={c.id} style={{ position: "absolute", left: c.x + foldPlace(c, widths).dx, top: c.y + foldPlace(c, widths).dy }}>
       <Tappable
-        item={c}
+        item={shownChild}
         p={p}
         radii={baseRadii(c)}
         widths={widths}
         states={states}
+        checkOf={checkOf}
+        liveValue={liveValue}
+        setValue={setValue}
+        readout={readout}
+        /* the parts whose value is the visitor's to change answer inside a container too */
+        onValue={setValue && SCRUBS.includes(c.kind) ? (v) => setValue(c.id, v) : undefined}
+        onSet={setValue && STEPS.includes(c.kind) ? (v) => setValue(c.id, v) : undefined}
+        marks={
+          grid ? (
+            /* the box belongs to the board, so it rides over even the part the visitor touched
+               last — which the preview lifts above everything else to show it standing a size up */
+            <GridCellMarks grid={grid} cell={c} checked={checkOf ? checkOf(c) : !!c.checked} p={p} z={OVERLAY_Z + 3} />
+          ) : undefined
+        }
         onTap={
-          c.action || flips(c) || c.flow
-            ? () => {
-                if (flips(c)) onFlip?.(c.id);
-                /* the machine takes the tap when it has a step for the look it is in */
-                if (states?.onStep(c.id, c.flow, c.id)) return;
-                if (c.action) onAction?.(c.action);
-              }
-            : undefined
+          ticks
+            ? () => onFlip?.(c.id)
+            : c.action || flips(c) || c.flow
+              ? () => {
+                  if (flips(c)) onFlip?.(c.id);
+                  /* the machine takes the tap when it has a step for the look it is in */
+                  if (states?.onStep(c.id, c.flow, c.id)) return;
+                  if (c.action) onAction?.(c.action);
+                }
+              : undefined
         }
         onAction={onAction}
         onFlip={onFlip}
@@ -507,7 +580,8 @@ function Tappable({
         looks={looks}
       />
     </div>
-  ));
+    );
+  });
 
   return (
     <div
@@ -532,8 +606,15 @@ function Tappable({
       onPointerLeave={() => !onValue && setPressed(false)}
       onClick={
         onPick
-          ? () => onMenu?.(!menu)
-          : () => {
+          ? (e) => {
+              e.stopPropagation();
+              onMenu?.(!menu);
+            }
+          : (e) => {
+              /* The innermost part under the finger takes the tap. Without this a container
+                 answers the click as well as what it holds: a board's cell would tick under every
+                 button dropped into it, and a box with an action would fire under its own child. */
+              e.stopPropagation();
               /* a click that only finished a scroll is not a tap */
               if (swallowScrollTap.current) {
                 swallowScrollTap.current = false;
@@ -561,6 +642,9 @@ function Tappable({
         zIndex: current ? OVERLAY_Z + 2 : undefined,
       }}
     >
+      {/* the controls inside a part — a stepper's buttons, a slider field's number — reach the value
+          through this, so a part works the same on a screen and inside a dialog panel */}
+      <ValueContext.Provider value={{ onSet }}>
       <M3Node
         item={view}
         palette={p}
@@ -569,16 +653,19 @@ function Tappable({
         interactive={false}
         pressed={pressed && !onValue}
         tabScroll={scrollTabs ? tabScroll : undefined}
-        overlay={childNodes}
+        overlay={<>{marks}{childNodes}</>}
         scroll={at ?? undefined}
         onWheel={
           axes && scrollRt
             ? (e) => {
-                /* a wheel over a container moves it, the way it would in a browser */
+                /* A wheel over a container moves it the way it would in a browser: `deltaY` is
+                 * positive scrolling towards the end, which is the content sliding up, so it adds
+                 * to the offset the container has been moved to — the same direction a drag of the
+                 * content takes it. */
                 e.stopPropagation();
                 const now = { ...scrollOffset(item, widths, scrollRt.at(item.id)) };
-                scrollRt.move(item.id, "x", now.x - e.deltaX);
-                scrollRt.move(item.id, "y", now.y - e.deltaY);
+                scrollRt.move(item.id, "x", now.x + e.deltaX);
+                scrollRt.move(item.id, "y", now.y + e.deltaY);
               }
             : undefined
         }
@@ -589,6 +676,7 @@ function Tappable({
           e.preventDefault();
         }}
       />
+      </ValueContext.Provider>
       {/* the navigation's own collapse button: a button of its own, so nothing can cover it */}
       {navToggle && (
         <button
@@ -787,6 +875,12 @@ function Screen({
   const interactiveRef = useRef(interactive);
   interactiveRef.current = interactive;
   const screenRef = useRef<HTMLDivElement>(null);
+  /* A text bound to another part reads it through this: the live value where the visitor has moved
+     it, the part's own where they have not. */
+  const readBound = (id: string): string | null => {
+    const target = itemsOf(shownGroups).find((x) => x.id === id);
+    return target ? readoutOf(target, values[target.id], lang) : null;
+  };
   const shownGroups = useMemo(() => Object.entries(railStates).reduce((current, [id, railExpanded]) => {
     const patch = { railExpanded, railFolded: !railExpanded };
     return current.some((g) => g.items.some((it) => it.id === id))
@@ -940,7 +1034,7 @@ function Screen({
       style={{
         position: "absolute",
         inset: 0,
-        background: bare ? "transparent" : p[frame.bg ?? "surface"],
+        background: bare ? "transparent" : fillColor(frame.bg, p, "surface"),
         overflow: "hidden",
         outline: "none",
         /* A floating layer's page is a stage, not a screen: a tap on its empty part belongs to the
@@ -1024,7 +1118,9 @@ function Screen({
             const radii = g.free ? (corners?.get(it.id) ?? baseRadii(it)) : runPartRadii(it, i === 0, i === n - 1, g.axis);
             const act = it.action;
             let shown = flipped.has(it.id) ? flippedLook(it) : it;
-            if (it.kind === "slider" && values[it.id] !== undefined) shown = { ...shown, value: values[it.id] };
+            if (VALUE_KINDS.includes(it.kind) && values[it.id] !== undefined) shown = { ...shown, value: values[it.id] };
+            /* a text bound to a part reads it, live: dragging a slider moves the number beside it */
+            if (it.shows) shown = { ...shown, label: readBound(it.shows) ?? shown.label };
             if (it.kind === "select" && values[it.id] !== undefined) shown = { ...shown, selected: values[it.id] };
             const navKind = it.kind === "bottomNav" || it.kind === "navRail" || it.kind === "tabs";
             /* bars with the same destinations are one bar to the visitor: the choice follows them across screens */
@@ -1093,7 +1189,8 @@ function Screen({
                       }
                     : undefined
                 }
-                onValue={it.kind === "slider" ? (v) => onValue(it.id, v) : undefined}
+                onValue={SCRUBS.includes(it.kind) ? (v) => onValue(it.id, v) : undefined}
+                onSet={STEPS.includes(it.kind) ? (v) => onValue(it.id, v) : undefined}
                 navToggle={
                   it.kind === "bottomNav" && it.barFolded !== undefined
                     ? { right: 0, top: 0, bottom: 0, width: 44 }
@@ -1112,6 +1209,20 @@ function Screen({
                 menuOpen={menuId === it.id}
                 onMenu={it.kind === "select" ? (open) => setMenuId(open ? it.id : null) : undefined}
                 onRailToggle={it.kind === "navRail" && isWideRail(it) ? (animate) => changeRail(it.id, !it.railExpanded, animate) : undefined}
+                /* Every part is handed the live tick state, whether or not it is a board itself:
+                   a board may sit inside a container, and the box over its cells has to read the
+                   same set wherever it is nested. A tick lands in that set, the way the visitor's
+                   other taps do, so it survives the screen being looked at again. */
+                checkOf={cellChecked(flipped)}
+                /* a slider's value is the visitor's: every part is handed the live one, because a
+                   slider may sit inside a container as easily as on the screen itself */
+                liveValue={(it) => values[it.id]}
+                setValue={onValue}
+                readout={{
+                  find: (id) => itemsOf(shownGroups).find((x) => x.id === id) ?? null,
+                  live: (id) => values[id],
+                  text: (target, live) => readoutOf(target, live, lang),
+                }}
               />
             );
             if (!g.free) return node;
@@ -1170,7 +1281,7 @@ export function Preview({
      cooldown is counting down */
   const [at, setAt] = useState<MachineAt>({});
   /** the look a step latched onto a part, which stays until another step changes it */
-  const [pinned, setPinned] = useState<Record<string, Partial<Item>>>({});
+  const [pinned, setPinned] = useState<Record<string, RulePatch>>({});
   const [now, setNow] = useState(() => Date.now());
   /* how much faster than real time the preview runs: 1 is ordinary, and the control in the bar
      raises it so a ten-minute wait can be watched in seconds */
@@ -1426,10 +1537,9 @@ export function Preview({
         /* a rule's look is already on screen while its conditions hold: only a step latches one */
         const target = a.target ?? owner;
         if (!latched || !target) return;
-        const patch: Partial<Item> = {};
-        if (a.icon !== undefined) patch.icon = a.icon || null;
-        if (a.label !== undefined) patch.label = a.label;
-        if (a.color !== undefined) patch.color = a.color;
+        /* every property the action names is latched onto the part, and the ones it says nothing
+           about keep their place: a step that shows a board's boxes leaves its colour alone */
+        const patch = rulePatch(a);
         setPinned((m) => ({ ...m, [target]: { ...m[target], ...patch } }));
         return;
       }
@@ -1727,7 +1837,7 @@ export function Preview({
               height: screenH,
               borderRadius: screenRadius,
               overflow: "hidden",
-              background: p[current.bg ?? "surface"],
+              background: fillColor(current.bg, p, "surface"),
               fontFamily: fontFamilyOf(theme.font, lang),
               touchAction: "none",
             }}
@@ -1829,7 +1939,7 @@ export function Preview({
                            second screen over the first one. What fills the screen is the screen. */
                         borderRadius: rule.float ? undefined : frameRadius(lf),
                         overflow: "hidden",
-                        background: rule.float ? "transparent" : p[lf.bg ?? "surface"],
+                        background: rule.float ? "transparent" : fillColor(lf.bg, p, "surface"),
                         boxShadow: !rule.float && rule.inertBehind ? "0 20px 60px rgba(0,0,0,0.28)" : undefined,
                         outline: "none",
                       }}

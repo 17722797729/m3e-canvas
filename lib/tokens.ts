@@ -586,6 +586,7 @@ export function variantShadow(v: Variant): string {
 /* ---------- component kinds ---------- */
 export type Kind =
   | "box"
+  | "invGrid"
   | "button"
   | "iconButton"
   | "fab"
@@ -604,6 +605,8 @@ export type Kind =
   | "switch"
   | "checkbox"
   | "slider"
+  | "stepper"
+  | "sliderInput"
   | "text"
   | "image"
   | "camera"
@@ -695,6 +698,30 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     defLabel: "",
     defIcon: null,
     defSize: PHONE_W,
+  },
+  invGrid: {
+    label: "Slot Grid",
+    noun: "スロットグリッド",
+    category: "containment",
+    paletteIcon: "grid_view",
+    /* A frame of inventory cells: wider than a phone's content area and tall enough to hold a
+       couple of rows of a default cell, so a fresh one is already a board the author can resize. */
+    w: CONTENT_W,
+    h: 320,
+    radius: 24,
+    hasVariant: false,
+    hasLabel: false,
+    hasSupporting: false,
+    /* the icon is not the part's own: it is the placeholder drawn in every cell */
+    hasIcon: true,
+    hasFill: true,
+    /* the frame scrolls over its cells: pins rows and it becomes the inventory window */
+    hasScroll: true,
+    size: { min: 120, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size2: { min: 120, max: PHONE_H, step: 4, icon: "height", presets: [240, 320, PHONE_H / 2, PHONE_H] },
+    defLabel: "",
+    defIcon: null,
+    defSize: CONTENT_W,
   },
   button: {
     label: "Button",
@@ -1028,6 +1055,48 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     defIcon: null,
     defSize: CONTENT_W,
   },
+  stepper: {
+    label: "Stepper",
+    noun: "ステッパー",
+    category: "inputs",
+    paletteIcon: "exposure",
+    /* a minus, the number itself, and a plus: the number is the part's value, so a rule or a
+       bound text reads it the way it reads a slider's */
+    w: 200,
+    h: 56,
+    radius: 28,
+    hasVariant: false,
+    hasLabel: true,
+    hasSupporting: false,
+    hasIcon: false,
+    hasValue: true,
+    size: { min: 120, max: PHONE_W, step: 4, icon: "width", presets: [160, 200, 240, CONTENT_W] },
+    size2: { min: 40, max: 96, step: 4, icon: "height", presets: [48, 56, 64] },
+    defLabel: "数量",
+    defIcon: null,
+    defSize: 200,
+  },
+  sliderInput: {
+    label: "Slider Field",
+    noun: "スライダー入力",
+    category: "inputs",
+    paletteIcon: "tune",
+    /* a slider with the number under it and a minus and a plus beside the number: the one control a
+       settings row needs, where the slider scrubs, the box can be typed into, and the buttons step */
+    w: CONTENT_W,
+    h: 104,
+    radius: 20,
+    hasVariant: false,
+    hasLabel: true,
+    hasSupporting: false,
+    hasIcon: false,
+    hasValue: true,
+    size: { min: 160, max: PHONE_W, step: 4, icon: "width", presets: [260, 300, CONTENT_W] },
+    size2: { min: 72, max: 200, step: 4, icon: "height", presets: [88, 104, 120] },
+    defLabel: "音量",
+    defIcon: null,
+    defSize: CONTENT_W,
+  },
   text: {
     label: "Text",
     noun: "テキスト",
@@ -1324,6 +1393,7 @@ export const KIND_ORDER: Kind[] = [
   "card",
   "listItem",
   "box",
+  "invGrid",
   "dialog",
   "snackbar",
   "textField",
@@ -1332,6 +1402,8 @@ export const KIND_ORDER: Kind[] = [
   "checkbox",
   "radio",
   "slider",
+  "stepper",
+  "sliderInput",
   "text",
   "image",
   "camera",
@@ -1409,14 +1481,30 @@ export type Item = {
   bold?: boolean;
   /** height for free-form boxes */
   size2?: number;
-  /** palette token used as background (boxes, list items) */
-  fill?: ColorToken;
+  /** Slot grids only: what one cell measures — the same whatever the frame measures */
+  cell?: number;
+  /** Slot grids only: how many cells across; unset lets the frame's width decide */
+  gridCols?: number;
+  /** Slot grids only: how many rows of cells; unset lets the frame's height decide, and more
+   *  rows than fit are what the frame scrolls over */
+  gridRows?: number;
+  /** Slot grids only: whether every cell shows a checkbox the visitor can tick */
+  checkboxes?: boolean;
+  /** A slot grid's cell: which column of the board it sits in. Its place is its slot rather than
+   *  its own x and y, so the frame can be resized without the cell losing what it holds. */
+  cellCol?: number;
+  cellRow?: number;
+  /** A text that reads another part instead of its own words: the id of the part whose value it
+   *  shows — a volume slider's number beside the slider, live while the visitor drags it. */
+  shows?: string;
+  /** the background this part paints, or `transparent` to let what is behind it show */
+  fill?: FillToken;
   /** containers: the axes the visitor can move the content along; unset holds still */
   scroll?: ScrollAxis;
   /** containers: the offset the content starts at — what the author designs, and where the visitor begins */
   scrollPos?: { x?: number; y?: number };
   /** background behind a list item's leading icon; "none" draws the icon bare */
-  iconFill?: ColorToken | "none";
+  iconFill?: FillToken | "none";
   /** data URL of a user-picked image */
   src?: string;
   /** tap navigation to another frame */
@@ -1729,12 +1817,59 @@ export type RuleAction =
   | { kind: "back" }
   /** puts away the overlay the part stands in */
   | { kind: "close" }
-  /** A look a step latches onto a part: `target` names the part it changes, and leaving it out
-   *  changes the part the step belongs to — a claim button can therefore turn the gift icon beside
-   *  it into a claimed one. A document written while an action could also restyle the part keeps
-   *  its `variant` here; the reader drops it. */
-  | { kind: "look"; target?: string; icon?: string; label?: string; color?: string; variant?: Variant };
+  /** What a step changes about a part: `target` names the part it changes, and leaving it out changes
+   *  the part the step belongs to — a claim button can therefore turn the gift icon beside it into a
+   *  claimed one. Only the properties the action names are written, so a step that says nothing about
+   *  one leaves it exactly as it found it. A document written while an action could also restyle the
+   *  part keeps its `variant` here; the reader drops it. */
+  | ({ kind: "look"; target?: string; variant?: Variant } & RulePatch);
 
+
+/**
+ * The properties a step may set on a part. They are the part's own fields, plus the three flags a look
+ * can carry, and every one of them is something the part *draws with*: nothing here moves a part or
+ * changes its size, so a step can change one without the layout having to be worked out again.
+ */
+export const RULE_FIELDS = ["label", "icon", "color", "fill", "checkboxes", "checked", "selected", "value", "disabled", "hidden", "grow"] as const;
+export type RuleField = (typeof RULE_FIELDS)[number];
+
+/** What a step writes onto the part it names: the fields it mentions, and the flags a look may set.
+ *  A rule changes how a part is drawn, never what it is: its id, its kind, what it holds and its own
+ *  machine are not a step's to write. */
+export type RulePatch = Partial<Omit<Item, "id" | "kind" | "children" | "flow" | "slotFlows" | "states" | "slotStates">> &
+  Partial<Pick<PartLook, "disabled" | "hidden" | "grow">>;
+
+/** Which of those properties a part of this kind really has: only the ones it draws with, so the
+ *  list the author picks from reads as that component's own properties rather than every field there
+ *  is. A rule may aim a look at another part, and the part it aims at is what decides the list. */
+export function ruleFieldsFor(it: Item): RuleField[] {
+  const spec = specOf(it);
+  const out: RuleField[] = [];
+  if (spec.hasLabel) out.push("label");
+  if (spec.hasIcon) out.push("icon");
+  out.push("color");
+  if (spec.hasFill) out.push("fill");
+  if (it.kind === "invGrid") out.push("checkboxes");
+  if (spec.hasChecked || it.kind === "listItem") out.push("checked");
+  if ((it.kind === "tabs" || it.kind === "select") && (it.tabs?.length ?? 0) > 0) out.push("selected");
+  if (spec.hasValue) out.push("value");
+  /* the three flags a look carries: they are how a rule greys a part out, takes it off the screen
+     or makes it stand a size up, without that part needing a machine of its own */
+  out.push("disabled", "hidden", "grow");
+  return out;
+}
+
+/** What a look action asks for, as the patch a step latches onto its part: only the fields it names.
+ *  An icon set to nothing is the part drawn bare, which is why an empty string reads as `null`. */
+export function rulePatch(a: Extract<RuleAction, { kind: "look" }>): RulePatch {
+  const out: Record<string, unknown> = {};
+  for (const k of RULE_FIELDS) {
+    const v = (a as Record<string, unknown>)[k];
+    if (v === undefined) continue;
+    out[k] = k === "icon" && typeof v === "string" && !v ? null : v;
+  }
+  return out as RulePatch;
+}
 
 export const RULE_ACTIONS: { key: RuleAction["kind"]; icon: string }[] = [
   { key: "goto", icon: "login" },
@@ -1879,6 +2014,12 @@ export type ColorToken =
   | "primary"
   | "inverseSurface";
 
+/** The background that paints nothing: what is behind the part shows through, which is what a
+ *  container drawn over a picture, or a button left bare on the page, is for. */
+export const TRANSPARENT = "transparent";
+/** What a background field holds: a palette role, or nothing at all. */
+export type FillToken = ColorToken | typeof TRANSPARENT;
+
 export const COLOR_TOKENS: { key: ColorToken; label: string }[] = [
   { key: "surface", label: "Surface" },
   { key: "surfaceContainerLow", label: "Container low" },
@@ -1892,11 +2033,17 @@ export const COLOR_TOKENS: { key: ColorToken; label: string }[] = [
   { key: "inverseSurface", label: "Inverse surface" },
 ];
 
+/** The colour a background paints: a palette role, or nothing at all. */
+export const fillColor = (t: FillToken | undefined, p: Palette, fallback: ColorToken): string => (t === TRANSPARENT ? "transparent" : p[t ?? fallback]);
+
+/** The ink that reads on it: over no background at all, the page's own text colour. */
+export const fillInk = (t: FillToken | undefined, p: Palette, fallback: ColorToken): string => (t === TRANSPARENT ? p.onSurface : onToken(t ?? fallback, p));
+
 /** readable foreground for a chosen background token */
 /** the background a card draws when no token is set: it follows the variant */
 export const cardDefaultFillOf = (variant: Variant): ColorToken =>
   variant === "outlined" ? "surface" : variant === "elevated" ? "surfaceContainerLow" : "surfaceContainerHighest";
-export const cardFillOf = (it: Item): ColorToken => it.fill ?? cardDefaultFillOf(it.variant);
+export const cardFillOf = (it: Item): FillToken => it.fill ?? cardDefaultFillOf(it.variant);
 
 /** where a card's image area sits; sketches saved before placement existed stay on top */
 export type CardImagePos = "top" | "leading" | "trailing" | "background";
@@ -1935,7 +2082,7 @@ export function cardTextColorOf(it: Item, p: Palette): string {
   if (own) return own.on;
   if (it.textColor) return p[it.textColor];
   if (!it.noImage && cardImagePosOf(it) === "background") return it.src ? "#ffffff" : p.onPrimaryContainer;
-  return it.fill ? onToken(it.fill, p) : p.onSurface;
+  return fillInk(it.fill, p, "surfaceContainerHighest");
 }
 /** the body's color: a plain card keeps M3's onSurfaceVariant at full opacity; anything
  *  colored, filled or over an image reuses the headline color at reduced opacity */
@@ -2007,11 +2154,13 @@ export const layerOf = (it: Item) => it.z ?? LAYER_DEFAULT;
 
 /** whether a part carries a colour this build can resolve: a palette role or a hex literal */
 export const isCustomColor = (v: unknown): v is string =>
-  typeof v === "string" && (isHex(v) || COLOR_TOKENS.some(({ key }) => key === v));
+  typeof v === "string" && (v === TRANSPARENT || isHex(v) || COLOR_TOKENS.some(({ key }) => key === v));
 
 /** the surface and ink a part's own colour makes, or null when it keeps the kind's role */
 export function colorOverrideOf(it: Item, p: Palette): { main: string; on: string } | null {
   if (!isCustomColor(it.color)) return null;
+  /* a part with no background of its own reads in the page's own ink */
+  if (it.color === TRANSPARENT) return { main: "transparent", on: p.onSurface };
   return isHex(it.color)
     ? { main: it.color, on: onColorFor(it.color) }
     : { main: p[it.color as ColorToken], on: onToken(it.color as ColorToken, p) };
@@ -2180,7 +2329,7 @@ export type Frame = {
   /** dimensions are optional so documents saved before desktop frames remain phone-sized */
   w?: number;
   h?: number;
-  bg?: ColorToken;
+  bg?: FillToken;
   /** what this screen is for, in the author's words; goes into the prompt */
   note?: string;
   /** what `note` said before the AI rewrote it */
@@ -2400,7 +2549,7 @@ export function fitHeight(it: Item, screenH: number): Item {
   const spec = specOf(it);
   if (!spec.size2 && it.kind !== "navRail") return it;
   const h = it.size2 ?? spec.h;
-  return h > screenH ? { ...it, size2: screenH } : it;
+  return h > screenH ? regrid({ ...it, size2: screenH }) : it;
 }
 
 /** A part carried from one screen size to another: edge-to-edge parts take the new
@@ -2424,15 +2573,15 @@ export function carryItemSize(it: Item, from: { w: number; h: number }, to: { w:
     else if (cur === contentWidth(from.w)) patch.size = contentWidth(to.w);
     else if (cur === halfWidth(from.w)) patch.size = halfWidth(to.w);
     else if (cur > to.w) patch.size = to.w;
-    else if (cur > contentWidth(to.w) && it.kind !== "box") patch.size = contentWidth(to.w);
+    else if (cur > contentWidth(to.w) && it.kind !== "box" && it.kind !== "invGrid") patch.size = contentWidth(to.w);
   }
-  if ((it.kind === "box" || it.kind === "navRail") && (it.size2 ?? spec.h) === from.h) patch.size2 = to.h;
+  if ((it.kind === "box" || it.kind === "invGrid" || it.kind === "navRail") && (it.size2 ?? spec.h) === from.h) patch.size2 = to.h;
   /* an image, camera or map the author gave a height keeps its aspect ratio when its width changes */
   if ((it.kind === "image" || it.kind === "camera" || it.kind === "map") && it.size2 !== undefined && patch.size !== undefined) {
     const cur = it.size ?? spec.defSize ?? spec.w;
     patch.size2 = Math.round((it.size2 * patch.size) / cur);
   }
-  return Object.keys(patch).length ? { ...it, ...patch } : it;
+  return Object.keys(patch).length ? regrid({ ...it, ...patch }) : it;
 }
 
 export type Placed = { item: Item; index: number; x: number; y: number; w: number; h: number };
@@ -2741,10 +2890,23 @@ export function makeItem(kind: Kind): Item {
     it.radiusBottom = 28;
     it.fill = "surfaceContainerHigh";
   }
+  if (kind === "invGrid") {
+    /* A fresh grid is a whole inventory window: it takes the width it is drawn at, holds a few
+       rows of default cells, and scrolls, so pinning more rows is the only thing left to do. Its
+       corners are written down like a box's, so the prompt and the inspector agree with the canvas
+       about the default instead of each guessing at it. The cells are real container boxes from the
+       start: that is what lets an author drop a part straight into one. */
+    it.size2 = KIND_SPEC.invGrid.h;
+    it.radiusTop = KIND_SPEC.invGrid.radius;
+    it.radiusBottom = KIND_SPEC.invGrid.radius;
+    it.fill = "surfaceContainer";
+    it.scroll = "y";
+    it.children = gridCells(it, {});
+  }
   /* An icon button is a circle: saying so outright keeps it one even where it sits in a run beside
      a button, which is what its shape switch shows and what the author asked for. */
   if (kind === "iconButton") it.shape = "round";
-  if (kind === "slider") it.value = 40;
+  if (kind === "slider" || kind === "stepper" || kind === "sliderInput") it.value = 40;
   if (kind === "progressBar") it.value = PROGRESS_DEFAULT;
   if (kind === "bottomNav") {
     it.tabs = defaultTabs();
@@ -2777,7 +2939,7 @@ export const progressValue = (it: Item): number => Math.max(0, Math.min(100, Mat
  * author picks (or leaves out) decides what the words over the empty part are inked with.
  */
 export function progressTrack(it: Item, p: Palette): { color: string; ink: string } {
-  return it.fill ? { color: p[it.fill], ink: onToken(it.fill, p) } : { color: "transparent", ink: p.onSurface };
+  return it.fill ? { color: fillColor(it.fill, p, "surfaceContainerHighest"), ink: fillInk(it.fill, p, "surfaceContainerHighest") } : { color: "transparent", ink: p.onSurface };
 }
 
 /** Content-sized kinds are measured in the DOM; the rest derive from spec + size. */
@@ -2853,10 +3015,13 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
     case "divider":
       return { w: n, h: s.h };
     case "progressBar":
+    case "stepper":
+    case "sliderInput":
       return { w: n, h: it.size2 ?? s.h };
     case "card":
       return { w: n, h: it.size2 ?? Math.round(n * 0.5875) };
     case "box":
+    case "invGrid":
       return { w: n, h: it.size2 ?? s.h };
     case "navRail": {
       /* folded, the rail is the same small pill its button sits in */
@@ -2907,6 +3072,9 @@ export function baseRadii(it: Item): Radii {
     case "radio":
     case "badge":
       return uniformRadii(s.radius);
+    case "stepper":
+      /* the stepper is a pill the height it is drawn, the way a field of that shape reads */
+      return uniformRadii(Math.round((it.size2 ?? s.h) / 2));
     case "circularProgress":
     case "loadingIndicator":
       return uniformRadii((it.size ?? 48) / 2);
@@ -2914,6 +3082,8 @@ export function baseRadii(it: Item): Radii {
       /* the ends are half the bar's own height, so a slim bar is a pill and a thick one a slab */
       return uniformRadii(Math.round((it.size2 ?? s.h) / 2));
     case "card":
+    case "invGrid":
+    case "sliderInput":
       if (it.corners) return { ...it.corners };
     // falls through
     case "image":
@@ -3207,6 +3377,19 @@ export function refillPanels(items: Item[], lost: Map<string, number[]>): Item[]
  * the box.
  */
 export function resizedChildren(before: Item, patch: Partial<Item>, widths: Record<string, number>): PlacedItem[] | undefined {
+  /* A board is its slots: nothing stretches and nothing is left behind, the cells are simply laid
+     out again for the size, the cell size and the counts the patch asks for. */
+  if (before.kind === "invGrid") {
+    /* a layer the author raised is a board change like any other: its cells have to come up with it */
+    const geometry = "size" in patch || "size2" in patch || "cell" in patch || "gridCols" in patch || "gridRows" in patch || "z" in patch;
+    return geometry ? gridCells({ ...before, ...patch }, widths) : undefined;
+  }
+  /* A cell the author lifts carries what it holds, for the same reason a board does: a part left
+     sitting below its own container is not drawn at all. */
+  if (isGridCell(before) && "z" in patch) {
+    const next = { ...before, ...patch } as PlacedItem;
+    return liftAbove(next, layerOf(next)).children;
+  }
   if (!("size" in patch || "size2" in patch)) return undefined;
   const kids = patch.children ?? before.children;
   if (!kids?.length) return undefined;
@@ -3223,8 +3406,249 @@ export function resizedChildren(before: Item, patch: Partial<Item>, widths: Reco
   return scaleChildren(kids, now.w / Math.max(1, was.w), now.h / Math.max(1, was.h));
 }
 
+/* ---------- what a bound text reads ---------- */
+
+/** The kinds whose value a text can read: the ones a visitor can move or choose. */
+export const READOUT_KINDS: Kind[] = ["slider", "stepper", "sliderInput", "progressBar", "linearProgress", "circularProgress", "select", "tabs"];
+
+/** Whether a part has a value worth showing beside it. */
+export const hasReadout = (it: Item) => READOUT_KINDS.includes(it.kind) || !!it.switch;
+
+/**
+ * The value of a part as one line of text: a number with its percent sign for the controls a visitor
+ * moves, the chosen option for a row, and on or off for a switch. `live` is what the visitor has
+ * moved it to, which is what makes a text bound to a slider follow the drag as it happens.
+ */
+export function readoutOf(it: Item, live?: number, lang?: Lang): string {
+  const words = { on: { ja: "オン", en: "On", zh: "开", ko: "켜짐" }, off: { ja: "オフ", en: "Off", zh: "关", ko: "꺼짐" } };
+  const pick = (w: { ja: string; en: string; zh: string; ko: string }) => w[lang ?? getLang()];
+  if (it.kind === "tabs" || it.kind === "select") {
+    const tabs = it.tabs ?? [];
+    return tabs[tabIndexOf(it)]?.label.trim() || "—";
+  }
+  if (it.switch) return pick(it.checked ? words.on : words.off);
+  const v = Math.max(0, Math.min(100, Math.round(live ?? it.value ?? 0)));
+  return `${v}%`;
+}
+
+/* ---------- slot grids ---------- */
+
+/** The frame's own inset around the child frame, and the child frame's inset around its cells. */
+export const GRID_PAD = 10;
+export const GRID_PANEL_PAD = 8;
+/** What a cell measures before the author says otherwise, and how far the size may be pushed. */
+export const CELL_DEF = 56;
+export const CELL_MIN = 24;
+export const CELL_MAX = 160;
+/** How many cells the author may ask for on each axis: more than this is not a game board. */
+export const COLS_MAX = 12;
+export const ROWS_MAX = 30;
+
+export const clampCell = (n: number) => Math.max(CELL_MIN, Math.min(CELL_MAX, Math.round(n)));
+/** The size of one cell: the same whatever the frame measures, which is the point of the part. */
+export const cellOf = (it: Item): number => clampCell(it.cell ?? CELL_DEF);
+/** The room between two cells: a share of the cell, so one control changes the whole board. */
+export const cellGap = (cell: number): number => Math.max(4, Math.round(cell * 0.16));
+export const cellRadius = (): number => Math.max(4, scaleR(10));
+export const panelRadius = (): number => Math.max(8, scaleR(18));
+
+/** How far above its cell the checkbox over that cell rides. Ten is what makes the whole thing work
+ *  with the one layer control the editor already has: a part dropped into a cell lands one layer
+ *  above that cell, so the box is over anything the author puts in — and raising a part past
+ *  `cell + 10` (`21` and up at the default level) is how they say they want it over the box instead.
+ *  A board the author lifts carries its cells and their boxes up together, so the boxes stay on top
+ *  of their own cells whatever the board's own layer is. */
+export const GRID_CHECK_LIFT = 10;
+/** The layer a cell's checkbox is drawn at: its cell's own, ten above it. At the default level that
+ *  is layer 20, which is the number the inspector shows the author. */
+export const gridCheckZ = (cell: Item): number => layerOf(cell) + GRID_CHECK_LIFT;
+
+/** Which slot a cell sits in, written as one key so a cell can be looked up by its place. */
+export const cellKey = (col: number, row: number) => `${col}:${row}`;
+export const cellSlot = (it: Item): { col: number; row: number } | null =>
+  Number.isFinite(it.cellCol) && Number.isFinite(it.cellRow) ? { col: it.cellCol!, row: it.cellRow! } : null;
+/** Whether a part is one of a board's cells rather than something an author drew. */
+export const isGridCell = (it: Item) => cellSlot(it) !== null;
+
+/**
+ * One cell of a board: a small container box the author can put parts in. It is a plain box in every
+ * other way — the canvas, the layers panel and the preview all treat it as one — and its look is
+ * written down when it is made so that a cell the author has restyled stays as they left it.
+ */
+export function cellBox(col: number, row: number, cell: number, at: { x: number; y: number }, floor = LAYER_DEFAULT): PlacedItem {
+  const r = cellRadius();
+  return {
+    ...makeItem("box"),
+    name: `${t("gridCells")}${row + 1}-${col + 1}`,
+    cellCol: col,
+    cellRow: row,
+    x: at.x,
+    y: at.y,
+    size: cell,
+    size2: cell,
+    /* A cell is drawn inside its board, and a child that sits below its parent is not drawn at all:
+       a board the author lifted — or one that was nested, which lifts it — would otherwise hide
+       every cell it has. */
+    ...(floor > LAYER_DEFAULT ? { z: floor } : {}),
+    radiusTop: r,
+    radiusBottom: r,
+    fill: "surfaceContainerLow",
+    /* a hairline inside the cell, so an empty board still reads as a grid of cells */
+    strokeWidth: 1,
+    strokeColor: "outlineVariant",
+  };
+}
+
+/**
+ * The cells a board holds: one per slot, in reading order, each carrying whatever the author put in
+ * it. A cell keeps its place by its slot rather than by its own x and y, so resizing the frame, or
+ * changing the cell size, moves every cell without any of them losing what it holds — and a slot
+ * that has just come into being gets an empty cell waiting in it.
+ *
+ * Nothing is ever thrown away here: a cell that holds something pushes the board out to reach it
+ * (`slotGrid` reads the used slots), so shrinking a frame hides nothing the author made.
+ */
+export function gridCells(it: Item, widths: Record<string, number>): PlacedItem[] {
+  const g = slotGrid(it, widths);
+  const floor = layerOf(it);
+  const held = new Map<string, PlacedItem>();
+  const loose: PlacedItem[] = [];
+  for (const c of it.children ?? []) {
+    const slot = cellSlot(c);
+    if (slot) held.set(cellKey(slot.col, slot.row), c);
+    /* a child that claims no slot is left alone: a hand-written document may hold one */
+    else loose.push(c);
+  }
+  const out: PlacedItem[] = [];
+  for (let row = 0; row < g.rows; row++) {
+    for (let col = 0; col < g.cols; col++) {
+      const at = g.cellAt(col, row);
+      const have = held.get(cellKey(col, row));
+      if (!have) {
+        out.push(cellBox(col, row, g.cell, at, floor));
+        continue;
+      }
+      /* A cell that has fallen below its board — the board was lifted after the cell was made, or
+         nested with its cells already in it — is raised, and everything it holds comes with it. */
+      const base = layerOf(have) < floor ? liftAbove(have, floor) : have;
+      const same = base === have && base.x === at.x && base.y === at.y && base.size === g.cell && base.size2 === g.cell && base.cellCol === col && base.cellRow === row;
+      out.push(same ? have : { ...base, cellCol: col, cellRow: row, x: at.x, y: at.y, size: g.cell, size2: g.cell });
+    }
+  }
+  return [...out, ...loose];
+}
+
+/**
+ * Every board in a document laid out: a document written before cells were containers holds boards
+ * that were only drawn, and a board may arrive from a file with no cells at all. Reading is when
+ * both are put right, so nothing downstream has to wonder whether a board has its slots.
+ */
+export function withGridCells(groups: Group[]): Group[] {
+  const one = (it: Item): Item => {
+    const kids = it.children?.map(one) as PlacedItem[] | undefined;
+    const next: Item = kids ? { ...it, children: kids } : it;
+    return next.kind === "invGrid" ? { ...next, children: gridCells(next, {}) } : next;
+  };
+  return groups.map((g) => ({ ...g, items: g.items.map(one) }));
+}
+
+/** A part whose board has to answer the size it has just been given: a frame that changed size, or
+ *  one carried to another screen, takes its cells with it. */
+const regrid = (it: Item): Item => (it.kind === "invGrid" ? { ...it, children: gridCells(it, {}) } : it);
+
+/**
+ * A frame of cells: what the author asked for, laid out inside the box they drew.
+ *
+ * The two counts and the cell size are the author's, and how a box of this size answers them is what
+ * makes the part general. A count left out follows the box, so enlarging the frame really adds cells
+ * instead of stretching the ones already there; a count the author pins is kept, and when those rows
+ * reach past the bottom of the frame the child frame simply grows taller and the frame scrolls over
+ * it. Columns are the one thing that is capped: a row wider than the frame cannot be reached by
+ * moving up and down, so a count that does not fit is drawn as the number that does. A slot that
+ * holds a part is on the board whatever the counts say: the author's work is never hidden by a
+ * resize, it just scrolls.
+ */
+export type SlotGrid = {
+  /** how many cells across and down the frame draws */
+  cols: number;
+  rows: number;
+  /** the cell size and the room between cells */
+  cell: number;
+  gap: number;
+  /** the child frame: the panel the cells sit on, in the part's own coordinates */
+  panel: { x: number; y: number; w: number; h: number };
+  /** where a cell's top-left corner sits, as an offset from the part's top-left corner */
+  cellAt: (col: number, row: number) => { x: number; y: number };
+  /** the cells the frame draws, and how many that is */
+  count: number;
+  /** whether the counts follow the frame rather than the author */
+  autoCols: boolean;
+  autoRows: boolean;
+  /** the whole board: what a full row and a full column of cells measures */
+  boardW: number;
+  boardH: number;
+  /** what the frame's content takes, which is what can be scrolled over */
+  content: { w: number; h: number };
+};
+
+export function slotGrid(it: Item, widths: Record<string, number>): SlotGrid {
+  const { w, h } = sizeOf(it, widths);
+  const cell = cellOf(it);
+  const gap = cellGap(cell);
+  /* the child frame, and the room its cells have inside it */
+  const view = { w: Math.max(cell, w - GRID_PAD * 2), h: Math.max(cell, h - GRID_PAD * 2) };
+  const room = { w: Math.max(cell, view.w - GRID_PANEL_PAD * 2), h: Math.max(cell, view.h - GRID_PANEL_PAD * 2) };
+  const fits = (span: number) => Math.max(1, Math.floor((span + gap) / (cell + gap)));
+  const autoCols = it.gridCols === undefined;
+  const autoRows = it.gridRows === undefined;
+  /* the board reaches every cell that holds something, so a frame the author made smaller scrolls
+     over the rest of the board rather than swallowing it */
+  let usedCol = -1;
+  let usedRow = -1;
+  for (const c of it.children ?? []) {
+    const slot = cellSlot(c);
+    /* a cell the author ticked counts as used just as one holding a part does: a tick is something
+       they made, and a frame made smaller must scroll to it rather than quietly drop it */
+    if (!slot || (!(c.children?.length ?? 0) && !c.checked)) continue;
+    usedCol = Math.max(usedCol, slot.col);
+    usedRow = Math.max(usedRow, slot.row);
+  }
+  /* a count the author pins is still capped by the room one row has: moving up and down cannot
+     reach a column that is off the side, so the frame draws the ones that are on it */
+  const wanted = autoCols ? fits(room.w) : Math.min(Math.round(it.gridCols!), fits(room.w));
+  const cols = Math.max(1, Math.min(COLS_MAX, Math.max(wanted, usedCol + 1)));
+  const rows = Math.max(1, Math.min(ROWS_MAX, Math.max(autoRows ? fits(room.h) : Math.round(it.gridRows!), usedRow + 1)));
+  const boardW = cols * cell + (cols - 1) * gap;
+  const boardH = rows * cell + (rows - 1) * gap;
+  const panel = {
+    x: GRID_PAD,
+    y: GRID_PAD,
+    w: Math.max(view.w, boardW + GRID_PANEL_PAD * 2),
+    h: Math.max(view.h, boardH + GRID_PANEL_PAD * 2),
+  };
+  const left = panel.x + Math.round((panel.w - boardW) / 2);
+  const top = panel.y + GRID_PANEL_PAD;
+  return {
+    cols,
+    rows,
+    cell,
+    gap,
+    panel,
+    cellAt: (col, row) => ({ x: left + col * (cell + gap), y: top + row * (cell + gap) }),
+    count: cols * rows,
+    autoCols,
+    autoRows,
+    boardW,
+    boardH,
+    content: { w, h: GRID_PAD * 2 + panel.h },
+  };
+}
+
 /** How much room a scrolling container's content takes, measured from its top-left corner. */
 export function scrollContent(it: Item, widths: Record<string, number>): { w: number; h: number } {
+  /* a slot grid brings its own content: its cells are drawn rather than held, so a frame with no
+     children at all still has something to move */
+  if (it.kind === "invGrid") return slotGrid(it, widths).content;
   let w = 0;
   let h = 0;
   for (const c of it.children ?? []) {

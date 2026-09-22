@@ -114,6 +114,7 @@ Sizes are in dp; `size` is the width unless noted. Content width inside the phon
 | `card` | card with image area, title, body | `label`, `supporting`, `icon`, `variant` `filled` (default) / `elevated` / `outlined`, `fill` background token, `size` width, `size2` height, `"noImage": true` to drop the image area, `src` an https picture for it, `action` | 380 × 223 |
 | `listItem` | list item | `label`, `supporting`, `icon` leading, `icon2` trailing, or `"switch": true` for a trailing switch with `checked` as its state, `action` | 380 × 72 |
 | `box` | plain container, or a scrolling viewport with `scroll` | `size` width, `size2` height, `fill` token, `radiusTop`, `radiusBottom`, `scroll` `"x"` / `"y"` / `"both"` for a container whose contents move, `scrollPos` `{x,y}` for where they start | 412 × 220 |
+| `invGrid` | slot grid: a frame of inventory cells that scrolls up and down | `size` width, `size2` height, `cell` cell size 24–160 (56 default), `gridCols` cells across 1–12 (omit to fit the width), `gridRows` rows 1–30 (omit to fit the height; more rows than fit make the frame scroll), `checkboxes` to show a checkbox in every cell, `icon` drawn in a cell that is still empty, `fill` token for the frame, `scroll` `"y"` and `scrollPos` `{y}` as for a box, `children` the cells | 380 × 320 |
 | `dialog` | dialog | `label` title, `supporting` body, `icon` | 312 × 220, centered |
 | `snackbar` | snackbar | `label`, `supporting` action label | 344 × 48 |
 | `textField` | text field | `label`, `supporting` helper, `icon`, `variant` `outlined / filled` | 380 × 56 |
@@ -122,7 +123,9 @@ Sizes are in dp; `size` is the width unless noted. Content width inside the phon
 | `checkbox` | checkbox with label | `label`, `checked` | 40 tall |
 | `radio` | radio button with label | `label`, `checked` | 40 tall |
 | `slider` | slider | `value` 0–100 | 380 × 44 |
-| `text` | a line of text | `label`, `size` font size (28 default), `bold` | |
+| `stepper` | stepper: a minus, the number, a plus | `label`, `value` 0–100, stepped by one | 200 × 56 |
+| `sliderInput` | slider field: a slider with the same value as a number box and minus / plus buttons | `label`, `value` 0–100 | 380 × 104 |
+| `text` | a line of text | `label`, `size` font size (28 default), `bold`, `shows` the id of a slider / stepper / bar / row to read instead of its own words | |
 | `image` | image | `size` square side, `src` an https URL (optional) | 200 × 200 |
 | `camera` | camera preview placeholder | `size` width, `size2` height | 380 × 507 |
 | `map` | map placeholder | `size` width, `size2` height | 380 × 285 |
@@ -132,6 +135,8 @@ Sizes are in dp; `size` is the width unless noted. Content width inside the phon
 | `linearProgress` | linear progress | `value` or omit for indeterminate, `wavy`, `trackThickness` 2 to 16 (omit for 4) | 380 × 24 |
 | `progressBar` | progress bar | `size` width, `size2` height (4 to 64), `value` percent (always determinate, 60 by default), `fill` track colour (transparent when omitted), `label` drawn inside the bar | 380 × 10 |
 | `circularProgress` | circular progress | `value` or omit, `wavy`, `trackThickness` 2 to 16, capped at a sixth of `size` | 48 × 48 |
+
+A slot grid's `children` are its cells: one `box` per slot, each with `cellCol` / `cellRow` (its place on the board, 0-based) and, when `checkboxes` is on, `"checked": true` for a cell that starts ticked. A cell is a container like any other — put an icon button or any other part inside its own `children` — and the board lays its cells out itself, so a cell's own `x`, `y`, `size` and `size2` follow the frame, the cell size and the counts; do not set them by hand. Never write a board without its cells: give it one cell per `gridCols` × `gridRows` slot, in reading order.
 
 For `navRail`, `railExpanded` is the initial state; the preview's menu button toggles it. With `railModal: true`, an expanded rail covers the content with a scrim while the body keeps a 96dp navigation slot. Otherwise, reserve the rail's current width beside the content. Keep `tabs`, `selected`, and `actions` on the same item in either state.
 Modal presentation requires the rail to be the only item in its group. The editor collapses modal rails and switches them to standard presentation when they are grouped with other items, including imported mixed groups. Ungroup the rail before enabling modal presentation again. The editor controls are desktop-only.
@@ -159,6 +164,8 @@ Fields that any part may carry:
 
   - `looks` are the appearances the part can take. Each names only what it changes — `label`, `icon` (`null` for none), `color`, `variant`, `disabled`, `grow`, `hidden` — and every field it leaves out stays whatever the part itself is, so the author keeps editing one part rather than three copies.
   - `:start` is the part exactly as drawn. A step may go back to it.
+  - A `look` action writes the properties it names onto the part `target` names (or onto the part the step belongs to when `target` is left out), and leaves every other property alone. It may carry `label`, `icon` (empty string for none), `color`, `fill`, `checkboxes` (a slot grid's bulk-tick mode), `checked`, `selected` (an index into `tabs`), `value` (0–100), `disabled`, `hidden` and `grow`. It changes how a part is drawn, never what it is: its kind, its id, its children and its own `flow` are not a step's to write, and nothing here moves a part or changes its size.
+  - So a button outside a board switches its multi-select on and off, the way a game does it: give the button two looks and a tap step each way, one with `{ "kind": "look", "target": "<board>", "checkboxes": true }` and one with `false`. `"disabled": true`, `"hidden": true` and `"grow": true` work the same way for any part — that is how one button greys out, puts away or enlarges another.
   - `steps` move the part between looks. `trigger` is `{ "kind": "tap" }` or `{ "kind": "after", "seconds": 30 }` (counted from the moment the part entered the look it is leaving). `do` is a list of what else the step does on the way: `goto`, `back`, `close`, or `look` (a change latched onto this part or, with `target`, another one).
   - Steps leaving the same look are tried in order, and the first one is the one taken. When none is there, the part does what `action` says, which is also what happens in a look no step leaves.
 

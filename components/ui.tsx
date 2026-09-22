@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { COLOR_TOKENS, CardLayout, ColorToken, Palette, R_INNER, TEXT_TOKENS, TextToken, clamp } from "@/lib/tokens";
+import { COLOR_TOKENS, CardLayout, ColorToken, Palette, R_INNER, TEXT_TOKENS, TextToken, clamp, TRANSPARENT, type FillToken } from "@/lib/tokens";
 import { AnimatePresence, motion } from "motion/react";
 import { COLOR_TOKEN_TEXT, TEXT_TOKEN_TEXT, t, useLang } from "@/lib/i18n";
 import { Icon } from "./M3Node";
@@ -803,6 +803,9 @@ function TokenDisc({ color, label, on, onClick, p, icon, iconColor }: { color: s
   );
 }
 
+/** the swatch that says "nothing is drawn here": the usual transparency checkerboard */
+const CHECKER = "repeating-conic-gradient(rgba(0,0,0,0.18) 0% 25%, transparent 0% 50%) 0 0 / 8px 8px";
+
 export function TokenChips({
   value,
   onChange,
@@ -815,8 +818,8 @@ export function TokenChips({
   noneIcon = "block",
   noneLabel,
 }: {
-  value: ColorToken;
-  onChange: (t: ColorToken) => void;
+  value: FillToken;
+  onChange: (t: FillToken) => void;
   p: Palette;
   /** offer a "no background" chip */
   none?: boolean;
@@ -831,6 +834,9 @@ export function TokenChips({
   const lang = useLang();
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+      {/* a background can be nothing at all — the first colour on offer, since it is the one that
+          lets whatever is behind the part show through */}
+      <TokenDisc color={CHECKER} label={t("transparentColor", lang)} on={value === TRANSPARENT} onClick={() => onChange(TRANSPARENT)} p={p} />
       {none && (
         <TokenDisc color={noneColor ?? "transparent"} label={noneLabel ?? t("noBackground", lang)} on={!!noneOn} onClick={() => onNone?.()} p={p} icon={noneIcon} iconColor={noneTextColor ?? p.onSurfaceVariant} />
       )}
@@ -888,6 +894,7 @@ export function ItemColorChips({ value, onChange, p }: { value?: string; onChang
   return (
     <div role="group" aria-label={t("partColor", lang)} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
       <TokenDisc color="transparent" label={t("autoColor", lang)} on={!value} onClick={() => onChange(undefined)} p={p} icon="restart_alt" iconColor={p.onSurfaceVariant} />
+      <TokenDisc color={CHECKER} label={t("transparentColor", lang)} on={value === TRANSPARENT} onClick={() => onChange(TRANSPARENT)} p={p} />
       {COLOR_TOKENS.map((tk) => (
         <TokenDisc key={tk.key} color={p[tk.key]} label={lang === "en" ? tk.label : COLOR_TOKEN_TEXT[lang][tk.key]} on={value === tk.key} onClick={() => onChange(value === tk.key ? undefined : tk.key)} p={p} />
       ))}
@@ -1097,7 +1104,9 @@ export function Pick<K extends string>({
   title?: string;
   p: Palette;
 }) {
+  const lang = useLang();
   const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -1107,7 +1116,14 @@ export function Pick<K extends string>({
     window.addEventListener("pointerdown", onDown);
     return () => window.removeEventListener("pointerdown", onDown);
   }, [open]);
+  /* A long list of names is only usable if it can be narrowed down: the search row appears once
+     there are more entries than fit at a glance, and the list is cleared every time it opens. */
+  useEffect(() => {
+    if (!open) setQ("");
+  }, [open]);
   const current = options.find((o) => o.key === value);
+  const needle = q.trim().toLowerCase();
+  const shown = needle ? options.filter((o) => o.label.toLowerCase().includes(needle)) : options;
   return (
     <div ref={ref} style={{ position: "relative", flex: 1, minWidth: 0 }}>
       <button
@@ -1133,19 +1149,24 @@ export function Pick<K extends string>({
         }}
       >
         {current?.icon && <Icon name={current.icon} size={16} />}
-        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}>{current?.label ?? value}</span>
+        <span title={current?.label ?? value} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}>{current?.label ?? value}</span>
         <Icon name={open ? "expand_less" : "expand_more"} size={16} />
       </button>
       {open && (
         <div
-          className="no-scrollbar"
           style={{
             position: "absolute",
             zIndex: 30,
             top: 40,
             left: 0,
-            right: 0,
-            maxHeight: 200,
+            /* A list of names is wider than the little button that opened it: the menu grows to fit
+               its longest entry — up to a readable width, past which it scrolls and the rows cut
+               with an ellipsis — instead of squeezing every name into the button's own width. */
+            width: "max-content",
+            minWidth: "100%",
+            maxWidth: 240,
+            maxHeight: 260,
+            overflowX: "hidden",
             overflowY: "auto",
             padding: 4,
             borderRadius: 12,
@@ -1156,7 +1177,12 @@ export function Pick<K extends string>({
             gap: 2,
           }}
         >
-          {options.map((o) => (
+          {options.length > 6 && (
+            <div style={{ padding: "2px 2px 4px" }}>
+              <Field value={q} onChange={setQ} placeholder={t("search", lang)} p={p} icon="search" height={32} />
+            </div>
+          )}
+          {shown.map((o) => (
             <button
               key={o.key}
               type="button"
@@ -1164,6 +1190,7 @@ export function Pick<K extends string>({
                 onChange(o.key);
                 setOpen(false);
               }}
+              title={o.label}
               className="m3-press"
               style={{
                 height: 32,
@@ -1178,14 +1205,14 @@ export function Pick<K extends string>({
                 display: "flex",
                 alignItems: "center",
                 gap: 6,
-                overflow: "hidden",
-                whiteSpace: "nowrap",
+                minWidth: 0,
               }}
             >
               {o.icon && <Icon name={o.icon} size={16} />}
-              {o.label}
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.label}</span>
             </button>
           ))}
+          {shown.length === 0 && <div style={{ padding: "8px", fontSize: 12, color: p.outline, textAlign: "center" }}>{t("searchOff", lang)}</div>}
         </div>
       )}
     </div>

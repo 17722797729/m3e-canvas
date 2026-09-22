@@ -1,5 +1,6 @@
 "use client";
 
+import { createContext, useContext } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import {
   badgeSurface,
@@ -59,6 +60,13 @@ import {
   TAB_ROW_H,
   tabScrollOffset,
   SCROLL_TAB_W,
+  fillColor,
+  fillInk,
+  slotGrid,
+  CELL_DEF,
+  gridCheckZ,
+  cellRadius,
+  panelRadius,
 } from "@/lib/tokens";
 import { CircularProgress, LinearProgress, LoadingIndicator } from "./Loading";
 import { t, useLang } from "@/lib/i18n";
@@ -469,8 +477,10 @@ function ScrollLayer({
   scroll?: { x?: number; y?: number };
   children?: React.ReactNode;
 }) {
-  if (!children) return null;
-  if (!item.scroll) return <>{children}</>;
+  /* a slot grid draws its child frame itself; its cells are ordinary children and sit on top */
+  const inside = item.kind === "invGrid" ? <><GridPanel item={item} p={p} widths={widths} />{children}</> : children;
+  if (!inside) return null;
+  if (!item.scroll) return <>{inside}</>;
   const size = sizeOf(item, widths);
   const range = scrollRange(item, widths);
   const at = scrollOffset(item, widths, scroll);
@@ -498,10 +508,211 @@ function ScrollLayer({
   };
   return (
     <>
-      <div style={{ position: "absolute", inset: 0, transform: `translate(${-at.x}px, ${-at.y}px)` }}>{children}</div>
+      <div style={{ position: "absolute", inset: 0, transform: `translate(${-at.x}px, ${-at.y}px)` }}>{inside}</div>
       {bar("y")}
       {bar("x")}
     </>
+  );
+}
+
+/**
+ * A slot grid's child frame: the inset panel its cells sit on. It is drawn in the part's own
+ * coordinates, and the frame scrolls over it together with the cells — so a board with more rows
+ * than the frame fits slides whole, the child frame included, which is what the author drew.
+ */
+function GridPanel({ item, p, widths }: { item: Item; p: Palette; widths: Record<string, number> }) {
+  const g = slotGrid(item, widths);
+  return (
+    <div
+      data-grid="panel"
+      style={{
+        position: "absolute",
+        left: g.panel.x,
+        top: g.panel.y,
+        width: g.panel.w,
+        height: g.panel.h,
+        borderRadius: panelRadius(),
+        background: p.surfaceContainerHighest,
+      }}
+    />
+  );
+}
+
+/**
+ * What a board adds to one of its cells: the checkbox the visitor ticks when the author turned the
+ * boxes on, and — while a cell is still empty — the placeholder icon the board carries. Both are
+ * drawn over the cell rather than inside it, so a cell stays a plain container the author can put
+ * anything in.
+ *
+ * The box is only drawn over a cell that holds something: a tick marks an item, and an empty slot
+ * has nothing to mark. It also rides above the cell's contents, so filling a cell never buries it.
+ */
+export function GridCellMarks({
+  grid,
+  cell,
+  checked,
+  onToggle,
+  p,
+  z,
+}: {
+  grid: Item;
+  cell: Item;
+  checked: boolean;
+  /** given only where ticking a cell is an edit: the canvas, with the board in hand */
+  onToggle?: () => void;
+  p: Palette;
+  /** where the box rides; the preview lifts it over the part the visitor touched last */
+  z?: number;
+}) {
+  const size = Math.max(14, Math.round((cell.size ?? CELL_DEF) * 0.34));
+  return (
+    <>
+      {!cell.children?.length && grid.icon && (
+        <span aria-hidden style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: p.onSurfaceVariant, pointerEvents: "none" }}>
+          <Icon name={grid.icon} size={Math.round((cell.size ?? CELL_DEF) * 0.5)} />
+        </span>
+      )}
+      {grid.checkboxes && !!cell.children?.length && (
+        <span
+          data-cell-check={checked ? "on" : "off"}
+          role={onToggle ? "checkbox" : undefined}
+          aria-checked={onToggle ? checked : undefined}
+          onPointerDown={onToggle ? (e) => e.stopPropagation() : undefined}
+          onClick={
+            onToggle
+              ? (e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  onToggle();
+                }
+              : undefined
+          }
+          style={{
+            position: "absolute",
+            left: Math.max(3, Math.round(size * 0.2)),
+            top: Math.max(3, Math.round(size * 0.2)),
+            width: size,
+            height: size,
+            boxSizing: "border-box",
+            borderRadius: Math.max(3, Math.round(size * 0.24)),
+            background: checked ? p.primary : "transparent",
+            border: checked ? "none" : `1.5px solid ${p.outline}`,
+            color: p.onPrimary,
+            display: "grid",
+            placeItems: "center",
+            cursor: onToggle ? "pointer" : undefined,
+            /* above whatever the author dropped into the cell, at layer 20 to begin with */
+            zIndex: z ?? gridCheckZ(cell),
+          }}
+        >
+          {checked && <Icon name="check" size={Math.round(size * 0.76)} />}
+        </span>
+      )}
+    </>
+  );
+}
+
+/**
+ * What a control inside a part needs to know about the value it carries: where a change goes. It is
+ * absent on the canvas and in an export, where a part is drawn but not live — the number is then
+ * read-only, which is exactly what the canvas shows.
+ */
+export const ValueContext = createContext<{ onSet?: (v: number) => void }>({});
+const useValueControls = () => useContext(ValueContext);
+
+/** How tall the slider of a slider field is: the row under it takes the rest of the box. */
+const SLIDER_ROW_H = 44;
+
+/** The value a slider, a slider field or a stepper stands at: what the author set, 0 when unset. */
+const shownValue = (it: Item) => Math.max(0, Math.min(100, Math.round(it.value ?? 40)));
+
+/** The track, the thumb and the tick of a slider — drawn to the width the part is given, so the
+ *  thumb lands under the finger whether it stands on a screen or inside a dialog panel. */
+function SliderTrack({ item, p, height }: { item: Item; p: Palette; height?: number }) {
+  const v = shownValue(item) / 100;
+  const w = item.size ?? 280;
+  const handleX = 2 + (w - 4) * v;
+  const top = height === undefined ? 14 : 6;
+  return (
+    <div style={{ position: "relative", height: height ?? "100%", flex: height === undefined ? undefined : "0 0 auto" }}>
+      <div style={{ position: "absolute", left: 0, width: Math.max(0, handleX - 8), top, height: 16, borderRadius: "8px 2px 2px 8px", background: p.primary }} />
+      <div style={{ position: "absolute", left: handleX + 8, right: 0, top, height: 16, borderRadius: "2px 8px 8px 2px", background: p.secondaryContainer }} />
+      <div style={{ position: "absolute", right: 6, top: top + 6, width: 4, height: 4, borderRadius: 2, background: p.onSecondaryContainer }} />
+      <div style={{ position: "absolute", left: handleX - 2, top: Math.max(0, top - 14), width: 4, height: height === undefined ? 44 : 34, borderRadius: 2, background: p.primary }} />
+    </div>
+  );
+}
+
+/**
+ * The number a stepper and a slider field carry, with the two buttons that walk it by one: the box
+ * can be typed into where the part is live, and the buttons answer a tap. Everything inside the row
+ * takes its own press, so the part's own drag never starts from a button or from the box.
+ */
+function ValueRow({ item, p }: { item: Item; p: Palette }) {
+  const cbs = useValueControls();
+  const v = shownValue(item);
+  const round = Math.max(28, Math.round((item.size2 ?? 56) * 0.62));
+  const box: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: round,
+    height: round,
+    borderRadius: round / 2,
+    border: "none",
+    background: "transparent",
+    color: p.onSurface,
+    cursor: cbs.onSet ? "pointer" : "default",
+    flex: "0 0 auto",
+    padding: 0,
+  };
+  const step = (by: number) => (e: React.PointerEvent | React.MouseEvent) => {
+    e.stopPropagation();
+    cbs.onSet?.(Math.max(0, Math.min(100, v + by)));
+  };
+  return (
+    <div
+      onPointerDown={(e) => e.stopPropagation()}
+      style={{ display: "flex", alignItems: "center", gap: 2, width: "100%", height: "100%", padding: "0 6px", boxSizing: "border-box" }}
+    >
+      {item.label.trim().length > 0 && (
+        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 15, color: p.onSurface }}>
+          {item.label}
+        </span>
+      )}
+      <button type="button" aria-label="-" style={box} onClick={step(-1)}>
+        <Icon name="remove" size={Math.round(round * 0.5)} />
+      </button>
+      {/* the number itself: an author types a value into it, and the slider follows */}
+      <input
+        type="text"
+        inputMode="numeric"
+        value={String(v)}
+        readOnly={!cbs.onSet}
+        aria-label={item.label.trim() || String(v)}
+        onPointerDown={(e) => e.stopPropagation()}
+        onChange={(e) => {
+          const n = Number(e.target.value.replace(/[^0-9]/g, ""));
+          if (Number.isFinite(n)) cbs.onSet?.(Math.max(0, Math.min(100, n)));
+        }}
+        style={{
+          width: 56,
+          height: Math.max(32, round),
+          border: "none",
+          outline: "none",
+          background: "transparent",
+          color: p.onSurface,
+          font: "inherit",
+          fontSize: 18,
+          fontWeight: 700,
+          textAlign: "center",
+          padding: 0,
+        }}
+      />
+      <button type="button" aria-label="+" style={box} onClick={step(1)}>
+        <Icon name="add" size={Math.round(round * 0.5)} />
+      </button>
+    </div>
   );
 }
 
@@ -656,8 +867,8 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
                 width: 40,
                 height: 40,
                 borderRadius: 20,
-                background: iconBg ? p[iconBg] : "transparent",
-                color: iconBg ? onToken(iconBg, p) : onToken(item.fill ?? "surfaceContainerLow", p),
+                background: iconBg ? fillColor(iconBg, p, "primaryContainer") : "transparent",
+                color: iconBg ? fillInk(iconBg, p, "primaryContainer") : fillInk(item.fill, p, "surfaceContainerLow"),
                 display: "grid",
                 placeItems: "center",
                 flex: "0 0 auto",
@@ -857,59 +1068,19 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
       );
     }
 
-    case "slider": {
-      const v = Math.min(100, Math.max(0, item.value ?? 40)) / 100;
-      const w = item.size ?? 280;
-      const handleX = 2 + (w - 4) * v;
+    case "slider":
+    case "sliderInput":
+      /* A slider and a slider field draw the same track: the field adds the number and the two
+         buttons under it, which is the whole difference between them. */
       return (
-        <div style={{ position: "relative", height: "100%" }}>
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              width: Math.max(0, handleX - 8),
-              top: 14,
-              height: 16,
-              borderRadius: "8px 2px 2px 8px",
-              background: p.primary,
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              left: handleX + 8,
-              right: 0,
-              top: 14,
-              height: 16,
-              borderRadius: "2px 8px 8px 2px",
-              background: p.secondaryContainer,
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              right: 6,
-              top: 20,
-              width: 4,
-              height: 4,
-              borderRadius: 2,
-              background: p.onSecondaryContainer,
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              left: handleX - 2,
-              top: 0,
-              width: 4,
-              height: 44,
-              borderRadius: 2,
-              background: p.primary,
-            }}
-          />
+        <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
+          <SliderTrack item={item} p={p} height={item.kind === "slider" ? undefined : SLIDER_ROW_H} />
+          {item.kind === "sliderInput" && <ValueRow item={item} p={p} />}
         </div>
       );
-    }
+
+    case "stepper":
+      return <ValueRow item={item} p={p} />;
 
     case "image":
       if (item.src) {
@@ -1470,8 +1641,19 @@ function boxStyle(item: Item, p: Palette): React.CSSProperties {
   switch (item.kind) {
     case "box": {
       const t = item.fill ?? "surfaceContainerLow";
-      return { background: p[t], color: onToken(t, p), border: "none" };
+      return { background: fillColor(t, p, "surfaceContainerLow"), color: fillInk(t, p, "surfaceContainerLow"), border: "none" };
     }
+    case "invGrid": {
+      /* the frame paints a surface the way a box does; the child frame and the cells on it are
+         painted by the grid itself, against roles of their own */
+      const t = item.fill ?? "surfaceContainer";
+      return { background: fillColor(t, p, "surfaceContainer"), color: fillInk(t, p, "surfaceContainer"), border: "none" };
+    }
+    case "stepper":
+      /* a filled field: the row the two buttons and the number sit in */
+      return { background: p.surfaceContainerHighest, color: p.onSurface, border: "none" };
+    case "sliderInput":
+      return { background: item.fill ? fillColor(item.fill, p, "surfaceContainerLow") : "transparent", color: p.onSurface, border: "none" };
     case "button":
     case "iconButton":
     case "fab":
@@ -1486,7 +1668,7 @@ function boxStyle(item: Item, p: Palette): React.CSSProperties {
         ? { background: "transparent", color: p.onSurfaceVariant, border: `1px solid ${p.outlineVariant}` }
         : { background: p.surfaceContainerLow, color: p.onSurfaceVariant, border: "none" };
     case "card":
-      return { background: p[cardFillOf(item)], border: item.variant === "outlined" ? `1px solid ${p.outlineVariant}` : "none" };
+      return { background: fillColor(cardFillOf(item), p, "surfaceContainerHighest"), border: item.variant === "outlined" ? `1px solid ${p.outlineVariant}` : "none" };
     case "textField":
     case "select":
       return item.variant === "filled"
@@ -1515,7 +1697,7 @@ function boxStyle(item: Item, p: Palette): React.CSSProperties {
       return { background: p.inverseSurface, border: "none", color: p.inverseOnSurface };
     case "listItem": {
       const t = item.fill ?? "surfaceContainerLow";
-      return { background: p[t], border: "none", color: onToken(t, p) };
+      return { background: fillColor(t, p, "surfaceContainerLow"), border: "none", color: fillInk(t, p, "surfaceContainerLow") };
     }
     default:
       return { background: p.surfaceContainerHigh, border: "none", color: p.onSurface };

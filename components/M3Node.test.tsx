@@ -12,8 +12,8 @@ vi.mock("@/lib/shapes", () => ({}));
 vi.mock("motion/react", () => ({ motion: { div: "div", span: "span", button: "button" }, useReducedMotion: () => false }));
 vi.mock("./Loading", () => ({ CircularProgress: "circle", LinearProgress: "bar", LoadingIndicator: "spinner" }));
 
-import { PALETTES, makeItem } from "../lib/tokens";
-import { BadgeContent } from "./M3Node";
+import { PALETTES, gridCheckZ, layerOf, makeItem, type Item } from "../lib/tokens";
+import { BadgeContent, GridCellMarks } from "./M3Node";
 
 type El = ReactElement<Record<string, unknown>>;
 const styleOf = (el: El) => el.props.style as Record<string, unknown>;
@@ -43,5 +43,38 @@ describe("a badge's body", () => {
     const own = badge({ color: "primary", strokeWidth: 2 });
     expect(styleOf(own.props.children as El).background).toBe(PALETTES[0].primary);
     expect(styleOf(own.props.children as El).boxShadow).toContain("inset");
+  });
+});
+
+/* A board's checkbox lives over a cell rather than in it, and it belongs to the board: it is drawn
+ * above whatever the author dropped into the cell, and only over a cell that holds something —
+ * a tick marks an item, so an empty slot has nothing to mark. */
+describe("the checkbox over a board's cell", () => {
+  const cell = (patch: Partial<Item> = {}) => ({ ...makeItem("box"), id: "c", size: 56, size2: 56, ...patch }) as Item;
+  const marks = (grid: Item, it: Item) => GridCellMarks({ grid, cell: it, checked: false, p: PALETTES[0] }) as El;
+  const box = (grid: Item, it: Item) => {
+    const kids = [marks(grid, it).props.children].flat(2).filter(Boolean) as El[];
+    return kids.find((k) => k.props["data-cell-check"] !== undefined);
+  };
+  const board = (patch: Partial<Item> = {}) => ({ ...makeItem("invGrid"), checkboxes: true, ...patch }) as Item;
+
+  it("is drawn over a cell that holds something", () => {
+    const filled = cell({ children: [{ ...makeItem("iconButton"), id: "ib", x: 4, y: 4 } as never] });
+    expect(box(board(), filled)).toBeTruthy();
+    /* above the cell's own contents: a part dropped into a cell lands one layer above it */
+    expect(styleOf(box(board(), filled)!).zIndex).toBe(20);
+    expect(styleOf(box(board(), filled)!).zIndex as number).toBeGreaterThan(layerOf(filled) + 1);
+  });
+
+  it("is left out of a cell with nothing in it", () => {
+    expect(box(board(), cell())).toBeUndefined();
+    /* and the whole mark is gone when the author has not turned the boxes on */
+    expect(box(board({ checkboxes: undefined }), cell({ children: [{ ...makeItem("iconButton"), id: "ib", x: 4, y: 4 } as never] }))).toBeUndefined();
+  });
+
+  it("follows a board the author lifted", () => {
+    const lifted = cell({ z: 30, children: [{ ...makeItem("iconButton"), id: "ib", x: 4, y: 4 } as never] });
+    expect(gridCheckZ(lifted)).toBeGreaterThan(layerOf(lifted) + 1);
+    expect(styleOf(box(board(), lifted)!).zIndex).toBe(gridCheckZ(lifted));
   });
 });
