@@ -1,4 +1,4 @@
-import { Doc, Group, KIND_ORDER, Kind, VARIANTS, isCardAlign, isCardImagePos, isCustomColor, isOverlayLevel, isPlace, isRuleKind, isStateEffect, isTextToken, isPlatform, isTrackThickness, isVariant } from "./tokens";
+import { Doc, Group, KIND_ORDER, LEGACY_KINDS, Kind, VARIANTS, isCardAlign, isCardImagePos, isCustomColor, isOverlayLevel, isPlace, isRuleKind, isStateEffect, isValueOp, isTextToken, isPlatform, isTrackThickness, isVariant } from "./tokens";
 
 /* A project file is the Doc as JSON, nothing more. Reading one back only checks
  * the shape the editor relies on; the same migrations that run on a saved
@@ -6,7 +6,8 @@ import { Doc, Group, KIND_ORDER, Kind, VARIANTS, isCardAlign, isCardImagePos, is
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
-const KINDS = new Set<string>(KIND_ORDER);
+/* a retired kind is still readable: the editor turns it into what the palette offers now */
+const KINDS = new Set<string>([...KIND_ORDER, ...LEGACY_KINDS]);
 
 const validTabs = (tabs: unknown) =>
   tabs === undefined || (Array.isArray(tabs) && tabs.every((tab) => isRecord(tab) && typeof tab.label === "string" && (typeof tab.icon === "string" || tab.icon === null || tab.icon === undefined)));
@@ -41,7 +42,8 @@ const validStep = (step: unknown) =>
   isRecord(step) &&
   typeof step.id === "string" &&
   typeof step.from === "string" &&
-  typeof step.to === "string" &&
+  /* a step with no destination keeps the part where it is: it only does what its actions say */
+  (step.to === undefined || typeof step.to === "string") &&
   isRecord(step.trigger) &&
   (step.trigger.kind === "tap" || (step.trigger.kind === "after" && Number.isFinite(step.trigger.seconds) && (step.trigger.seconds as number) >= 0)) &&
   (step.do === undefined || (Array.isArray(step.do) && step.do.every(validStepAction)));
@@ -72,7 +74,8 @@ const validRuleAction = (a: unknown): boolean => {
       texts.every((v) => v === undefined || typeof v === "string") &&
       (a.variant === undefined || isVariant(a.variant)) &&
       bools.every((v) => v === undefined || typeof v === "boolean") &&
-      nums.every((v) => v === undefined || Number.isFinite(v))
+      nums.every((v) => v === undefined || Number.isFinite(v)) &&
+      (a.valueOp === undefined || isValueOp(a.valueOp))
     );
   }
   /* a step written while variables existed may still carry a write: the machine's reader drops it,
@@ -112,6 +115,13 @@ const validItem = (item: unknown): boolean =>
   (item.cellCol === undefined || Number.isFinite(item.cellCol)) &&
   (item.cellRow === undefined || Number.isFinite(item.cellRow)) &&
   (item.shows === undefined || typeof item.shows === "string") &&
+  (item.showValue === undefined || typeof item.showValue === "boolean") &&
+  /* whether the number on the part carries its percent sign */
+  (item.unit === undefined || typeof item.unit === "boolean") &&
+  /* whether a reading text keeps its own words with the value dropped into them */
+  (item.mix === undefined || typeof item.mix === "boolean") &&
+  /* the top of a slider's or a stepper's range */
+  (item.max === undefined || (Number.isFinite(item.max) && (item.max as number) >= 1)) &&
   (item.states === undefined || (Array.isArray(item.states) && item.states.every(validState))) &&
   (item.slotStates === undefined ||
     (isRecord(item.slotStates) && Object.values(item.slotStates).every((list) => Array.isArray(list) && list.every(validState)))) &&

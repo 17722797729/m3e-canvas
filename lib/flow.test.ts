@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildFlow, flowMarkdown, frameNameOf, itemNameOf, itemsOf, stateText, FLOW_TEXT, type Flow } from "./flow";
-import { BACK_TARGET, type Doc, type Frame, type Group, type Item } from "./tokens";
+import { BACK_TARGET, START_LOOK, makeItem, type Doc, type Frame, type Group, type Item } from "./tokens";
 import { KIND_TEXT } from "./i18n";
 
 /* The document builders below are deliberately tiny: a test only spells out the
@@ -419,5 +419,25 @@ describe("flowMarkdown", () => {
     expect(md).toContain(FLOW_TEXT.en.empty);
     expect(md).toContain(FLOW_TEXT.en.emptyHint);
     expect(md.startsWith(`# ${FLOW_TEXT.en.title}`)).toBe(true);
+  });
+});
+
+describe("a step that only acts", () => {
+  /* The plus button of a stepper pair has nothing to become: its step keeps the part where it is,
+     so the flow reads it as an action rather than as a move between looks. */
+  it("reads as an action on the screen, not as a look it lands in", () => {
+    const doc: Doc = {
+      title: "T", brief: "", paletteKey: "purple", frame: "phone", platform: "android",
+      frames: [{ id: "f", name: "Home", x: 0, y: 0 }],
+      groups: [{ id: "g", x: 0, y: 100, axis: "y", items: [
+        { ...makeItem("slider"), id: "sld", label: "音量", value: 40 },
+        { ...makeItem("button"), id: "plus", label: "＋", flow: { looks: [], steps: [{ id: "s1", from: START_LOOK, trigger: { kind: "tap" as const }, do: [{ kind: "look" as const, target: "sld", value: 1, valueOp: "add" as const }] }] } },
+      ] }],
+    };
+    const flow = buildFlow(doc, "en");
+    const rules = flow.nodes.flatMap((n) => n.rules ?? []).filter((r) => r.kind === "state");
+    expect(rules).toHaveLength(1);
+    expect(rules[0].description).toContain("keeps the look it is in");
+    expect(rules[0].description).toContain("goes up by 1");
   });
 });

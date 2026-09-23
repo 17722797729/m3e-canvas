@@ -82,6 +82,7 @@ import {
   withGridCells,
   isGridCell,
   readoutOf,
+  readText,
   byLayer,
   copySubtree,
   itemsOf,
@@ -296,7 +297,13 @@ const pruneItems = (items: Item[], gone: Set<string>): Item[] => pruneParts(item
  *  bar flush with the old 80dp bottom; keep it on the bottom edge. */
 function migrateGroups(groups: Group[], frames: Frame[]): Group[] {
   const oldNavH = KIND_SPEC.bottomNav.h - NAV_BAR_H;
-  return withGridCells(groups).map((g) => {
+  /* A part whose kind the palette no longer offers comes back as the part that replaced it: the
+     slider field was the slider and its number in one, and the slider is what is left of it. */
+  const retired = (it: Item): Item => ({
+    ...(it.kind === "sliderInput" ? { ...it, kind: "slider" as const, size2: Math.min(it.size2 ?? 44, 44) } : it),
+    ...(it.children ? { children: it.children.map(retired) as PlacedItem[] } : {}),
+  });
+  return withGridCells(groups.map((g) => ({ ...g, items: g.items.map(retired) }))).map((g) => {
     if (g.items.length !== 1 || g.items[0].kind !== "bottomNav") return g;
     const f = frames.find((fr) => {
       const r = frameRect(fr);
@@ -1145,7 +1152,10 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       const next: Item = kids ? { ...it, children: kids } : it;
       if (!next.shows) return next;
       const target = itemsOf(groups).find((x) => x.id === next.shows);
-      return target ? { ...next, label: readoutOf(target, undefined, lang) } : next;
+      /* the canvas and an export read the same words the preview shows — the bare number, or the
+         author's own line with the number dropped into it — so what they line up is what the
+         visitor will read there */
+      return target ? { ...next, label: readText(next, readoutOf(target, undefined, lang, false)) } : next;
     };
     const same = groups.every((g) => g.items.every((it) => !it.shows && !(it.children ?? []).some((c) => c.shows)));
     return same ? groups : groups.map((g) => ({ ...g, items: g.items.map(bind) }));

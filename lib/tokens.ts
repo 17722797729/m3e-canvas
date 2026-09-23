@@ -606,6 +606,8 @@ export type Kind =
   | "checkbox"
   | "slider"
   | "stepper"
+  /** A kind the palette no longer offers: documents written while it existed are read back as a
+   *  plain slider when they open, so nothing an author drew is lost. */
   | "sliderInput"
   | "text"
   | "image"
@@ -676,6 +678,20 @@ export type KindSpec = {
   defVariant?: Variant;
 };
 
+/** How tall a slider is: its track and handle, and the room above them for the number when the
+ *  author asks the part to show one. */
+export const SLIDER_H = 44;
+export const SLIDER_VALUE_H = 64;
+
+/** The smallest a part may be dragged to. Every part allows it, whatever it is: a prototype often
+ *  needs a two-character-wide button or a thumbnail of a screen, and a part smaller than its content
+ *  clips the way a real one does — refusing the size would only make the author fight the editor. */
+export const SIZE_MIN = 20;
+
+/** Kinds the palette no longer offers but a document may still hold: they stay readable so an older
+ *  document opens, and the editor's reader turns them into what the palette offers instead. */
+export const LEGACY_KINDS: Kind[] = ["sliderInput"];
+
 export const KIND_SPEC: Record<Kind, KindSpec> = {
   box: {
     label: "Box",
@@ -693,8 +709,8 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasFill: true,
     /* and it can be made to scroll: the same container, with content that moves inside it */
     hasScroll: true,
-    size: { min: 40, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
-    size2: { min: 24, max: PHONE_H, step: 4, icon: "height", presets: HEIGHT_PRESETS },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: HEIGHT_PRESETS },
     defLabel: "",
     defIcon: null,
     defSize: PHONE_W,
@@ -717,8 +733,8 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasFill: true,
     /* the frame scrolls over its cells: pins rows and it becomes the inventory window */
     hasScroll: true,
-    size: { min: 120, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
-    size2: { min: 120, max: PHONE_H, step: 4, icon: "height", presets: [240, 320, PHONE_H / 2, PHONE_H] },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [240, 320, PHONE_H / 2, PHONE_H] },
     defLabel: "",
     defIcon: null,
     defSize: CONTENT_W,
@@ -738,8 +754,8 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     connect: { axis: "x", outer: R_FULL, inner: R_INNER, family: "button" },
     /* M3's medium button is 56dp tall; a bigger one is often asked for, so the height is the
        author's to set as well as the width */
-    size2: { min: 32, max: 200, step: 4, icon: "height", presets: [40, 48, 56, 64, 80] },
-    size: { min: 64, max: PHONE_W, step: 4, icon: "width", presets: [HALF_W, CONTENT_W] },
+    size2: { min: SIZE_MIN, max: 200, step: 4, icon: "height", presets: [40, 48, 56, 64, 80] },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: [HALF_W, CONTENT_W] },
     defLabel: "ボタン",
     defIcon: "swords",
   },
@@ -758,7 +774,7 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasSupporting: false,
     hasIcon: true,
     connect: { axis: "x", outer: 24, inner: R_INNER, family: "button" },
-    size: { min: 40, max: 96, step: 4, icon: "open_in_full", presets: [40, 48, 56, 96] },
+    size: { min: SIZE_MIN, max: 96, step: 4, icon: "open_in_full", presets: [40, 48, 56, 96] },
     defLabel: "",
     defIcon: "sports_esports",
     defSize: 48,
@@ -776,13 +792,17 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasLabel: false,
     hasSupporting: false,
     hasIcon: true,
-    size: { min: 40, max: 128, step: 4, icon: "open_in_full", presets: [40, 56, 96] },
+    size: { min: SIZE_MIN, max: 128, step: 4, icon: "open_in_full", presets: [40, 56, 96] },
     defLabel: "",
     defIcon: "bolt",
     defSize: 56,
     defVariant: "tonal",
   },
   extendedFab: {
+
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width" },
+
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [40, 56, 64] },
     label: "Extended FAB",
     noun: "拡張 FAB",
     category: "actions",
@@ -799,6 +819,10 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     defVariant: "tonal",
   },
   chip: {
+
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width" },
+
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [24, 32, 48] },
     label: "Chip",
     noun: "チップ",
     category: "actions",
@@ -828,7 +852,9 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasLabel: true,
     hasSupporting: false,
     hasIcon: true,
-    size: { min: 200, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [64, 88] },
     defLabel: "タイトル",
     defIcon: "menu",
     defIcon2: "more_vert",
@@ -847,9 +873,9 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasSupporting: false,
     hasIcon: false,
     hasTabs: true,
-    size: { min: 200, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
     /* the bar's own height: the icon row plus whatever label room the author wants */
-    size2: { min: 40, max: 200, step: 4, icon: "height" },
+    size2: { min: SIZE_MIN, max: 200, step: 4, icon: "height" },
     defLabel: "",
     defIcon: null,
     defSize: PHONE_W,
@@ -868,8 +894,8 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasIcon: false,
     hasTabs: true,
     /* a rail's width is its own: 56dp of icons up to a wide two-column rail */
-    size: { min: 56, max: 320, step: 4, icon: "width" },
-    size2: { min: 200, max: PHONE_H, step: 4, icon: "height", presets: HEIGHT_PRESETS },
+    size: { min: SIZE_MIN, max: 320, step: 4, icon: "width" },
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: HEIGHT_PRESETS },
     defLabel: "",
     defIcon: null,
   },
@@ -885,7 +911,9 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasLabel: true,
     hasSupporting: false,
     hasIcon: true,
-    size: { min: 200, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [40, 56, 64] },
     defLabel: "検索",
     defIcon: "search",
     defIcon2: "mic",
@@ -903,8 +931,8 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasLabel: true,
     hasSupporting: true,
     hasIcon: true,
-    size: { min: 160, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
-    size2: { min: 96, max: PHONE_H, step: 4, icon: "height", presets: [120, 188, 280] },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [120, 188, 280] },
     hasFill: true,
     defLabel: "カードの見出し",
     defIcon: "image",
@@ -926,7 +954,9 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasIcon: true,
     hasFill: true,
     connect: { axis: "y", outer: R_FULL, inner: R_INNER, family: "list" },
-    size: { min: 200, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [56, 72, 96] },
     defLabel: "リスト項目",
     defIcon: "person",
     defSupporting: "サブテキスト",
@@ -934,6 +964,10 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     defSize: CONTENT_W,
   },
   dialog: {
+
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width" },
+
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [140, 220, 320] },
     label: "Dialog",
     noun: "ダイアログ",
     category: "containment",
@@ -950,6 +984,10 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     defSupporting: "この操作を実行しますか？",
   },
   snackbar: {
+
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width" },
+
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [40, 48, 64] },
     label: "Snackbar",
     noun: "スナックバー",
     category: "containment",
@@ -977,7 +1015,9 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasLabel: true,
     hasSupporting: true,
     hasIcon: true,
-    size: { min: 160, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [40, 56, 64] },
     defLabel: "ラベル",
     defIcon: "search",
     defSupporting: "",
@@ -997,7 +1037,9 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasSupporting: true,
     hasIcon: true,
     hasTabs: true,
-    size: { min: 160, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [40, 56, 64] },
     defLabel: "ラベル",
     defIcon: null,
     defSupporting: "",
@@ -1017,11 +1059,17 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasSupporting: false,
     hasIcon: false,
     hasChecked: true,
-    size: { min: 120, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [24, 32, 48] },
     defLabel: "通知",
     defIcon: null,
   },
   checkbox: {
+
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width" },
+
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [32, 40, 48] },
     label: "Checkbox",
     noun: "チェックボックス",
     category: "inputs",
@@ -1050,7 +1098,9 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasSupporting: false,
     hasIcon: false,
     hasValue: true,
-    size: { min: 120, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [32, 44, 56] },
     defLabel: "",
     defIcon: null,
     defSize: CONTENT_W,
@@ -1070,12 +1120,14 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasSupporting: false,
     hasIcon: false,
     hasValue: true,
-    size: { min: 120, max: PHONE_W, step: 4, icon: "width", presets: [160, 200, 240, CONTENT_W] },
-    size2: { min: 40, max: 96, step: 4, icon: "height", presets: [48, 56, 64] },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: [160, 200, 240, CONTENT_W] },
+    size2: { min: SIZE_MIN, max: 96, step: 4, icon: "height", presets: [48, 56, 64] },
     defLabel: "数量",
     defIcon: null,
     defSize: 200,
   },
+  /* retired: the palette offers the slider and the stepper instead, and a document that holds one
+     of these opens as a slider */
   sliderInput: {
     label: "Slider Field",
     noun: "スライダー入力",
@@ -1091,8 +1143,8 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasSupporting: false,
     hasIcon: false,
     hasValue: true,
-    size: { min: 160, max: PHONE_W, step: 4, icon: "width", presets: [260, 300, CONTENT_W] },
-    size2: { min: 72, max: 200, step: 4, icon: "height", presets: [88, 104, 120] },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: [260, 300, CONTENT_W] },
+    size2: { min: SIZE_MIN, max: 200, step: 4, icon: "height", presets: [88, 104, 120] },
     defLabel: "音量",
     defIcon: null,
     defSize: CONTENT_W,
@@ -1128,8 +1180,8 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasIcon: true,
     /* An image is a box an author crops a picture into: its own width and height, like a camera
        preview or a map, rather than one number that keeps it square. */
-    size: { min: 48, max: PHONE_W, step: 4, icon: "width", presets: [96, HALF_W, CONTENT_W, PHONE_W] },
-    size2: { min: 48, max: PHONE_H, step: 4, icon: "height", presets: [120, 200, PHONE_H] },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: [96, HALF_W, CONTENT_W, PHONE_W] },
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [120, 200, PHONE_H] },
     defLabel: "",
     defIcon: "image",
     defSize: 200,
@@ -1146,8 +1198,8 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasLabel: false,
     hasSupporting: false,
     hasIcon: true,
-    size: { min: 96, max: PHONE_W, step: 4, icon: "width", presets: [HALF_W, CONTENT_W, PHONE_W] },
-    size2: { min: 96, max: PHONE_H, step: 4, icon: "height", presets: [280, 507, PHONE_H] },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: [HALF_W, CONTENT_W, PHONE_W] },
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [280, 507, PHONE_H] },
     defLabel: "",
     defIcon: "photo_camera",
     defSize: CONTENT_W,
@@ -1164,8 +1216,8 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasLabel: false,
     hasSupporting: false,
     hasIcon: true,
-    size: { min: 96, max: PHONE_W, step: 4, icon: "width", presets: [HALF_W, CONTENT_W, PHONE_W] },
-    size2: { min: 96, max: PHONE_H, step: 4, icon: "height", presets: [200, 285, PHONE_H] },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: [HALF_W, CONTENT_W, PHONE_W] },
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [200, 285, PHONE_H] },
     defLabel: "",
     defIcon: "map",
     defSize: CONTENT_W,
@@ -1182,7 +1234,8 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasLabel: false,
     hasSupporting: false,
     hasIcon: false,
-    size: { min: 40, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size2: { min: 4, max: 64, step: 2, icon: "height", presets: [4, 8, 16, 32] },
     defLabel: "",
     defIcon: null,
     defSize: CONTENT_W,
@@ -1200,7 +1253,7 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasSupporting: false,
     hasIcon: false,
     hasContained: true,
-    size: { min: 32, max: 128, step: 4, icon: "open_in_full", presets: [32, 48, 64, 96] },
+    size: { min: SIZE_MIN, max: 128, step: 4, icon: "open_in_full", presets: [32, 48, 64, 96] },
     defLabel: "",
     defIcon: null,
     defSize: 48,
@@ -1219,7 +1272,9 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasIcon: false,
     hasValue: true,
     hasWavy: true,
-    size: { min: 120, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [16, 24, 32] },
     defLabel: "",
     defIcon: null,
     defSize: CONTENT_W,
@@ -1241,7 +1296,7 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasValue: true,
     /* the track is the author's to fill, and by default there is none: a bare bar over the page */
     hasFill: true,
-    size: { min: 80, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
     size2: { min: 4, max: 64, step: 2, icon: "height", presets: [6, 10, 16, 28] },
     defLabel: "",
     defIcon: null,
@@ -1261,12 +1316,16 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasIcon: false,
     hasValue: true,
     hasWavy: true,
-    size: { min: 24, max: 120, step: 4, icon: "open_in_full", presets: [24, 40, 48, 52, 64] },
+    size: { min: SIZE_MIN, max: 120, step: 4, icon: "open_in_full", presets: [24, 40, 48, 52, 64] },
     defLabel: "",
     defIcon: null,
     defSize: 48,
   },
   splitButton: {
+
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width" },
+
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [40, 56, 64] },
     label: "Split Button",
     noun: "スプリットボタン",
     category: "actions",
@@ -1295,13 +1354,17 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasSupporting: false,
     hasIcon: true,
     hasTabs: true,
-    size: { min: 160, max: CONTENT_W, step: 4, icon: "width", presets: [220, HALF_W, CONTENT_W] },
+    size: { min: SIZE_MIN, max: CONTENT_W, step: 4, icon: "width", presets: [220, HALF_W, CONTENT_W] },
     defLabel: "",
     defIcon: "close",
     defSize: 220,
     defVariant: "filled",
   },
   toolbar: {
+
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width" },
+
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [48, 64, 80] },
     label: "Toolbar",
     noun: "ツールバー",
     category: "navigation",
@@ -1331,14 +1394,18 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasSupporting: false,
     hasIcon: false,
     hasTabs: true,
-    size: { min: 200, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
     /* the row alone at its default; an author who wants the panels below it takes the height up */
-    size2: { min: TAB_ROW_H, max: PHONE_H, step: 4, icon: "height", presets: HEIGHT_PRESETS },
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: HEIGHT_PRESETS },
     defLabel: "",
     defIcon: null,
     defSize: PHONE_W,
   },
   radio: {
+
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width" },
+
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [32, 40, 48] },
     label: "Radio Button",
     noun: "ラジオボタン",
     category: "inputs",
@@ -1403,7 +1470,6 @@ export const KIND_ORDER: Kind[] = [
   "radio",
   "slider",
   "stepper",
-  "sliderInput",
   "text",
   "image",
   "camera",
@@ -1497,6 +1563,20 @@ export type Item = {
   /** A text that reads another part instead of its own words: the id of the part whose value it
    *  shows — a volume slider's number beside the slider, live while the visitor drags it. */
   shows?: string;
+  /** Sliders and bars: draw the value on the part itself, so a number a button or a drag moves is
+   *  there to be read without a second component bound to it. */
+  showValue?: boolean;
+  /** Whether that number carries its percent sign. Unset means it does, so a document drawn before
+   *  the switch existed keeps the look it was designed with; `false` drops the sign for a slider
+   *  that stands for something that is not a share of a hundred. */
+  unit?: boolean;
+  /** A text that reads a part keeps its own words as well (`shows` + `mix`): the value lands where
+   *  the words say `{v}`, so "出售数量： {v} / 10000" is a sentence with a live number in it. */
+  mix?: boolean;
+  /** The top of a slider's or a stepper's range: unset is a hundred, which is what a percentage
+   *  stops at, while "出售数量 … / 10000" wants a ceiling of its own. Drag, the number on the part,
+   *  the ＋/− buttons and the numbers a rule adds all stop here. */
+  max?: number;
   /** the background this part paints, or `transparent` to let what is behind it show */
   fill?: FillToken;
   /** containers: the axes the visitor can move the content along; unset holds still */
@@ -1628,7 +1708,10 @@ export type StepTrigger = { kind: "tap" } | { kind: "after"; seconds: number };
 export type PartStep = {
   id: string;
   from: string;
-  to: string;
+  /** The look the step lands in. Left out, the part keeps the look it is in and the step only does
+   *  what `do` says — which is what a button that just drives another part needs: it stays where it
+   *  is, so the very same tap fires again and again instead of walking off after one press. */
+  to?: string;
   trigger: StepTrigger;
   /** what else the step does, in order: a jump, or a look latched onto a part */
   do?: RuleAction[];
@@ -1822,8 +1905,40 @@ export type RuleAction =
    *  claimed one. Only the properties the action names are written, so a step that says nothing about
    *  one leaves it exactly as it found it. A document written while an action could also restyle the
    *  part keeps its `variant` here; the reader drops it. */
-  | ({ kind: "look"; target?: string; variant?: Variant } & RulePatch);
+  | ({ kind: "look"; target?: string; variant?: Variant; valueOp?: ValueOp } & RulePatch);
 
+
+/** What a step does to a number: writes one, or walks the one the part is already at — which is what
+ *  turns a plus button into a stepper rather than a jump to a number. */
+export type ValueOp = "set" | "add" | "sub";
+export const VALUE_OPS: { key: ValueOp; icon: string }[] = [
+  { key: "set", icon: "login" },
+  { key: "add", icon: "add" },
+  { key: "sub", icon: "remove" },
+];
+export const isValueOp = (v: unknown): v is ValueOp => VALUE_OPS.some((o) => o.key === v);
+
+/** What a value runs up to before the author says otherwise, and how far that ceiling may be pushed:
+ *  a volume or a percentage stops at a hundred, a count of things runs to ten thousand. */
+export const MAX_DEF = 100;
+export const MAX_MIN = 1;
+export const MAX_MAX = 1_000_000;
+
+/** A ceiling the author typed, brought into the range a value may run to at all. */
+export const clampMax = (n: number) => Math.max(MAX_MIN, Math.min(MAX_MAX, Math.round(n)));
+
+/** The top of a part's value: the author's own maximum, a hundred unless they set one. It reads no
+ *  more than the one field, so a caller that has only an id and a max in hand can still ask. */
+export const maxOf = (it: { max?: number }): number => clampMax(it.max ?? MAX_DEF);
+
+/** A share of the part's range, whole: every value a step or a drag writes lands in that range. */
+export const clampValue = (n: number, max: number = MAX_DEF) => Math.max(0, Math.min(Math.max(MAX_MIN, max), Math.round(n)));
+
+/** The value a step asks for. `set` writes the number it carries; `add` and `sub` walk the value the
+ *  part is at now, one step at a time, which is how a pair of buttons drives a slider. */
+export function valueAfter(op: ValueOp | undefined, current: number, amount: number, max: number = MAX_DEF): number {
+  return clampValue(op === "add" ? current + amount : op === "sub" ? current - amount : amount, max);
+}
 
 /**
  * The properties a step may set on a part. They are the part's own fields, plus the three flags a look
@@ -2539,6 +2654,10 @@ export const backTarget = (layers: Layer[]): "layer" | "screen" | "blocked" => {
 /** parts that span the screen edge to edge and follow its width when it changes */
 export const FULL_WIDTH: Kind[] = ["topAppBar", "bottomNav", "tabs"];
 
+/** Kinds drawn to the width of what they say until the author gives them one. Their own width has to
+ *  beat the measurement the canvas took of them, in `sizeOf` and in the renderer alike. */
+export const AUTHOR_WIDTHS: Kind[] = ["switch", "button", "badge", "chip", "checkbox", "radio", "extendedFab", "splitButton"];
+
 /** The spec a part draws from. A part whose kind this build does not know — one from a
  *  document another build wrote, or one left in state while this list was being edited —
  *  falls back to the box, so no geometry call takes the editor down with it. */
@@ -2906,7 +3025,7 @@ export function makeItem(kind: Kind): Item {
   /* An icon button is a circle: saying so outright keeps it one even where it sits in a run beside
      a button, which is what its shape switch shows and what the author asked for. */
   if (kind === "iconButton") it.shape = "round";
-  if (kind === "slider" || kind === "stepper" || kind === "sliderInput") it.value = 40;
+  if (kind === "slider" || kind === "stepper") it.value = 40;
   if (kind === "progressBar") it.value = PROGRESS_DEFAULT;
   if (kind === "bottomNav") {
     it.tabs = defaultTabs();
@@ -2970,13 +3089,14 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
     case "checkbox":
     case "splitButton":
     case "radio":
-      return { w: widths[it.id] ?? 128, h: s.h };
+      /* as wide as its own words until the author gives it a width of its own */
+      return { w: it.size ?? widths[it.id] ?? 128, h: it.size2 ?? s.h };
     case "badge":
       return { w: it.size ?? widths[it.id] ?? 16, h: it.size2 ?? (it.label.trim() ? s.h : 6) };
     case "fabMenu":
       return { w: n, h: 56 + (it.tabs?.length ?? 0) * (FAB_MENU_ITEM_H + FAB_MENU_GAP) };
     case "toolbar":
-      return { w: toolbarWidth(it), h: s.h };
+      return { w: it.size ?? toolbarWidth(it), h: it.size2 ?? s.h };
     case "tabs":
       return { w: n, h: it.size2 ?? s.h };
     case "text":
@@ -2996,7 +3116,7 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
     case "topAppBar":
       /* the status-bar inset belongs to a phone: a bar wider than one has no status bar above it.
        * (An Android tablet does; the canvas leaves that to the prompt.) */
-      return { w: n, h: 64 + (n > PHONE_W ? 0 : STATUS_BAR_H) };
+      return { w: n, h: it.size2 ?? 64 + (n > PHONE_W ? 0 : STATUS_BAR_H) };
     case "bottomNav": {
       /* Folded, the bar is a small pill holding nothing but its own button: the whole bar
        * really changes size, so the fold is visible wherever it is looked at. */
@@ -3010,16 +3130,20 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
     case "listItem":
     case "textField":
     case "select":
-    case "slider":
     case "linearProgress":
     case "divider":
-      return { w: n, h: s.h };
+      return { w: n, h: it.size2 ?? s.h };
+    case "slider":
+      /* a slider that shows its number needs the room above the track to show it in */
+      return { w: n, h: it.size2 ?? (it.showValue ? SLIDER_VALUE_H : SLIDER_H) };
     case "progressBar":
     case "stepper":
-    case "sliderInput":
-      return { w: n, h: it.size2 ?? s.h };
     case "card":
       return { w: n, h: it.size2 ?? Math.round(n * 0.5875) };
+    case "dialog":
+    case "snackbar":
+      /* a dialog is as wide as M3's own until the author says otherwise, and its height is theirs */
+      return { w: n, h: it.size2 ?? s.h };
     case "box":
     case "invGrid":
       return { w: n, h: it.size2 ?? s.h };
@@ -3083,9 +3207,6 @@ export function baseRadii(it: Item): Radii {
       return uniformRadii(Math.round((it.size2 ?? s.h) / 2));
     case "card":
     case "invGrid":
-    case "sliderInput":
-      if (it.corners) return { ...it.corners };
-    // falls through
     case "image":
     case "camera":
     case "map":
@@ -3409,17 +3530,25 @@ export function resizedChildren(before: Item, patch: Partial<Item>, widths: Reco
 /* ---------- what a bound text reads ---------- */
 
 /** The kinds whose value a text can read: the ones a visitor can move or choose. */
-export const READOUT_KINDS: Kind[] = ["slider", "stepper", "sliderInput", "progressBar", "linearProgress", "circularProgress", "select", "tabs"];
+export const READOUT_KINDS: Kind[] = ["slider", "stepper", "progressBar", "linearProgress", "circularProgress", "select", "tabs"];
 
 /** Whether a part has a value worth showing beside it. */
 export const hasReadout = (it: Item) => READOUT_KINDS.includes(it.kind) || !!it.switch;
+
+/** Whether a part's own number carries its percent sign: unset is yes, `false` is the author saying
+ *  the number stands on its own. */
+export const unitOf = (it: Item) => it.unit !== false;
 
 /**
  * The value of a part as one line of text: a number with its percent sign for the controls a visitor
  * moves, the chosen option for a row, and on or off for a switch. `live` is what the visitor has
  * moved it to, which is what makes a text bound to a slider follow the drag as it happens.
+ *
+ * `unit` is false when the value is read *into* a text the author wrote: there the number stands on
+ * its own, because the words around it belong to the author — "%" on the slider is a switch of its
+ * own (`Item.unit`), not something every sentence about the number has to carry.
  */
-export function readoutOf(it: Item, live?: number, lang?: Lang): string {
+export function readoutOf(it: Item, live?: number, lang?: Lang, unit = true): string {
   const words = { on: { ja: "オン", en: "On", zh: "开", ko: "켜짐" }, off: { ja: "オフ", en: "Off", zh: "关", ko: "꺼짐" } };
   const pick = (w: { ja: string; en: string; zh: string; ko: string }) => w[lang ?? getLang()];
   if (it.kind === "tabs" || it.kind === "select") {
@@ -3427,8 +3556,34 @@ export function readoutOf(it: Item, live?: number, lang?: Lang): string {
     return tabs[tabIndexOf(it)]?.label.trim() || "—";
   }
   if (it.switch) return pick(it.checked ? words.on : words.off);
-  const v = Math.max(0, Math.min(100, Math.round(live ?? it.value ?? 0)));
-  return `${v}%`;
+  const v = clampValue(live ?? it.value ?? 0, maxOf(it));
+  return unit && unitOf(it) ? `${v}%` : `${v}`;
+}
+
+/** Where the author's own words take a bound part's value: `出售数量： {v} / 10000`. The aliases are
+ *  there because the token is typed into a Chinese, Japanese or English sentence alike. */
+export const VALUE_TOKEN = "{v}";
+const VALUE_TOKENS = /\{(?:v|value|值|数值|값)\}/i;
+
+/** Whether the author's words already say where the value goes: the editor offers to add the token
+ *  only when they do not, so one press cannot leave a line with two of them. */
+export const hasValueToken = (label: string) => VALUE_TOKENS.test(label);
+
+/**
+ * The author's words with the value in them: the number lands where they wrote `{v}`, and a text that
+ * never wrote one gets the value after its words, which is what an author who wants both gets without
+ * having to learn the token first.
+ */
+export function mixText(label: string, value: string): string {
+  return hasValueToken(label) ? label.replace(new RegExp(VALUE_TOKENS.source, "gi"), () => value) : `${label} ${value}`.trim();
+}
+
+/**
+ * What a text that reads another part shows: the value alone, or — when the author asked for both
+ * (`Item.mix`) — their own words with the value inside them.
+ */
+export function readText(reader: Item, value: string): string {
+  return reader.mix ? mixText(reader.label ?? "", value) : value;
 }
 
 /* ---------- slot grids ---------- */

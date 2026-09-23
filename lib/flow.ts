@@ -1,4 +1,4 @@
-import { BACK_TARGET, KIND_SPEC, RULE_FIELDS, START_LOOK, actionSlotsOf, actionsOf, frameRect, groupBounds, isOverlayFrame, isWideRail, lookItem, overlayLevelOfFrame, subtreeOf, type Doc, type Group, type Item, type ItemState, type OverlayLevel, type PartFlow, type PartStep, type RuleAction, type RuleField, type RulePatch, type StateEffect } from "./tokens";
+import { BACK_TARGET, KIND_SPEC, RULE_FIELDS, START_LOOK, actionSlotsOf, actionsOf, frameRect, groupBounds, isOverlayFrame, isWideRail, lookItem, overlayLevelOfFrame, subtreeOf, type Doc, type Group, type Item, type ItemState, type OverlayLevel, type PartFlow, type PartStep, type RuleAction, type RuleField, type RulePatch, type StateEffect, type ValueOp } from "./tokens";
 import { KIND_TEXT, overlayLevelText, t, type Lang } from "./i18n";
 
 /** the level's name in the UI language, for the diagram's node captions */
@@ -87,10 +87,24 @@ export function ruleClause(lang: Lang, key: RuleField, v: unknown): string {
   return FIELD_TEXT[lang][key].replace("{v}", ruleValueText(lang, key, v));
 }
 
+/** How a step that walks a value reads, rather than writing one: a plus button is a sentence about
+ *  the value going up, not about the number it lands on. */
+const VALUE_OP_TEXT: Record<Lang, { add: string; sub: string }> = {
+  ja: { add: "値は {v} 増える", sub: "値は {v} 減る" },
+  en: { add: "its value goes up by {v}", sub: "its value goes down by {v}" },
+  zh: { add: "数值增加 {v}", sub: "数值减少 {v}" },
+  ko: { add: "값이 {v} 늘어난다", sub: "값이 {v} 줄어든다" },
+};
+
 /** The properties one look action names, in the order they are written about. */
-export function lookClauses(lang: Lang, a: RulePatch & { variant?: string }): string[] {
+export function lookClauses(lang: Lang, a: RulePatch & { variant?: string; valueOp?: ValueOp }): string[] {
   const raw = a as Record<string, unknown>;
-  return RULE_FIELDS.filter((k) => raw[k] !== undefined).map((k) => ruleClause(lang, k, raw[k]));
+  return RULE_FIELDS.filter((k) => raw[k] !== undefined).map((k) => {
+    if (k === "value" && (a.valueOp === "add" || a.valueOp === "sub")) {
+      return VALUE_OP_TEXT[lang][a.valueOp].replace("{v}", String(raw[k]));
+    }
+    return ruleClause(lang, k, raw[k]);
+  });
 }
 
 export const FLOW_TEXT: Record<
@@ -142,6 +156,8 @@ export const FLOW_TEXT: Record<
     lookChange: { label: (v: string) => string; icon: (v: string) => string; color: (v: string) => string; variant: (v: string) => string; off: string; grow: string; hide: string };
     /** one step of it: how it starts, the look it lands in, what that look changes, and the rest */
     step: (item: string, how: string, to: string, changes: string, extra: string) => string;
+    /** a tap that only acts: the part keeps the look it is in */
+    stay: (item: string, how: string, extra: string) => string;
   }
 > = {
   ja: {
@@ -187,6 +203,7 @@ export const FLOW_TEXT: Record<
       hide: "隠れる",
     },
     step: (item, how, to, changes, extra) => `${how}「${item}」は${to}になります${changes ? `（${changes}）` : ""}${extra ? `。${extra}` : "。"}`,
+    stay: (item, how, extra) => `${how}「${item}」は見た目を変えずに${extra ? `${extra}。` : "何もしません。"}`,
     state: {
       disable: (item) => `「${item}」をタップすると、この部品は無効になります。`,
       cooldown: (item, _value, seconds) => `「${item}」をタップすると ${seconds} 秒間は灰色になり、カウントダウンが終わると元の見た目に戻ります。`,
@@ -241,6 +258,7 @@ export const FLOW_TEXT: Record<
       hide: "it disappears",
     },
     step: (item, how, to, changes, extra) => `${how} ${item} becomes ${to}${changes ? ` (${changes})` : ""}${extra ? `. ${extra}` : "."}`,
+    stay: (item, how, extra) => `${how} ${item} keeps the look it is in${extra ? ` and ${extra}` : ""}.`,
     state: {
       disable: (item) => `Tapping「${item}」 greys it out for good.`,
       cooldown: (item, _value, seconds) => `After tapping "${item}" the part is greyed for ${seconds} seconds, then goes back to how it looked.`,
@@ -295,6 +313,7 @@ export const FLOW_TEXT: Record<
       hide: "隐藏",
     },
     step: (item, how, to, changes, extra) => `${how}，「${item}」变成${to}${changes ? `（${changes}）` : ""}${extra ? `。${extra}` : "。"}`,
+    stay: (item, how, extra) => `${how}，「${item}」外观不变${extra ? `，${extra}` : ""}。`,
     state: {
       disable: (item) => `点击「${item}」后置灰，不再响应。`,
       cooldown: (item, _value, seconds) => `点击「${item}」后该组件置灰 ${seconds} 秒并显示倒计时，倒计时结束后恢复原样式。`,
@@ -349,6 +368,7 @@ export const FLOW_TEXT: Record<
       hide: "숨겨짐",
     },
     step: (item, how, to, changes, extra) => `${how} "${item}"은(는) ${to}이(가) 됩니다${changes ? ` (${changes})` : ""}${extra ? `. ${extra}` : "."}`,
+    stay: (item, how, extra) => `${how} "${item}"은 모양을 그대로 두고${extra ? ` ${extra}` : " 아무것도 하지 않습니다"}.`,
     state: {
       disable: (item) => `"${item}"을(를) 탭하면 이 요소를 사용할 수 없습니다.`,
       cooldown: (item, _value, seconds) => `"${item}"을(를) 탭하면 ${seconds}초 동안 회색으로 바뀌고 카운트다운이 끝나면 원래 모양으로 돌아옵니다.`,
@@ -431,6 +451,9 @@ function stepText(it: Item, flow: PartFlow | undefined, step: PartStep, who: str
   const x = FLOW_TEXT[lang];
   const how = step.trigger.kind === "after" ? x.afterHow(String(step.trigger.seconds)) : x.tapHow;
   const extra = (step.do ?? []).map((a) => actionWords(a, lang)).filter(Boolean).join(x.changeJoin);
+  /* a step with no destination keeps the part where it is: it is a line about what the tap does,
+     not about a look it lands in */
+  if (step.to === undefined) return x.stay(who, how, extra);
   return x.step(who, how, lookWords(it, flow, step.to, lang), lookChanges(flow, step.to, lang), extra);
 }
 

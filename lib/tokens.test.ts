@@ -4,7 +4,7 @@ import { contrastRatio } from "./color";
 import { itemNameOf } from "./flow";
 import { getLang, KIND_TEXT } from "./i18n";
 
-import { CELL_DEF, CELL_MAX, CELL_MIN, COLS_MAX, ROWS_MAX, cellGap, cellOf, scrollContent, slotGrid, gridCells, cellBox, gridCheckZ, rulePatch, ruleFieldsFor, readoutOf, hasReadout, withGridCells, BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill, childShown, connectedButton, DIALOG_COLOR, childDrawn, badgeSurface, buttonScale, findItemIn, foldMargins, radiiOfRuns, roundByNature, runPartRadii, ROUND_SHAPES, foldPlace, foldShift, layoutOf, NO_FOLD, fitTabPanels, keepPanelSlots, liftAbove, isStateEffect, STATE_EFFECTS, START_LOOK, firstTapStep, firstDueStep, waitLeft, lookItem, lookAt, statesAsFlow, migrateFlows, hasTimedSteps, fillColor, fillInk, TRANSPARENT, cardFillOf, type PartFlow, type PartLook, type PartStep, type MachineAt, NAV_ICON, NAV_INDICATOR, NAV_INDICATOR_R, NAV_LABEL_FONT, selectedAncestor, takesText, panelSlotFor, refillPanels, restorePanel, slotsOf, resizedChildren, needsTabPanels, tabIndexOf, tabPanelId, tabRenamePatch, tabPanelsPatch, tabStyleOf, TAB_PANEL_H, TAB_ROW_H, onToken, pageTintOf, PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type Kind, type ItemState, type PlacedItem, type Frame } from "./tokens";
+import { CELL_DEF, CELL_MAX, CELL_MIN, COLS_MAX, ROWS_MAX, cellGap, cellOf, scrollContent, slotGrid, gridCells, cellBox, gridCheckZ, rulePatch, ruleFieldsFor, readoutOf, hasReadout, unitOf, mixText, readText, VALUE_TOKEN, hasValueToken, valueAfter, maxOf, clampMax, MAX_DEF, MAX_MAX, isValueOp, withGridCells, BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill, childShown, connectedButton, DIALOG_COLOR, childDrawn, badgeSurface, buttonScale, findItemIn, foldMargins, radiiOfRuns, roundByNature, runPartRadii, ROUND_SHAPES, foldPlace, foldShift, layoutOf, NO_FOLD, fitTabPanels, keepPanelSlots, liftAbove, isStateEffect, STATE_EFFECTS, START_LOOK, firstTapStep, firstDueStep, waitLeft, lookItem, lookAt, statesAsFlow, migrateFlows, hasTimedSteps, fillColor, fillInk, TRANSPARENT, cardFillOf, type PartFlow, type PartLook, type PartStep, type MachineAt, NAV_ICON, NAV_INDICATOR, NAV_INDICATOR_R, NAV_LABEL_FONT, selectedAncestor, takesText, panelSlotFor, refillPanels, restorePanel, slotsOf, resizedChildren, needsTabPanels, tabIndexOf, tabPanelId, tabRenamePatch, tabPanelsPatch, tabStyleOf, TAB_PANEL_H, TAB_ROW_H, onToken, pageTintOf, PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type Kind, type ItemState, type PlacedItem, type Frame } from "./tokens";
 
 afterEach(() => setGlobalShape("rounded")); // restore the module default
 
@@ -1042,6 +1042,24 @@ describe("a look a step latches onto a part", () => {
   });
 });
 
+describe("a step that walks a part's value", () => {
+  /* A pair of buttons driving a slider is the commonest control in a game's settings: the step adds
+     to or subtracts from the value the part is at, rather than jumping to a number. */
+  it("adds, subtracts or writes outright, always inside the range", () => {
+    expect(valueAfter("add", 40, 1)).toBe(41);
+    expect(valueAfter("sub", 40, 1)).toBe(39);
+    expect(valueAfter("set", 40, 70)).toBe(70);
+    expect(valueAfter(undefined, 40, 70)).toBe(70);
+    /* the ends are where they are: a step never takes the value past 0 or 100 */
+    expect(valueAfter("add", 100, 1)).toBe(100);
+    expect(valueAfter("sub", 0, 1)).toBe(0);
+    expect(valueAfter("set", 40, 300)).toBe(100);
+    expect(valueAfter("add", 40, 2.4)).toBe(42);
+    expect(isValueOp("add")).toBe(true);
+    expect(isValueOp("double")).toBe(false);
+  });
+});
+
 describe("a text that reads another part", () => {
   /* A number beside a slider is the commonest readout in a game UI: the text carries the id of the
      part it reads, and the value it shows is the live one, so the drag moves both. */
@@ -1063,10 +1081,75 @@ describe("a text that reads another part", () => {
     /* and only the parts with something to read are offered as a source */
     expect(hasReadout(slider)).toBe(true);
     expect(hasReadout(makeItem("stepper"))).toBe(true);
-    expect(hasReadout(makeItem("sliderInput"))).toBe(true);
     expect(hasReadout(sw)).toBe(true);
     expect(hasReadout(makeItem("button"))).toBe(false);
     expect(hasReadout(makeItem("text"))).toBe(false);
+  });
+
+  /* The percent sign is a switch on the part, and a text reading the value never carries it: the
+     number is the author's to punctuate, and a slider that counts things is not a share of a hundred. */
+  it("drops the percent sign when the author turns it off, and never puts it in a text", () => {
+    const slider = { ...makeItem("slider"), id: "s", value: 40 };
+    expect(unitOf(slider)).toBe(true);
+    expect(unitOf({ ...slider, unit: true })).toBe(true);
+    expect(unitOf({ ...slider, unit: false })).toBe(false);
+    /* the part's own number follows the switch ... */
+    expect(readoutOf(slider, undefined, "en")).toBe("40%");
+    expect(readoutOf({ ...slider, unit: false }, 55, "en")).toBe("55");
+    /* ... and a text read always gets the bare number, whatever the switch says */
+    expect(readoutOf(slider, 73, "en", false)).toBe("73");
+    expect(readoutOf({ ...slider, unit: false }, 73, "zh", false)).toBe("73");
+    const bar = { ...makeItem("progressBar"), value: 8 };
+    expect(readoutOf(bar, undefined, "zh", false)).toBe("8");
+    /* a row or a switch reads the same words either way: nothing to punctuate */
+    const sw = { ...makeItem("listItem"), switch: true, checked: true };
+    expect(readoutOf(sw, undefined, "en", false)).toBe("On");
+  });
+
+  /* Words and a live number in one line: "出售数量： {v} / 10000" is the shape most screens want,
+     and the token is where the number lands — before, after, or between two pieces of text. */
+  it("puts a read value inside the author's own words at the token", () => {
+    const reader = { ...makeItem("text"), label: "出售数量： {v} / 10000", shows: "s", mix: true };
+    expect(mixText("出售数量： {v} / 10000", "4200")).toBe("出售数量： 4200 / 10000");
+    /* every alias an author might type, and every place in the line */
+    expect(mixText("{v} / {v}", "7")).toBe("7 / 7");
+    expect(mixText("{value} 件", "7")).toBe("7 件");
+    expect(mixText("共 {数值} 件", "7")).toBe("共 7 件");
+    expect(mixText("已售 {值} 件", "7")).toBe("已售 7 件");
+    /* no token at all: the number lands after the words rather than nowhere */
+    expect(mixText("出售数量：", "8")).toBe("出售数量： 8");
+    expect(mixText("", "8")).toBe("8");
+    /* the switch decides whether the words are kept: off, the text is the value alone */
+    expect(readText({ ...reader, mix: undefined }, "4200")).toBe("4200");
+    expect(readText(reader, "4200")).toBe("出售数量： 4200 / 10000");
+    /* the token is the one the editor inserts, and it is asked for only when the line has none */
+    expect(VALUE_TOKEN).toBe("{v}");
+    expect(hasValueToken("出售数量： {v} / 10000")).toBe(true);
+    expect(hasValueToken("已售 {数值} 件")).toBe(true);
+    expect(hasValueToken("出售数量：")).toBe(false);
+    expect(hasValueToken("{x}")).toBe(false);
+  });
+
+  /* The top of a value is the author's: a percentage stops at a hundred, a count of things runs to
+     ten thousand, and every way the number moves — drag, the part's own readout, a step — stops there. */
+  it("lets a slider or a stepper say where its range ends", () => {
+    const slider = { ...makeItem("slider"), id: "s", value: 4200, max: 10000 };
+    expect(maxOf(slider)).toBe(10000);
+    expect(maxOf({ ...slider, max: undefined })).toBe(MAX_DEF);
+    /* a ceiling outside what a value may run to at all is brought back in, not trusted */
+    expect(maxOf({ ...slider, max: 0 })).toBe(1);
+    expect(maxOf({ ...slider, max: -50 })).toBe(1);
+    expect(maxOf({ ...slider, max: 5_000_000 })).toBe(MAX_MAX);
+    expect(clampMax(999.6)).toBe(1000);
+    /* the readout is the value on that scale, and the switch still decides the sign */
+    expect(readoutOf(slider, undefined, "en")).toBe("4200%");
+    expect(readoutOf({ ...slider, unit: false }, 9000, "zh", false)).toBe("9000");
+    expect(readoutOf(slider, 12000, "en")).toBe("10000%");
+    /* a step lands inside it, and the same step on a percentage stops at a hundred */
+    expect(valueAfter("add", 9500, 500, 10000)).toBe(10000);
+    expect(valueAfter("add", 90, 500)).toBe(100);
+    expect(valueAfter("sub", 200, 500, 10000)).toBe(0);
+    expect(valueAfter("set", 0, 8000, 10000)).toBe(8000);
   });
 });
 

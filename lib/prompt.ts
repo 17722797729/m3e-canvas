@@ -220,13 +220,13 @@ function itemJa(it: Item): string {
     case "checkbox":
       return `${q(it.label)}のチェックボックス（初期状態は${it.checked ? "チェック済み" : "未チェック"}）`;
     case "slider":
-      return `スライダー（初期値 ${it.value ?? 40}%）`;
+      /* the percent sign is the author's switch, so the line quotes the number the way the part
+         draws it — a slider that counts something reads as a count, not as a share of a hundred */
+      return `スライダー（初期値 ${it.value ?? 40}${it.unit === false ? "、％なし" : "%"}${it.max !== undefined ? `、最大 ${it.max}` : ""}${it.showValue ? "、値を部品の上に表示" : ""}）`;
     case "stepper":
       return `数値 ${it.value ?? 40} のステッパー${hasText(it.label) ? `（ラベルは${q(it.label)}）` : ""}（−／＋ ボタンで 1 ずつ増減し、間の数値は直接入力できる。範囲は 0〜100）`;
-    case "sliderInput":
-      return `ラベル${q(it.label)}の${it.value ?? 40} のスライダー入力（同じ値のスライダー・数値入力・−／＋ ボタンを 1 行にまとめ、どれを動かしても値が変わる。範囲は 0〜100）`;
     case "text":
-      return `${it.bold ? "太字の" : ""}テキスト${q(it.label)}（${it.size ?? 28}sp${it.shows ? "、自分の文字の代わりに別の部品の現在値を表示する" : ""}）`;
+      return `${it.bold ? "太字の" : ""}テキスト${q(it.label)}（${it.size ?? 28}sp${it.shows ? (it.mix ? "、自分の文字の中の {v} にその現在値を入れて表示する" : "、自分の文字の代わりに別の部品の現在値を表示する") : ""}）`;
     case "image":
       return `${viewSize(it, 1)} の画像${imageSrc(it) ? `（${imageSrc(it)} の画像を表示）` : it.src ? "（指定の画像を表示）" : "プレースホルダー"}`;
     case "camera":
@@ -321,13 +321,11 @@ function itemEn(it: Item): string {
     case "checkbox":
       return `a checkbox ${q(it.label)} (initially ${it.checked ? "checked" : "unchecked"})`;
     case "slider":
-      return `a slider (initial value ${it.value ?? 40}%)`;
+      return `a slider (initial value ${it.value ?? 40}${it.unit === false ? ", no percent sign" : "%"}${it.max !== undefined ? `, running to ${it.max}` : ""}${it.showValue ? ", drawing the value on the part" : ""})`;
     case "stepper":
       return `a stepper at ${it.value ?? 40}${hasText(it.label) ? ` labelled ${q(it.label)}` : ""}: a minus and a plus that walk the value by one, with the number between them typed into directly (0–100)`;
-    case "sliderInput":
-      return `a slider field labelled ${q(it.label)} at ${it.value ?? 40}: one row of a slider, a number box and minus / plus buttons, all three carrying the same 0–100 value`;
     case "text":
-      return `${it.bold ? "bold " : ""}text ${q(it.label)} at ${it.size ?? 28}sp${it.shows ? " and reading another part's live value" : ""}`;
+      return `${it.bold ? "bold " : ""}text ${q(it.label)} at ${it.size ?? 28}sp${it.shows ? (it.mix ? ", dropping another part's live value into {v} inside its own words" : " and reading another part's live value") : ""}`;
     case "image":
       return `a ${viewSize(it, 1)} image${imageSrc(it) ? ` (load it from ${imageSrc(it)})` : it.src ? " (use the provided image)" : " placeholder"}`;
     case "camera":
@@ -422,13 +420,11 @@ function itemZh(it: Item): string {
     case "checkbox":
       return `${q(it.label)}复选框（初始状态为${it.checked ? "已勾选" : "未勾选"}）`;
     case "slider":
-      return `滑块（初始值 ${it.value ?? 40}%）`;
+      return `滑块（初始值 ${it.value ?? 40}${it.unit === false ? "，不带百分号" : "%"}${it.max !== undefined ? `，最大 ${it.max}` : ""}${it.showValue ? "，在组件上显示数值" : ""}）`;
     case "stepper":
       return `${it.value ?? 40} 的步进器${hasText(it.label) ? `（标签${q(it.label)}）` : ""}（−／＋ 按钮每次加减 1，中间的数字可以直接输入，范围 0〜100）`;
-    case "sliderInput":
-      return `标签${q(it.label)}、数值 ${it.value ?? 40} 的多功能滑块（滑块、数值输入框、−／＋ 按钮三者联动，范围 0〜100）`;
     case "text":
-      return `${it.bold ? "粗体" : ""}文本${q(it.label)}（${it.size ?? 28}sp${it.shows ? "，改为显示另一个组件的当前值" : ""}）`;
+      return `${it.bold ? "粗体" : ""}文本${q(it.label)}（${it.size ?? 28}sp${it.shows ? (it.mix ? "，把自己的文字里的 {v} 换成另一个组件的当前值" : "，改为显示另一个组件的当前值") : ""}）`;
     case "image":
       return `${viewSize(it, 1)} 的图片${imageSrc(it) ? `（显示 ${imageSrc(it)} 的图片）` : it.src ? "（显示指定的图片）" : "占位符"}`;
     case "camera":
@@ -509,10 +505,9 @@ function itemKo(it: Item): string {
     }
     case "switch": return `${q(it.label)} 스위치(초기 상태 ${it.checked ? "켜짐" : "꺼짐"}${it.noCheck ? ", 켜졌을 때 핸들에 체크 아이콘 없음" : ""})`;
     case "checkbox": return `${q(it.label)} 체크박스(초기 상태 ${it.checked ? "선택됨" : "선택 안 됨"})`;
-    case "slider": return `슬라이더(초깃값 ${it.value ?? 40}%)`;
+    case "slider": return `슬라이더(초깃값 ${it.value ?? 40}${it.unit === false ? ", ％ 없음" : "%"}${it.max !== undefined ? `, 최대 ${it.max}` : ""}${it.showValue ? ", 값을 부품 위에 표시" : ""})`;
     case "stepper": return `값 ${it.value ?? 40}의 스테퍼${hasText(it.label) ? `(레이블 ${q(it.label)})` : ""}(−／＋ 버튼으로 1씩 증감, 가운데 숫자는 직접 입력, 범위 0~100)`;
-    case "sliderInput": return `레이블 ${q(it.label)}, 값 ${it.value ?? 40}의 슬라이더 입력(슬라이더·숫자 입력·−／＋ 버튼이 한 줄에서 같은 값을 공유, 범위 0~100)`;
-    case "text": return `${it.bold ? "굵은 " : ""}텍스트 ${q(it.label)}(${it.size ?? 28}sp${it.shows ? ", 자기 글자 대신 다른 부품의 현재 값을 표시" : ""})`;
+    case "text": return `${it.bold ? "굵은 " : ""}텍스트 ${q(it.label)}(${it.size ?? 28}sp${it.shows ? (it.mix ? ", 자기 글자 안의 {v} 자리에 다른 부품의 현재 값을 넣음" : ", 자기 글자 대신 다른 부품의 현재 값을 표시") : ""})`;
     case "image": return `${viewSize(it, 1)} 이미지${imageSrc(it) ? `(${imageSrc(it)}의 이미지 표시)` : it.src ? "(지정한 이미지 표시)" : " 자리표시자"}`;
     case "camera": return `${viewSize(it, 4 / 3)} 카메라 미리보기`;
     case "map": return `${viewSize(it, 3 / 4)} 지도`;
@@ -724,7 +719,9 @@ function notes(g: Group, frames: Frame[], lang: Lang): string[] {
     }
     /* The machine the part runs: one clause per step, so a reader can wire the same behaviour
        without ever seeing the editor's flow. Steps leaving one look are read in order. */
-    const lookWord = (machine: PartFlow, id: string) => {
+    const lookWord = (machine: PartFlow, id: string | undefined) => {
+      /* a step with no destination keeps the part where it is */
+      if (id === undefined) return { ja: "そのままの見た目", en: "the look it is in", zh: "当前外观", ko: "지금 모양" }[lang];
       if (id === START_LOOK) return { ja: "最初の見た目", en: "the drawn look", zh: "起始外观", ko: "처음 모양" }[lang];
       const look = machine.looks.find((l) => l.id === id);
       if (!look) return { ja: "最初の見た目", en: "the drawn look", zh: "起始外观", ko: "처음 모양" }[lang];
@@ -774,7 +771,12 @@ function notes(g: Group, frames: Frame[], lang: Lang): string[] {
           st.trigger.kind === "after"
             ? { ja: `${st.trigger.seconds} 秒後に`, en: `after ${st.trigger.seconds}s `, zh: `进入这个状态 ${st.trigger.seconds} 秒后`, ko: `${st.trigger.seconds}초 뒤에 ` }[lang]
             : { ja: "タップすると", en: "on tap ", zh: "点击后", ko: "탭하면 " }[lang];
-        const said = { ja: `${how}${to}になり${bits.length ? `（${bits.join("、")}）` : ""}${rest ? `、${rest}` : ""}`, en: `${how}it becomes ${to}${bits.length ? ` (${bits.join(", ")})` : ""}${rest ? `, and ${rest}` : ""}`, zh: `${how}变成${to}${bits.length ? `（${bits.join("、")}）` : ""}${rest ? `，并${rest}` : ""}`, ko: `${how} ${to}이(가) 되고${bits.length ? ` (${bits.join(", ")})` : ""}${rest ? `, ${rest}` : ""}` }[lang];
+        /* a step with no destination keeps the part where it is: the sentence says what the tap does
+           rather than naming a look it never reaches */
+        const said =
+          st.to === undefined
+            ? { ja: `${how}見た目は変えずに${rest || "何もしない"}`, en: `${how}it keeps its look${rest ? ` and ${rest}` : ""}`, zh: `${how}外观不变${rest ? `，${rest}` : ""}`, ko: `${how} 모양은 그대로 두고${rest ? ` ${rest}` : ""}` }[lang]
+            : { ja: `${how}${to}になり${bits.length ? `（${bits.join("、")}）` : ""}${rest ? `、${rest}` : ""}`, en: `${how}it becomes ${to}${bits.length ? ` (${bits.join(", ")})` : ""}${rest ? `, and ${rest}` : ""}`, zh: `${how}变成${to}${bits.length ? `（${bits.join("、")}）` : ""}${rest ? `，并${rest}` : ""}`, ko: `${how} ${to}이(가) 되고${bits.length ? ` (${bits.join(", ")})` : ""}${rest ? `, ${rest}` : ""}` }[lang];
         parts.push(said);
       }
     }
@@ -1162,7 +1164,6 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind, string>>> = {
     checkbox: "Checkboxes: 18dp square with 2dp corners, primary when checked, label on the right in bodyLarge.",
     slider: "Sliders: the M3 Expressive thick track (16dp) with a tall handle (4×44dp). Primary on the left of the handle, secondaryContainer on the right. Dragging changes the value.",
     stepper: "Steppers: a 56dp pill on surfaceContainerHighest with the label on the left and, on the right, a minus icon button, the number, and a plus icon button. One tap moves the value by one and never past 0 or 100. The number is an input too: typing a value takes the stepper to it.",
-    sliderInput: "Slider fields: the same thick slider on top of a row carrying the same value as a number box with a minus and a plus beside it. All three change the one 0–100 value, and the number is what a bound text reads. One rounded container with 20dp corners: the slider takes the upper 44dp, the row the rest, the number centred in a large weight.",
     text: "Text: the specified sp size; headings on onSurface, descriptions on onSurfaceVariant, line height 1.3–1.5× the size. No ripple or press feedback on tap.",
     image: "Images: 20dp corners; a surfaceContainerHighest placeholder when none is provided. Keep the aspect ratio and center-crop.",
     camera: "Camera preview: 20dp corners. Show the device camera feed in this area; while permission is missing, show a camera icon on a dark inverseSurface pane.",
@@ -1213,7 +1214,6 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind, string>>> = {
     checkbox: "复选框：18dp 方形，圆角 2dp，勾选时为 primary。标签在右侧，用 bodyLarge。",
     slider: "滑块：M3 Expressive 的粗轨道（高 16dp）和竖长手柄（宽 4dp、高 44dp）。手柄左侧为 primary，右侧为 secondaryContainer。可拖动改变数值。",
     stepper: "步进器：高 56dp 的胶囊，背景 surfaceContainerHighest；左侧放标签，右侧依次是「−」图标按钮、数字、「＋」图标按钮。每点一次加减 1，不越过 0〜100；数字本身可以输入，输入后直接跳到该值。",
-    sliderInput: "多功能滑块：上层是同款粗滑块，下层是同一数值的输入框加「−」「＋」按钮，三者联动同一个 0〜100 的值；绑定了数值的文字读的就是它。整体是一个圆角 20dp 的容器：滑块占上方 44dp，下面一行放输入框和两个按钮，数字居中并用较大字重。",
     text: "文本：指定的 sp 字号。标题用 onSurface，说明文字用 onSurfaceVariant，行高为字号的 1.3〜1.5 倍。点击时不加涟漪等反馈。",
     image: "图片：圆角 20dp，未指定时使用 surfaceContainerHighest 的占位符。保持宽高比并居中裁剪。",
     camera: "相机预览：圆角 20dp。在此区域显示设备相机画面；未获得权限时，在 inverseSurface 的深色面板上显示相机图标。",
@@ -1256,7 +1256,6 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind, string>>> = {
     checkbox: "체크박스: 18dp 사각형, 모서리 2dp, 선택 시 primary. 레이블은 오른쪽에 bodyLarge로 표시한다.",
     slider: "슬라이더: M3 Expressive의 두꺼운 16dp 트랙과 4×44dp 세로 핸들. 핸들 왼쪽은 primary, 오른쪽은 secondaryContainer이며 드래그로 값을 바꾼다.",
     stepper: "스테퍼: 높이 56dp 알약 모양, 배경은 surfaceContainerHighest. 왼쪽에 레이블, 오른쪽에 − 아이콘 버튼·숫자·＋ 아이콘 버튼을 둔다. 한 번 누를 때마다 값을 1씩 바꾸고 0~100을 넘지 않는다. 숫자는 직접 입력할 수 있고 입력하면 그 값으로 이동한다.",
-    sliderInput: "슬라이더 입력: 같은 두꺼운 슬라이더 위에, 같은 값을 가진 숫자 입력과 −·＋ 버튼을 한 줄로 둔다. 셋이 하나의 0~100 값을 공유하고, 값을 읽는 텍스트는 이 숫자를 표시한다. 모서리 20dp의 둥근 컨테이너로 그리고 슬라이더가 위 44dp, 아래 줄이 나머지를 차지한다.",
     text: "텍스트: 지정된 sp 크기. 제목은 onSurface, 설명은 onSurfaceVariant, 줄 높이는 글자 크기의 1.3~1.5배. 탭 반응은 넣지 않는다.",
     image: "이미지: 모서리 20dp. 이미지가 없으면 surfaceContainerHighest 자리표시자를 사용하고 비율을 유지해 가운데에서 자른다.",
     camera: "카메라 미리보기: 모서리 20dp. 이 영역에 기기 카메라 화면을 표시하고, 권한이 없는 동안은 inverseSurface의 어두운 면 위에 카메라 아이콘을 둔다.",

@@ -532,6 +532,24 @@ describe("a box in the prompt", () => {
   });
 });
 
+describe("a button that only acts", () => {
+  /* A plus button driving a slider has no look of its own to land in: its step keeps the part where
+     it is, and the prompt has to say that plainly or an implementer draws a state it never reaches. */
+  const doc: Doc = {
+    title: "T", brief: "", paletteKey: "purple", frame: "phone", platform: "android",
+    frames: [{ id: "f", name: "Home", x: 0, y: 0 }],
+    groups: [{ id: "g", x: 0, y: 100, axis: "y", items: [
+      { ...makeItem("slider"), id: "sld", label: "音量", value: 40 },
+      { ...makeItem("button"), id: "plus", label: "＋", flow: { looks: [], steps: [{ id: "s1", from: START_LOOK, trigger: { kind: "tap" as const }, do: [{ kind: "look" as const, target: "sld", value: 1, valueOp: "add" as const }] }] } },
+    ] }],
+  };
+  it.each(LANGS)("says the part keeps its look, in %s", (lang) => {
+    setGlobalLang(lang);
+    const words = { ja: "見た目は変えずに", en: "it keeps its look", zh: "外观不变", ko: "모양은 그대로 두고" }[lang];
+    expect(buildPrompt(doc, {}, undefined, lang)).toContain(words);
+  });
+});
+
 describe("a button that switches a board's bulk-tick mode", () => {
   /* Games put the mode behind a button outside the board: the step's look carries the switch, and
      the prompt has to name it, or the implementer wires a board that never shows its boxes. */

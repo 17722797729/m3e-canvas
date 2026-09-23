@@ -98,8 +98,18 @@ import {
   type PartStep,
   type RuleAction,
   RULE_FIELDS,
+  VALUE_OPS,
+  type ValueOp,
   ruleFieldsFor,
   hasReadout,
+  unitOf,
+  VALUE_TOKEN,
+  hasValueToken,
+  maxOf,
+  clampMax,
+  clampValue,
+  MAX_DEF,
+  AUTHOR_WIDTHS,
   type FillToken,
   type RuleField,
   /* the cell board a slot grid draws */
@@ -1076,6 +1086,50 @@ export function Inspector({
 
       {onAlign && !editOn && <AlignSection single onAlign={onAlign} p={p} />}
 
+      {item.kind === "text" && !editOn && (
+        /* A text can read another part instead of saying its own words: the number beside the slider
+           that moves as the visitor drags it, or as a button steps it, without either part knowing
+           about rules. Its own section, because that is what the author came here to do. */
+        <Section id="bind" icon="numbers" title={t("showsValue", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <Pick
+              options={[
+                { key: "", label: t("showsNothing", lang), icon: "block" },
+                ...readable.map((x) => ({ key: x.id, label: x.name, icon: x.icon })),
+              ]}
+              value={item.shows ?? ""}
+              onChange={(shows) => onChange({ shows: shows || undefined })}
+              p={p}
+              title={t("showsValue", lang)}
+            />
+            <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{item.shows ? t("showsHint", lang) : t("showsPickHint", lang)}</div>
+            {/* Words and a live number in one line — "出售数量： {v} / 10000" — is what most screens
+                actually want, so the words become a template with the number dropped into them. */}
+            {item.shows && (
+              <>
+                <Toggle on={!!item.mix} onChange={(mix) => onChange({ mix: mix || undefined })} p={p} icon="join_inner" label={t("mixOwn", lang)} grow />
+                {item.mix && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", borderRadius: 10, background: p.surfaceContainerHigh }}>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 11, lineHeight: 1.4, color: p.onSurfaceVariant }}>{t("mixHint", lang)}</span>
+                    {/* once the line already says where the number goes, there is nothing to add */}
+                    {!hasValueToken(item.label ?? "") && (
+                      <button
+                        type="button"
+                        onClick={() => onChange({ label: `${item.label ?? ""}${VALUE_TOKEN}` })}
+                        className="m3-press"
+                        style={{ height: 28, padding: "0 12px", borderRadius: 14, border: "none", background: p.primary, color: p.onPrimary, fontSize: 12, fontWeight: 600, cursor: "pointer", flex: "0 0 auto" }}
+                      >
+                        {t("mixInsert", lang)}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </Section>
+      )}
+
       {isGridCell(item) && !editOn && (
         <Section id="cell" icon="check_box" title={t("gridCells", lang)} p={p}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "2px 0" }}>
@@ -1111,26 +1165,6 @@ export function Inspector({
                     title={t("bold", lang)}
                   />
                 )}
-              </div>
-            )}
-            {item.kind === "text" && !editOn && (
-              /* A text can read another part instead of saying its own words: the number beside the
-                 slider that moves as the visitor drags it, without either part knowing about rules. */
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: "0 0 auto" }}>{t("showsValue", lang)}</span>
-                  <Pick
-                    options={[
-                      { key: "", label: t("showsNothing", lang), icon: "block" },
-                      ...readable.map((x) => ({ key: x.id, label: x.name, icon: x.icon })),
-                    ]}
-                    value={item.shows ?? ""}
-                    onChange={(shows) => onChange({ shows: shows || undefined })}
-                    p={p}
-                    title={t("showsValue", lang)}
-                  />
-                </div>
-                {item.shows && <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("showsHint", lang)}</div>}
               </div>
             )}
             {spec.hasSupporting && !editOn && (
@@ -1704,6 +1738,19 @@ export function Inspector({
             {item.kind === "switch" && (
               <Toggle on={!item.noCheck} onChange={(on) => onChange({ noCheck: on ? undefined : true })} p={p} icon="check" label={t("thumbCheck", lang)} grow />
             )}
+            {item.kind === "slider" && (
+              /* the number on the part itself: what a button or a drag moves has to be readable
+                 without a second component bound to it */
+              <Toggle on={!!item.showValue} onChange={(showValue) => onChange({ showValue: showValue || undefined })} p={p} icon="numbers" label={t("showsValue", lang)} grow />
+            )}
+            {item.kind === "slider" && item.showValue && (
+              /* the percent sign is a switch, not a fact about the control: a slider that counts
+                 something is the same part with the number standing alone */
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <Toggle on={unitOf(item)} onChange={(on) => onChange({ unit: on ? undefined : false })} p={p} icon="percent" label={t("showsUnit", lang)} grow />
+                <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("showsUnitHint", lang)}</div>
+              </div>
+            )}
             {spec.hasContained && (
               <Toggle
                 on={!!item.contained}
@@ -1772,7 +1819,9 @@ export function Inspector({
                 )}
               </div>
             )}
-            {spec.hasValue && item.kind !== "slider" && item.kind !== "progressBar" && (
+            {/* a slider, a bar and a stepper always carry a value: the toggle only gates the kinds
+                that can be indeterminate */}
+            {spec.hasValue && item.kind !== "slider" && item.kind !== "progressBar" && item.kind !== "stepper" && (
               <Toggle
                 on={item.value !== undefined}
                 onChange={(on) => onChange({ value: on ? 60 : undefined })}
@@ -1783,18 +1832,56 @@ export function Inspector({
               />
             )}
             {/* a progress bar always shows a share of its track: it has no looping state to be in */}
-            {spec.hasValue && (item.kind === "slider" || item.kind === "progressBar" || item.value !== undefined) && (
-              <Slider
-                icon="percent"
-                value={item.value ?? 40}
-                min={0}
-                max={100}
-                step={1}
-                onChange={(value) => onChange({ value })}
-                p={p}
-                unit="%"
-              />
-            )}
+            {spec.hasValue && (item.kind === "slider" || item.kind === "progressBar" || item.kind === "stepper" || item.value !== undefined) && (() => {
+              /* The value sits in the part's own range, and a slider is a coarse thing to hit an exact
+                 number with: the two buttons either side walk it one step at a time, which is also
+                 how an implementer will read the part — plus and minus, one at a time. A count of
+                 things says so with its maximum: a hundred is a percentage, ten thousand is a stock. */
+              const top = maxOf(item);
+              const now = clampValue(item.value ?? 40, top);
+              const step = (by: number) => () => onChange({ value: clampValue(now + by, top) });
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                    <IconBtn icon="remove" p={p} size={36} title={t("valueMinus", lang)} onClick={step(-1)} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <Slider
+                        icon={item.unit === false ? "tag" : "percent"}
+                        value={now}
+                        min={0}
+                        max={top}
+                        step={Math.max(1, Math.round(top / 100))}
+                        onChange={(value) => onChange({ value })}
+                        p={p}
+                        unit={item.unit === false ? "" : "%"}
+                      />
+                    </div>
+                    <IconBtn icon="add" p={p} size={36} title={t("valuePlus", lang)} onClick={step(1)} />
+                  </div>
+                  {/* the ceiling is the author's, so it is a number field rather than a slider: a
+                      count of things wants to say 10000 exactly, not slide towards it */}
+                  {(item.kind === "slider" || item.kind === "stepper") && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("maxValue", lang)}</div>
+                      <Field
+                        value={String(top)}
+                        onChange={(v) => {
+                          const n = Number(v.replace(/[^0-9]/g, ""));
+                          /* the value follows the ceiling down: a slider capped at 50 cannot stand at 80 */
+                          const max = Number.isFinite(n) && n > 0 ? clampMax(n) : undefined;
+                          onChange({ max: max === MAX_DEF ? undefined : max, ...(max !== undefined && now > max ? { value: max } : {}) });
+                        }}
+                        placeholder={String(MAX_DEF)}
+                        p={p}
+                        icon="vertical_align_top"
+                        height={40}
+                      />
+                      <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("maxHint", lang).replace("{n}", String(MAX_DEF))}</div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </Section>
       )}
@@ -1851,9 +1938,11 @@ export function Inspector({
                   p={p}
                   unit={item.kind === "text" ? "sp" : ""}
                 />
-                {spec.size.presets && (
+                {(spec.size.presets || AUTHOR_WIDTHS.includes(item.kind)) && (
                   <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    {(item.kind === "button" || item.kind === "switch" || item.kind === "badge") && (
+                    {/* a part drawn to its own words keeps a way back to that, whether or not the
+                        kind offers preset widths */}
+                    {AUTHOR_WIDTHS.includes(item.kind) && (
                       /* these are as wide as their text unless a width was set; this chip goes back to that */
                       <button
                         onClick={() => onChange({ size: undefined })}
@@ -1874,15 +1963,17 @@ export function Inspector({
                         {t("autoWidth", lang)}
                       </button>
                     )}
-                    <SizePresets
-                      values={[...new Set([...(frameSize.w !== PHONE_W && spec.size.icon === "width" && spec.size.presets.includes(CONTENT_W) ? [CONTENT_W] : []), ...spec.size.presets.map(mapWidthPreset)])].sort((a, b) => a - b)}
-                      value={item.kind === "navRail" ? railWidth(item) : item.size ?? spec.defSize ?? spec.w}
-                      min={spec.size.min}
-                      max={widthMax(spec.size.max)}
-                      onChange={(size) => onChange({ size })}
-                      p={p}
-                      labelOf={item.kind === "text" ? undefined : (v) => widthPresetLabel(v, frameSize.w)}
-                    />
+                    {spec.size.presets && (
+                      <SizePresets
+                        values={[...new Set([...(frameSize.w !== PHONE_W && spec.size.icon === "width" && spec.size.presets.includes(CONTENT_W) ? [CONTENT_W] : []), ...spec.size.presets.map(mapWidthPreset)])].sort((a, b) => a - b)}
+                        value={item.kind === "navRail" ? railWidth(item) : item.size ?? spec.defSize ?? spec.w}
+                        min={spec.size.min}
+                        max={widthMax(spec.size.max)}
+                        onChange={(size) => onChange({ size })}
+                        p={p}
+                        labelOf={item.kind === "text" ? undefined : (v) => widthPresetLabel(v, frameSize.w)}
+                      />
+                    )}
                   </div>
                 )}
               </>
@@ -2305,8 +2396,42 @@ function RuleFieldValue({
           title={t("propSelected", lang)}
         />
       );
-    case "value":
-      return <Slider icon="percent" title={t("propValue", lang)} value={(action.value as number) ?? PROGRESS_DEFAULT} min={0} max={100} step={1} onChange={set} p={p} unit="%" />;
+    case "value": {
+      /* A step either writes a number or walks the one the part is at: the second is what turns a
+         pair of buttons into a stepper, each tap moving the value by the step below. The numbers on
+         offer run to the target's own ceiling, so "add 500" is a step on a slider that reaches ten
+         thousand rather than a jump to the top of a percentage. */
+      const op = action.valueOp ?? "set";
+      const top = maxOf(target);
+      const amount = (action.value as number) ?? (op === "set" ? PROGRESS_DEFAULT : 1);
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <Segmented<ValueOp>
+            options={VALUE_OPS.map((o) => ({
+              key: o.key,
+              icon: o.icon,
+              label: t(o.key === "set" ? "valueOpSet" : o.key === "add" ? "valueOpAdd" : "valueOpSub", lang),
+              title: t(o.key === "set" ? "valueOpSet" : o.key === "add" ? "valueOpAdd" : "valueOpSub", lang),
+            }))}
+            value={op}
+            onChange={(next) => onChange({ ...action, valueOp: next === "set" ? undefined : next, value: next === "set" ? Math.min(top, amount) : op === "set" ? 1 : amount } as RuleAction)}
+            p={p}
+            height={36}
+          />
+          <Slider
+            icon={op === "set" ? (target.unit === false ? "tag" : "percent") : "exposure"}
+            title={op === "set" ? t("propValue", lang) : t("valueStep", lang)}
+            value={amount}
+            min={op === "set" ? 0 : 1}
+            max={op === "set" ? top : Math.max(20, Math.min(top, Math.round(top / 10) || 1))}
+            step={1}
+            onChange={set}
+            p={p}
+            unit={op === "set" && target.unit !== false ? "%" : ""}
+          />
+        </div>
+      );
+    }
     case "disabled":
       return bool(!!action.disabled);
     case "hidden":
@@ -2494,8 +2619,33 @@ function StepRow({
       {timed && <Slider icon="timer" title={t("ruleAfter", lang)} value={seconds} min={1} max={3600} step={1} onChange={(s) => onChange({ trigger: { kind: "after", seconds: s } })} p={p} unit="s" />}
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: "0 0 auto" }}>{t("flowTo", lang)}</span>
-        <Pick options={targets} value={step.to} onChange={(to) => onChange({ to })} p={p} title={t("flowTo", lang)} />
+        {/* the look the step lands in, or none at all: a step that only acts on another part stays
+            where it is, so the same tap fires again the next time the visitor presses it */}
+        <Pick
+          options={[{ key: "", icon: "block", label: t("flowStay", lang) }, ...targets]}
+          value={step.to ?? ""}
+          onChange={(to) => onChange({ to: to || undefined })}
+          p={p}
+          title={t("flowTo", lang)}
+        />
       </div>
+      {/* A step whose actions only change *other* parts has nothing to become: leaving the look out
+          keeps the part where it is, so the same tap fires on every press. The one press that works
+          is otherwise a puzzling thing to debug, so the row says so and offers the fix. */}
+      {step.to !== undefined && do2.length > 0 && do2.every((x) => x.kind === "look" && !!x.target && x.target !== item.id) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", borderRadius: 10, background: p.surfaceContainerHigh }}>
+          <Icon name="info" size={16} color={p.onSurfaceVariant} />
+          <span style={{ flex: 1, minWidth: 0, fontSize: 11, lineHeight: 1.4, color: p.onSurfaceVariant }}>{t("ruleStayHint", lang)}</span>
+          <button
+            type="button"
+            onClick={() => onChange({ to: undefined })}
+            className="m3-press"
+            style={{ height: 28, padding: "0 12px", borderRadius: 14, border: "none", background: p.primary, color: p.onPrimary, fontSize: 12, fontWeight: 600, cursor: "pointer", flex: "0 0 auto" }}
+          >
+            {t("flowStay", lang)}
+          </button>
+        </div>
+      )}
       {do2.map((a, i) => (
         <div key={i} style={{ display: "flex", flexDirection: "column", gap: 8, padding: 8, borderRadius: 12, background: p.surfaceContainerHigh }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -2562,7 +2712,8 @@ function FlowEditor({
     put([...looks, made], [...steps, { id: uid(), from, to: made.id, trigger: { kind: "tap" } }]);
     setOpenId(made.id);
   };
-  const link = (from: string, to: string) => put(looks, [...steps, { id: uid(), from, to, trigger: { kind: "tap" } }]);
+  /** one more tap step out of a look: into another look, or staying put and only acting */
+  const link = (from: string, to?: string) => put(looks, [...steps, { id: uid(), from, ...(to ? { to } : {}), trigger: { kind: "tap" } }]);
   /* the action a new line of a step's list starts from: a jump when there are pages to jump to,
      and no button at all when the document has none */
   const extra: RuleAction | null = frames.length ? { kind: "goto", to: frames[0].id, transition: "slide" } : null;
@@ -2662,7 +2813,13 @@ function FlowEditor({
               </button>
               {looks.length > 0 && (
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <Pick options={[{ key: "", label: t("flowLink", lang) }, ...targets]} value="" onChange={(to) => to && link(node.id, to)} p={p} title={t("flowLink", lang)} />
+                  <Pick
+                    options={[{ key: "!", icon: "block", label: t("flowStay", lang) }, { key: "", label: t("flowLink", lang) }, ...targets]}
+                    value=""
+                    onChange={(to) => to && link(node.id, to === "!" ? undefined : to)}
+                    p={p}
+                    title={t("flowLink", lang)}
+                  />
                 </div>
               )}
             </div>

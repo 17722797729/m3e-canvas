@@ -12,6 +12,7 @@ import {
   Item,
   Kind,
   MEASURED,
+  AUTHOR_WIDTHS,
   Palette,
   Radii,
   STATUS_BAR_H,
@@ -67,6 +68,9 @@ import {
   gridCheckZ,
   cellRadius,
   panelRadius,
+  unitOf,
+  maxOf,
+  clampValue,
 } from "@/lib/tokens";
 import { CircularProgress, LinearProgress, LoadingIndicator } from "./Loading";
 import { t, useLang } from "@/lib/i18n";
@@ -620,25 +624,50 @@ export function GridCellMarks({
 export const ValueContext = createContext<{ onSet?: (v: number) => void }>({});
 const useValueControls = () => useContext(ValueContext);
 
-/** How tall the slider of a slider field is: the row under it takes the rest of the box. */
-const SLIDER_ROW_H = 44;
-
-/** The value a slider, a slider field or a stepper stands at: what the author set, 0 when unset. */
-const shownValue = (it: Item) => Math.max(0, Math.min(100, Math.round(it.value ?? 40)));
+/** The value a slider, a slider field or a stepper stands at: what the author set, 0 when unset —
+ *  clamped to the part's own range, so a slider that runs to ten thousand is read on its own scale. */
+const shownValue = (it: Item) => clampValue(it.value ?? 40, maxOf(it));
 
 /** The track, the thumb and the tick of a slider — drawn to the width the part is given, so the
  *  thumb lands under the finger whether it stands on a screen or inside a dialog panel. */
-function SliderTrack({ item, p, height }: { item: Item; p: Palette; height?: number }) {
-  const v = shownValue(item) / 100;
+function SliderTrack({ item, p, showValue }: { item: Item; p: Palette; showValue?: boolean }) {
+  const value = shownValue(item);
+  const v = value / maxOf(item);
   const w = item.size ?? 280;
   const handleX = 2 + (w - 4) * v;
-  const top = height === undefined ? 14 : 6;
+  const top = showValue ? 34 : 14;
   return (
-    <div style={{ position: "relative", height: height ?? "100%", flex: height === undefined ? undefined : "0 0 auto" }}>
+    <div style={{ position: "relative", height: "100%" }}>
       <div style={{ position: "absolute", left: 0, width: Math.max(0, handleX - 8), top, height: 16, borderRadius: "8px 2px 2px 8px", background: p.primary }} />
       <div style={{ position: "absolute", left: handleX + 8, right: 0, top, height: 16, borderRadius: "2px 8px 8px 2px", background: p.secondaryContainer }} />
       <div style={{ position: "absolute", right: 6, top: top + 6, width: 4, height: 4, borderRadius: 2, background: p.onSecondaryContainer }} />
-      <div style={{ position: "absolute", left: handleX - 2, top: Math.max(0, top - 14), width: 4, height: height === undefined ? 44 : 34, borderRadius: 2, background: p.primary }} />
+      <div style={{ position: "absolute", left: handleX - 2, top: top - 14, width: 4, height: 44, borderRadius: 2, background: p.primary }} />
+      {showValue && (
+        /* the number sits over the handle and stays inside the part at either end */
+        <span
+          data-value={value}
+          style={{
+            position: "absolute",
+            left: Math.max(0, Math.min(w - 52, handleX - 26)),
+            top: 0,
+            width: 52,
+            height: 24,
+            borderRadius: 8,
+            background: p.primary,
+            color: p.onPrimary,
+            fontSize: 13,
+            fontWeight: 700,
+            display: "grid",
+            placeItems: "center",
+            boxSizing: "border-box",
+          }}
+        >
+          {/* the percent sign is the author's to keep or drop: a slider standing for a count of
+              something is the same control without it — and one text node, because the pill lays
+              its children out in a grid */}
+          {`${value}${unitOf(item) ? "%" : ""}`}
+        </span>
+      )}
     </div>
   );
 }
@@ -668,7 +697,7 @@ function ValueRow({ item, p }: { item: Item; p: Palette }) {
   };
   const step = (by: number) => (e: React.PointerEvent | React.MouseEvent) => {
     e.stopPropagation();
-    cbs.onSet?.(Math.max(0, Math.min(100, v + by)));
+    cbs.onSet?.(clampValue(v + by, maxOf(item)));
   };
   return (
     <div
@@ -693,7 +722,7 @@ function ValueRow({ item, p }: { item: Item; p: Palette }) {
         onPointerDown={(e) => e.stopPropagation()}
         onChange={(e) => {
           const n = Number(e.target.value.replace(/[^0-9]/g, ""));
-          if (Number.isFinite(n)) cbs.onSet?.(Math.max(0, Math.min(100, n)));
+          if (Number.isFinite(n)) cbs.onSet?.(clampValue(n, maxOf(item)));
         }}
         style={{
           width: 56,
@@ -1069,15 +1098,9 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
     }
 
     case "slider":
-    case "sliderInput":
-      /* A slider and a slider field draw the same track: the field adds the number and the two
-         buttons under it, which is the whole difference between them. */
-      return (
-        <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
-          <SliderTrack item={item} p={p} height={item.kind === "slider" ? undefined : SLIDER_ROW_H} />
-          {item.kind === "sliderInput" && <ValueRow item={item} p={p} />}
-        </div>
-      );
+      /* with `showValue` the number rides above the track, on the handle, the way M3's own value
+         indicator does: the track keeps the whole width, so dragging still reads across the part */
+      return <SliderTrack item={item} p={p} showValue={!!item.showValue} />;
 
     case "stepper":
       return <ValueRow item={item} p={p} />;
@@ -1652,8 +1675,6 @@ function boxStyle(item: Item, p: Palette): React.CSSProperties {
     case "stepper":
       /* a filled field: the row the two buttons and the number sit in */
       return { background: p.surfaceContainerHighest, color: p.onSurface, border: "none" };
-    case "sliderInput":
-      return { background: item.fill ? fillColor(item.fill, p, "surfaceContainerLow") : "transparent", color: p.onSurface, border: "none" };
     case "button":
     case "iconButton":
     case "fab":
@@ -1780,7 +1801,7 @@ export function M3Node({
   const radiusTransition = instantRail ? { duration: 0 } : RADIUS_TWEEN;
   const r = radii ?? baseRadii(item);
   const size = sizeOf(item, widths);
-  const measured = MEASURED.includes(item.kind) && !((item.kind === "switch" || item.kind === "button" || item.kind === "badge") && item.size);
+  const measured = MEASURED.includes(item.kind) && !(AUTHOR_WIDTHS.includes(item.kind) && item.size);
   const clips = !NO_BOX.includes(item.kind) && item.kind !== "textField" && item.kind !== "select";
   /* a part with a colour of its own draws from a scheme whose primary role is that colour */
   const ep = paletteForItem(item, palette);
@@ -1863,7 +1884,7 @@ export function M3Static({
 }) {
   const r = radii ?? baseRadii(item);
   const size = sizeOf(item, {});
-  const measured = MEASURED.includes(item.kind) && !((item.kind === "switch" || item.kind === "button" || item.kind === "badge") && item.size);
+  const measured = MEASURED.includes(item.kind) && !(AUTHOR_WIDTHS.includes(item.kind) && item.size);
   const clips = !NO_BOX.includes(item.kind) && item.kind !== "textField" && item.kind !== "select";
   const ep = paletteForItem(item, palette);
   return (

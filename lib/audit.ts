@@ -165,6 +165,8 @@ export function audit(doc: Doc, widths: Record<string, number>): AuditIssue[] {
         const reached = new Set<string>([START_LOOK]);
         for (const st of machine.steps) {
           if (st.from !== START_LOOK && !looks.has(st.from)) push("danglingLook", frameId, it.id, st.from);
+          /* a step with no destination keeps the part where it is, so there is no look to check */
+          if (st.to === undefined) continue;
           if (st.to !== START_LOOK && !looks.has(st.to)) push("danglingLook", frameId, it.id, st.to);
           else reached.add(st.to);
           for (const a of st.do ?? []) {

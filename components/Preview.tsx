@@ -74,7 +74,13 @@ import {
   pushLayer,
   scrollOffset,
   rulePatch,
+  START_LOOK,
   readoutOf,
+  readText,
+  maxOf,
+  clampValue,
+  valueAfter,
+  PROGRESS_DEFAULT,
   type RulePatch,
   withLayers,
   type MachineAt,
@@ -173,9 +179,9 @@ const flips = (_it: Item) => false;
 /** The kinds whose value a visitor changes: a slider to scrub, a stepper to walk, a slider field to
  *  do both. One list, because a part of one of these kinds has to answer the same way wherever it
  *  stands — on the screen, inside a container, or inside a dialog panel. */
-const VALUE_KINDS: Kind[] = ["slider", "sliderInput", "stepper"];
-const SCRUBS: Kind[] = ["slider", "sliderInput"];
-const STEPS: Kind[] = ["stepper", "sliderInput"];
+const VALUE_KINDS: Kind[] = ["slider", "stepper", "progressBar", "linearProgress", "circularProgress"];
+const SCRUBS: Kind[] = ["slider"];
+const STEPS: Kind[] = ["stepper"];
 
 /** Whether a board's cell is ticked right now: how the author left it, flipped by every tap since
  *  the preview opened — the same rule the visitor's own taps follow everywhere else. */
@@ -282,8 +288,9 @@ function Tappable({
   onSet?: (v: number) => void;
   /** The screen's own setter, for a control inside a part the container holds */
   setValue?: (id: string, v: number) => void;
-  /** How a text bound to another part reads it: where to find the part, and its live value */
-  readout?: { find: (id: string) => Item | null; live: (id: string) => number | undefined; text: (it: Item, live?: number) => string };
+  /* `text` also takes the text doing the reading: whether it keeps its own words (`mix`) is a fact
+     about the reader, not about the part it reads */
+  readout?: { find: (id: string) => Item | null; live: (id: string) => number | undefined; text: (it: Item, live?: number, reader?: Item) => string };
   /** what the part's own container draws over it, a board's cell checkbox included */
   marks?: React.ReactNode;
   onTap?: () => void;
@@ -443,10 +450,13 @@ function Tappable({
      or React tears the whole screen down instead of drawing the parts that are left. */
   if (own?.hidden || pin?.hidden) return null;
 
+  /* Where the finger is along the track, as the part's own number: a slider that runs to ten thousand
+     is scrubbed across the same width and lands on its own scale. */
   const dragValue = (e: React.PointerEvent) => {
     const r = ref.current?.getBoundingClientRect();
     if (!r || !onValue) return;
-    onValue(Math.round(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * 100));
+    const share = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    onValue(clampValue(share * maxOf(item), maxOf(item)));
   };
 
   /** hit areas for the icons on a top app bar and the destinations on a navigation bar */
@@ -537,7 +547,7 @@ function Tappable({
        it exactly as it reaches one standing on the screen, or the controls of a dialog panel would
        be dead while the same part works on the page behind it. */
     const live = VALUE_KINDS.includes(c.kind) ? liveValue?.(c) : undefined;
-    const read = c.shows && readout ? (() => { const t = readout.find(c.shows!); return t ? readout.text(t, readout.live(t.id)) : null; })() : null;
+    const read = c.shows && readout ? (() => { const t = readout.find(c.shows!); return t ? readout.text(t, readout.live(t.id), c) : null; })() : null;
     const shownChild = { ...c, ...(live !== undefined ? { value: live } : {}), ...(read !== null ? { label: read } : {}) };
     return (
     /* a navigation part inside a container folds the same way it does on a screen */
@@ -875,11 +885,16 @@ function Screen({
   const interactiveRef = useRef(interactive);
   interactiveRef.current = interactive;
   const screenRef = useRef<HTMLDivElement>(null);
+  /* What a part's value is right now: where the visitor moved it to, else what the author set. A step
+     that adds one starts from this, which is what makes a plus button a stepper. */
+  const valueNow = (id: string): number => values[id] ?? itemsOf(shownGroups).find((x) => x.id === id)?.value ?? PROGRESS_DEFAULT;
   /* A text bound to another part reads it through this: the live value where the visitor has moved
-     it, the part's own where they have not. */
-  const readBound = (id: string): string | null => {
-    const target = itemsOf(shownGroups).find((x) => x.id === id);
-    return target ? readoutOf(target, values[target.id], lang) : null;
+     it, the part's own where they have not. It reads the bare number — the percent sign belongs to
+     the slider's own display, and the words around the number are the author's — and a text that
+     asked for both keeps its own words with the number dropped into them. */
+  const readBound = (reader: Item): string | null => {
+    const target = itemsOf(shownGroups).find((x) => x.id === reader.shows);
+    return target ? readText(reader, readoutOf(target, values[target.id], lang, false)) : null;
   };
   const shownGroups = useMemo(() => Object.entries(railStates).reduce((current, [id, railExpanded]) => {
     const patch = { railExpanded, railFolded: !railExpanded };
@@ -1120,7 +1135,7 @@ function Screen({
             let shown = flipped.has(it.id) ? flippedLook(it) : it;
             if (VALUE_KINDS.includes(it.kind) && values[it.id] !== undefined) shown = { ...shown, value: values[it.id] };
             /* a text bound to a part reads it, live: dragging a slider moves the number beside it */
-            if (it.shows) shown = { ...shown, label: readBound(it.shows) ?? shown.label };
+            if (it.shows) shown = { ...shown, label: readBound(it) ?? shown.label };
             if (it.kind === "select" && values[it.id] !== undefined) shown = { ...shown, selected: values[it.id] };
             const navKind = it.kind === "bottomNav" || it.kind === "navRail" || it.kind === "tabs";
             /* bars with the same destinations are one bar to the visitor: the choice follows them across screens */
@@ -1218,10 +1233,11 @@ function Screen({
                    slider may sit inside a container as easily as on the screen itself */
                 liveValue={(it) => values[it.id]}
                 setValue={onValue}
-                readout={{
+                        readout={{
                   find: (id) => itemsOf(shownGroups).find((x) => x.id === id) ?? null,
                   live: (id) => values[id],
-                  text: (target, live) => readoutOf(target, live, lang),
+                  /* a text reading a part gets the bare number: the % is the slider's own switch */
+                  text: (target, live, reader) => (reader ? readText(reader, readoutOf(target, live, lang, false)) : readoutOf(target, live, lang, false)),
                 }}
               />
             );
@@ -1515,6 +1531,15 @@ export function Preview({
    *  where the same rule would land if the visitor had tapped. `latched` marks the actions a step
    *  carries out: a look one of them asks for is a change the machine makes once, not a look that
    *  holds while a condition does, so it is recorded on the part rather than read off the rules. */
+  /** Where a step's number goes: the same store the visitor's own slider writes to, so a rule and a
+   *  drag share one value and a drag afterwards still has the last word. */
+  const writeValue = useCallback((id: string, v: number) => setValues((m) => ({ ...m, [id]: v })), []);
+  /** What a part's value is right now: the live one, else the one the author set. */
+  const currentValue = useCallback(
+    (id: string) => values[id] ?? itemsOf(doc.groups).find((x) => x.id === id)?.value ?? PROGRESS_DEFAULT,
+    [values, doc.groups],
+  );
+
   const runRuleAction = useCallback(
     (a: RuleAction, latched = false, owner: string | null = null) => {
       if (a.kind === "goto") {
@@ -1537,21 +1562,33 @@ export function Preview({
         /* a rule's look is already on screen while its conditions hold: only a step latches one */
         const target = a.target ?? owner;
         if (!latched || !target) return;
-        /* every property the action names is latched onto the part, and the ones it says nothing
-           about keep their place: a step that shows a board's boxes leaves its colour alone */
+        /* Every property the action names is latched onto the part, and the ones it says nothing
+           about keep their place: a step that shows a board's boxes leaves its colour alone. */
         const patch = rulePatch(a);
+        /* A number is the exception: it goes through the store the visitor's own slider writes to, so
+           "value + 1" really walks the value and a drag afterwards still has the last word. The step
+           stops at the target's own ceiling, which is why "add 500" is a real move on a slider that
+           runs to ten thousand and a jump to the top on one that stops at a hundred. */
+        if (a.value !== undefined) {
+          delete patch.value;
+          const found = itemsOf(doc.groups).find((x) => x.id === target);
+          const top = maxOf(found ?? {});
+          writeValue(target, valueAfter(a.valueOp, currentValue(target), a.value, top));
+        }
         setPinned((m) => ({ ...m, [target]: { ...m[target], ...patch } }));
         return;
       }
     },
-    [go, back, closeLayer],
+    [go, back, closeLayer, writeValue, currentValue],
   );
 
   /** Takes one step of a part's machine: the part lands in the look the step names, and whatever
    *  else the step asks for happens on the way — a jump, a value written, another part's look. */
   const take = useCallback(
     (key: string, owner: string | null, step: PartStep) => {
-      setAt((m) => ({ ...m, [key]: { look: step.to, since: nowRef.current } }));
+      /* a step with no destination leaves the part in the look it is in: only what it does happens,
+         so the same tap keeps firing — which is how a button drives a slider up and down */
+      setAt((m) => ({ ...m, [key]: { look: step.to ?? m[key]?.look ?? START_LOOK, since: nowRef.current } }));
       for (const a of step.do ?? []) runRuleAction(a, true, owner);
     },
     [runRuleAction],
@@ -1728,7 +1765,7 @@ export function Preview({
     flipped,
     onFlip: flip,
     values,
-    onValue: (id: string, v: number) => setValues((m) => ({ ...m, [id]: v })),
+    onValue: writeValue,
     runtime: { at, pinned, now, onStep: stepOnTap, take, activeId, onActivate: setActiveId },
     onRule: runRuleAction,
     /* a container's scroll is a runtime value like a slider's position: what the visitor moved it

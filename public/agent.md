@@ -122,10 +122,9 @@ Sizes are in dp; `size` is the width unless noted. Content width inside the phon
 | `switch` | switch with label | `label`, `checked`, `size` width (omit for text-sized; 380 puts the label left and the switch right) | text-sized × 48 |
 | `checkbox` | checkbox with label | `label`, `checked` | 40 tall |
 | `radio` | radio button with label | `label`, `checked` | 40 tall |
-| `slider` | slider | `value` 0–100 | 380 × 44 |
-| `stepper` | stepper: a minus, the number, a plus | `label`, `value` 0–100, stepped by one | 200 × 56 |
-| `sliderInput` | slider field: a slider with the same value as a number box and minus / plus buttons | `label`, `value` 0–100 | 380 × 104 |
-| `text` | a line of text | `label`, `size` font size (28 default), `bold`, `shows` the id of a slider / stepper / bar / row to read instead of its own words | |
+| `slider` | slider | `value` 0–100, `max` to raise that ceiling (a count of things runs to 10000), `showValue` to draw the number over the handle, `unit: false` to drop its percent sign | 380 × 44 (64 with the number) |
+| `stepper` | stepper: a minus, the number, a plus | `label`, `value` 0–100, `max` to raise that ceiling, stepped by one | 200 × 56 |
+| `text` | a line of text | `label`, `size` font size (28 default), `bold`, `shows` the id of a slider / stepper / bar / row to read instead of its own words, `mix: true` to keep its own words and drop the value in where the label says `{v}` (without a token the value is appended) | |
 | `image` | image | `size` square side, `src` an https URL (optional) | 200 × 200 |
 | `camera` | camera preview placeholder | `size` width, `size2` height | 380 × 507 |
 | `map` | map placeholder | `size` width, `size2` height | 380 × 285 |
@@ -164,8 +163,10 @@ Fields that any part may carry:
 
   - `looks` are the appearances the part can take. Each names only what it changes — `label`, `icon` (`null` for none), `color`, `variant`, `disabled`, `grow`, `hidden` — and every field it leaves out stays whatever the part itself is, so the author keeps editing one part rather than three copies.
   - `:start` is the part exactly as drawn. A step may go back to it.
+  - A `look` action's `value` may carry `"valueOp": "add"` or `"sub"` with a step (for example `{ "kind": "look", "target": "<slider>", "value": 1, "valueOp": "add" }`): it walks the value the part is at instead of writing one. That is how a plus and a minus button drive a slider like a stepper — one step per tap, clamped to 0–100 — and a visitor's own drag afterwards still has the last word. Left out, `valueOp` means `"set"`.
   - A `look` action writes the properties it names onto the part `target` names (or onto the part the step belongs to when `target` is left out), and leaves every other property alone. It may carry `label`, `icon` (empty string for none), `color`, `fill`, `checkboxes` (a slot grid's bulk-tick mode), `checked`, `selected` (an index into `tabs`), `value` (0–100), `disabled`, `hidden` and `grow`. It changes how a part is drawn, never what it is: its kind, its id, its children and its own `flow` are not a step's to write, and nothing here moves a part or changes its size.
   - So a button outside a board switches its multi-select on and off, the way a game does it: give the button two looks and a tap step each way, one with `{ "kind": "look", "target": "<board>", "checkboxes": true }` and one with `false`. `"disabled": true`, `"hidden": true` and `"grow": true` work the same way for any part — that is how one button greys out, puts away or enlarges another.
+  - A step may leave `to` out: the part then keeps the look it is in and the step only does what `do` says. That is what a button that just drives another part needs — a plus button stepping a slider stays where it is, so the same tap fires again on every press instead of walking off after one. A slider that should read its number out carries `"showValue": true` and draws the value over its handle; `"unit": false` drops the percent sign from that number, and a text reading the value always gets the bare number. A slider or stepper that counts things carries `"max"` (`{ "max": 10000 }`), which is the ceiling its value, its drag, its ＋/− buttons and every number a rule adds all stop at. A text that carries both words and a live number sets `"mix": true` and writes `{v}` where the number belongs: `"label": "出售数量： {v} / 10000"`.
   - `steps` move the part between looks. `trigger` is `{ "kind": "tap" }` or `{ "kind": "after", "seconds": 30 }` (counted from the moment the part entered the look it is leaving). `do` is a list of what else the step does on the way: `goto`, `back`, `close`, or `look` (a change latched onto this part or, with `target`, another one).
   - Steps leaving the same look are tried in order, and the first one is the one taken. When none is there, the part does what `action` says, which is also what happens in a look no step leaves.
 
