@@ -113,7 +113,7 @@ function canLeave(parts: Item[], level: OverlayLevel): boolean {
   return parts.some(
     (it) =>
       actionsOf(it).some(({ action }) => action.to !== BACK_TARGET) ||
-      [it.flow, ...Object.values(it.slotFlows ?? {})].some((m) => (m?.steps ?? []).some((st) => (st.do ?? []).some((a) => a.kind === "close" || a.kind === "goto"))),
+      [it.flow, ...Object.values(it.slotFlows ?? {})].some((m) => (m?.steps ?? []).some((st) => (st.do ?? []).some((a) => a.kind === "close" || a.kind === "closeAll" || a.kind === "goto"))),
   );
 }
 

@@ -61,7 +61,7 @@ const validChildren = (children: unknown): boolean =>
 const validRuleAction = (a: unknown): boolean => {
   if (!isRecord(a) || !isRuleKind(a.kind)) return false;
   if (a.kind === "goto") return typeof a.to === "string" && typeof a.transition === "string";
-  if (a.kind === "back" || a.kind === "close") return true;
+  if (a.kind === "back" || a.kind === "close" || a.kind === "closeAll") return true;
   /* a look only sets the fields it names; an empty one is a rule that does nothing, which is allowed */
   if (a.kind === "look") {
     /* What a step writes onto a part: every property it may name, checked against the type that
@@ -120,6 +120,8 @@ const validItem = (item: unknown): boolean =>
   (item.unit === undefined || typeof item.unit === "boolean") &&
   /* whether a reading text keeps its own words with the value dropped into them */
   (item.mix === undefined || typeof item.mix === "boolean") &&
+  /* seconds until a part puts itself away */
+  (item.autoClose === undefined || (Number.isFinite(item.autoClose) && (item.autoClose as number) >= 1)) &&
   /* the top of a slider's or a stepper's range */
   (item.max === undefined || (Number.isFinite(item.max) && (item.max as number) >= 1)) &&
   (item.states === undefined || (Array.isArray(item.states) && item.states.every(validState))) &&
@@ -162,6 +164,8 @@ const validFrame = (frame: unknown) =>
   (frame.note === undefined || typeof frame.note === "string") &&
   (frame.role === undefined || frame.role === "screen" || frame.role === "overlay") &&
   (frame.level === undefined || isOverlayLevel(frame.level)) &&
+  /* seconds until an overlay page closes itself */
+  (frame.autoClose === undefined || (Number.isFinite(frame.autoClose) && (frame.autoClose as number) >= 1)) &&
   (frame.place === undefined || isPlace(frame.place));
 
 /** whether a parsed file has the shape of a document the editor can open */

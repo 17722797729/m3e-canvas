@@ -40,6 +40,8 @@ import {
   firstTapStep,
   firstDueStep,
   hasTimedSteps,
+  hasAutoClose,
+  AUTO_HIDE_STEP,
   lookAt,
   NAV_INDICATOR_R,
   runPartRadii,
@@ -69,6 +71,7 @@ import {
   isOverlayFrame,
   overlayLevelOf,
   overlayLevelOfFrame,
+  isOverlayItem,
   overlayRuleOf,
   popLayer,
   pushLayer,
@@ -176,6 +179,12 @@ const TOGGLES = ["switch", "checkbox", "chip"] as const;
 /** A tap no longer swaps a button for a second look: the toggle feature is gone. */
 const flips = (_it: Item) => false;
 
+/** The parts whose taps are destinations rather than one target: a bar, a rail, a toolbar or a row
+ *  of tabs. Their choice belongs to the screen, and the same destinations on two screens are one
+ *  choice to the visitor — which is what the key below is built from. */
+const isNavKind = (it: Item) => it.kind === "bottomNav" || it.kind === "navRail" || it.kind === "tabs";
+const navKeyOf = (it: Item) => `nav:${it.kind}:${(it.tabs ?? []).map((t) => t.label).join("|")}`;
+
 /** The kinds whose value a visitor changes: a slider to scrub, a stepper to walk, a slider field to
  *  do both. One list, because a part of one of these kinds has to answer the same way wherever it
  *  stands — on the screen, inside a container, or inside a dialog panel. */
@@ -275,6 +284,10 @@ function Tappable({
   setValue,
   readout,
   marks,
+  childView,
+  childSlot,
+  childMenu,
+  menuOpenId,
 }: {
   item: Item;
   p: Palette;
@@ -293,6 +306,16 @@ function Tappable({
   readout?: { find: (id: string) => Item | null; live: (id: string) => number | undefined; text: (it: Item, live?: number, reader?: Item) => string };
   /** what the part's own container draws over it, a board's cell checkbox included */
   marks?: React.ReactNode;
+  /* What the screen makes of a part this container holds: the value the visitor moved it to, the
+     words a text reads, the destination a row of tabs was switched to — and what a tap on one of
+     those destinations does. A container passes them straight down, so nesting changes nothing. */
+  childView?: (it: Item) => Item;
+  childSlot?: (it: Item, slot: string, animate?: boolean) => void;
+  /** the dropdown a held part opens: one menu at a time on the screen, whoever opened it, so the
+   *  part that opened it is named along with the fact */
+  childMenu?: (id: string, open: boolean) => void;
+  /** which part's dropdown menu is the open one: a menu inside a container opens like any other */
+  menuOpenId?: string | null;
   onTap?: () => void;
   /** passed down so a part inside a container can open a screen of its own */
   onAction?: (a: Action) => void;
@@ -548,7 +571,11 @@ function Tappable({
        be dead while the same part works on the page behind it. */
     const live = VALUE_KINDS.includes(c.kind) ? liveValue?.(c) : undefined;
     const read = c.shows && readout ? (() => { const t = readout.find(c.shows!); return t ? readout.text(t, readout.live(t.id), c) : null; })() : null;
-    const shownChild = { ...c, ...(live !== undefined ? { value: live } : {}), ...(read !== null ? { label: read } : {}) };
+    /* the screen's own reading of the part, which is what carries a switch the visitor flipped, a
+       row of tabs they switched and the words a text reads beside them */
+    const shownChild = childView
+      ? { ...childView(c), ...(live !== undefined ? { value: live } : {}) }
+      : { ...c, ...(live !== undefined ? { value: live } : {}), ...(read !== null ? { label: read } : {}) };
     return (
     /* a navigation part inside a container folds the same way it does on a screen */
     <div key={c.id} style={{ position: "absolute", left: c.x + foldPlace(c, widths).dx, top: c.y + foldPlace(c, widths).dy }}>
@@ -578,8 +605,7 @@ function Tappable({
             : c.action || flips(c) || c.flow
               ? () => {
                   if (flips(c)) onFlip?.(c.id);
-                  /* the machine takes the tap when it has a step for the look it is in */
-                  if (states?.onStep(c.id, c.flow, c.id)) return;
+                  /* the machine runs once, in the tap itself: see the note on the group's own tap */
                   if (c.action) onAction?.(c.action);
                 }
               : undefined
@@ -588,6 +614,16 @@ function Tappable({
         onFlip={onFlip}
         scrollRt={scrollRt}
         looks={looks}
+        /* a bar, a rail or a row of tabs the container holds keeps its destinations tappable, and a
+           dropdown it holds opens the screen's one menu */
+        onSlot={childSlot && (c.actions || c.slotFlows || isNavKind(c)) ? (slot, animate) => childSlot(c, slot, animate) : undefined}
+        childView={childView}
+        childSlot={childSlot}
+        childMenu={childMenu}
+        onPick={c.kind === "select" && setValue ? (i) => setValue(c.id, i) : undefined}
+        menuOpen={menuOpenId === c.id}
+        onMenu={c.kind === "select" && childMenu ? (open) => childMenu(c.id, open) : undefined}
+        menuOpenId={menuOpenId}
       />
     </div>
     );
@@ -896,6 +932,51 @@ function Screen({
     const target = itemsOf(shownGroups).find((x) => x.id === reader.shows);
     return target ? readText(reader, readoutOf(target, values[target.id], lang, false)) : null;
   };
+  /* A container is not a different world: a part the visitor can move, flip or choose answers the
+     same way in a dialog panel as it does standing on the screen. This is the one place the
+     visitor's own changes are read back onto a part, and a container hands it to its children. */
+  const sample = (it: Item): Item => {
+    let next = flipped.has(it.id) ? flippedLook(it) : it;
+    if (VALUE_KINDS.includes(it.kind) && values[it.id] !== undefined) next = { ...next, value: values[it.id] };
+    /* a text bound to a part reads it, live: dragging a slider moves the number beside it */
+    if (it.shows) next = { ...next, label: readBound(it) ?? next.label };
+    if (it.kind === "select" && values[it.id] !== undefined) next = { ...next, selected: values[it.id] };
+    if (it.kind === "bottomNav" && it.barFolded !== undefined) {
+      const folded = values[`fold:${it.id}`];
+      next = { ...next, barFolded: folded === undefined ? it.barFolded : folded === 1 };
+    }
+    if (isNavKind(it)) {
+      /* bars and rows with the same destinations are one part to the visitor: the choice follows
+         them from screen to screen, and a row inside a dialog shows it too */
+      const key = navKeyOf(it);
+      if (values[key] !== undefined && values[key] >= 0) next = { ...next, selected: values[key] };
+      /* a row whose selection the author never set shows the destination the visitor tapped to
+         open this screen */
+      else if (it.selected === undefined && values[`${key}:opened:${frame.id}`] !== undefined) next = { ...next, selected: values[`${key}:opened:${frame.id}`] };
+    }
+    return next;
+  };
+  /* One destination of a bar, a rail, a toolbar or a row of tabs — wherever that part stands. The
+     choice lives on the screen rather than on the part (the same row of tabs on two screens shows
+     one choice), so the screen is what answers the tap. */
+  const pickSlot = (it: Item, slot: string, animate = true) => {
+    const a = it.actions?.[slot];
+    if (slot === "barToggle") {
+      const folded = values[`fold:${it.id}`] === undefined ? !!it.barFolded : values[`fold:${it.id}`] === 1;
+      onValue(`fold:${it.id}`, folded ? 0 : 1);
+      return;
+    }
+    /* a destination's own machine: the tab that changes what it says when tapped */
+    const flow = it.slotFlows?.[slot];
+    if (flow && runtime.onStep(`${it.id}:${slot}`, flow, null)) return;
+    if (isNavKind(it) && slot.startsWith("tab:")) {
+      const key = navKeyOf(it);
+      onValue(key, a ? -1 : Number(slot.slice(4)));
+      if (a) onValue(`${key}:opened:${a.to}`, Number(slot.slice(4)));
+    }
+    if (modalIds.has(it.id)) closeRails(animate);
+    if (a) runAction(a);
+  };
   const shownGroups = useMemo(() => Object.entries(railStates).reduce((current, [id, railExpanded]) => {
     const patch = { railExpanded, railFolded: !railExpanded };
     return current.some((g) => g.items.some((it) => it.id === id))
@@ -927,6 +1008,33 @@ function Screen({
       }
     }
   }, [seconds, shownGroups, runtime]);
+  /* ---------- the parts that put themselves away ---------- */
+  /* A part with `autoClose` counts down once the visitor can see it — the activity entry that closes
+     after three days, the bubble that dismisses itself. The count starts when the part appears: an
+     in-page bubble from the moment it is opened (not from the screen behind it being drawn, which
+     would already have spent the bubble's life before the visitor ever opened it), everything else
+     from this screen being shown. A bubble that is opened again gets its whole life again. */
+  const autoDone = useRef(new Set<string>());
+  const autoSince = useRef<Record<string, number>>({});
+  useEffect(() => {
+    for (const it of itemsOf(shownGroups)) {
+      const secs = it.autoClose ?? 0;
+      if (secs <= 0) continue;
+      const bubble = isOverlayItem(it);
+      if (bubble && dialog.openId !== it.id) {
+        /* not up: a bubble that is opened again starts over */
+        delete autoSince.current[it.id];
+        autoDone.current.delete(it.id);
+        continue;
+      }
+      autoSince.current[it.id] ??= bubble ? runtime.now : shownAt.current;
+      if (autoDone.current.has(it.id)) continue;
+      if ((runtime.now - autoSince.current[it.id]) / 1000 < secs) continue;
+      autoDone.current.add(it.id);
+      if (bubble) dialog.onOpen(null);
+      else runtime.take(it.id, it.id, AUTO_HIDE_STEP);
+    }
+  }, [seconds, shownGroups, runtime, dialog]);
   const modalIds = new Set(shownGroups.flatMap((g) => { const rail = modalRailOf(g); return rail ? [rail.id] : []; }));
   /* an in-page overlay is a group on this very screen: it stays out of the way until a tap
      opens it, and the level it was authored with decides how it takes the screen over */
@@ -1132,21 +1240,11 @@ function Screen({
             /* the same rule the canvas uses, so a circle is a circle in both */
             const radii = g.free ? (corners?.get(it.id) ?? baseRadii(it)) : runPartRadii(it, i === 0, i === n - 1, g.axis);
             const act = it.action;
-            let shown = flipped.has(it.id) ? flippedLook(it) : it;
-            if (VALUE_KINDS.includes(it.kind) && values[it.id] !== undefined) shown = { ...shown, value: values[it.id] };
-            /* a text bound to a part reads it, live: dragging a slider moves the number beside it */
-            if (it.shows) shown = { ...shown, label: readBound(it) ?? shown.label };
-            if (it.kind === "select" && values[it.id] !== undefined) shown = { ...shown, selected: values[it.id] };
-            const navKind = it.kind === "bottomNav" || it.kind === "navRail" || it.kind === "tabs";
-            /* bars with the same destinations are one bar to the visitor: the choice follows them across screens */
-            const navKey = navKind ? `nav:${it.kind}:${(it.tabs ?? []).map((t) => t.label).join("|")}` : "";
-            if (it.kind === "bottomNav" && it.barFolded !== undefined) {
-              const foldKey = `fold:${it.id}`;
-              shown = { ...shown, barFolded: values[foldKey] === undefined ? it.barFolded : values[foldKey] === 1 };
-            }
-            if (navKind && values[navKey] !== undefined && values[navKey] >= 0) shown = { ...shown, selected: values[navKey] };
-            /* a row whose selection the author never set shows the destination the visitor tapped to open this screen */
-            else if (navKind && it.selected === undefined && values[`${navKey}:opened:${frame.id}`] !== undefined) shown = { ...shown, selected: values[`${navKey}:opened:${frame.id}`] };
+            /* what the visitor has made of this part — dragged, flipped, switched, read: the same
+               function a container hands its own children, so a part inside a dialog panel answers
+               exactly like the same part standing on the screen */
+            let shown = sample(it);
+            const navKind = isNavKind(it);
             /* a destination's own rules: fired by its tap, read back as its look */
             const flowOf = (key: string) => it.slotFlows?.[key];
             const tabLook = (t: NavTab, i: number) => {
@@ -1160,8 +1258,10 @@ function Screen({
               act || flips(it) || it.flow
                 ? () => {
                     if (flips(it)) onFlip(it.id);
-                    /* the machine takes the tap when it has a step for the look it is in */
-                    if (runtime.onStep(it.id, it.flow, it.id)) return;
+                    /* The machine is not run here: the tap itself takes the step, before this
+                       closure is reached, and running it a second time would take the same step
+                       twice — two overlays closed by one tap, a screen pushed twice, a value
+                       walked twice. What is left here is the tap's own effect. */
                     if (act) runAction(act);
                   }
                 : undefined;
@@ -1182,28 +1282,13 @@ function Screen({
                 states={runtime}
                 scrollRt={scrollRt}
                 looks={runtime.pinned}
-                onSlot={
-                  slotActions || navKind
-                    ? (slot, animate) => {
-                        /* a tapped destination lights up where it opens nothing; where it opens a
-                           screen, that screen's bar shows the destination its author chose, or the
-                           tapped one when the author chose none */
-                        const a = slotActions?.[slot];
-                        if (slot === "barToggle") {
-                          onValue(`fold:${it.id}`, shown.barFolded ? 0 : 1);
-                          return;
-                        }
-                        /* a destination's own machine: the tab that changes what it says when tapped */
-                        if (flowOf(slot) && runtime.onStep(`${it.id}:${slot}`, flowOf(slot), null)) return;
-                        if (navKind && slot.startsWith("tab:")) {
-                          onValue(navKey, a ? -1 : Number(slot.slice(4)));
-                          if (a) onValue(`${navKey}:opened:${a.to}`, Number(slot.slice(4)));
-                        }
-                        if (modalIds.has(it.id)) closeRails(animate);
-                        if (a) runAction(a);
-                      }
-                    : undefined
-                }
+                onSlot={slotActions || navKind ? (slot, animate) => pickSlot(it, slot, animate) : undefined}
+                /* a container hands these to its own children, so a bar, a row of tabs or a
+                   dropdown inside a dialog panel answers exactly as one on the screen does */
+                childView={sample}
+                childSlot={pickSlot}
+                childMenu={(id, open) => setMenuId(open ? id : null)}
+                menuOpenId={menuId}
                 onValue={SCRUBS.includes(it.kind) ? (v) => onValue(it.id, v) : undefined}
                 onSet={STEPS.includes(it.kind) ? (v) => onValue(it.id, v) : undefined}
                 navToggle={
@@ -1307,8 +1392,12 @@ export function Preview({
   const nowRef = useRef(now);
   nowRef.current = now;
   const lastTick = useRef(Date.now());
-  /* whether any part in the document is waiting on a clock, so the ticker knows to run at all */
-  const timed = useMemo(() => hasTimedSteps(itemsOf(doc.groups)), [doc.groups]);
+  /* whether anything in the document is waiting on a clock, so the ticker knows to run at all: a step
+     that waits, a part that puts itself away, an overlay page that closes itself */
+  const timed = useMemo(
+    () => hasTimedSteps(itemsOf(doc.groups)) || hasAutoClose(itemsOf(doc.groups)) || frames.some((f) => !!f.autoClose),
+    [doc.groups, frames],
+  );
   const timedRef = useRef(timed);
   timedRef.current = timed;
   /* the button the visitor touched last: it reads as the screen's current choice */
@@ -1350,6 +1439,34 @@ export function Preview({
     if (!el || el.contains(document.activeElement)) return;
     el.focus();
   }, [layers]);
+
+  /* ---------- overlay pages that close themselves ---------- */
+  /* An overlay page may carry its own `autoClose`: the bubble that is up for eight seconds and then
+     is gone, the notice nobody has to tap away. It counts from the page coming up, and closing it
+     drops whatever was opened on top of it, exactly as its own close button does. */
+  const layerDone = useRef(new Set<string>());
+  const layerSince = useRef<Record<string, number>>({});
+  useEffect(() => {
+    const up = new Set(layers.map((l) => l.frameId));
+    for (const id of Object.keys(layerSince.current)) {
+      if (!up.has(id)) {
+        /* down again: the next time it comes up it gets its whole life */
+        delete layerSince.current[id];
+        layerDone.current.delete(id);
+      }
+    }
+    for (let i = 0; i < layers.length; i++) {
+      const l = layers[i];
+      const secs = frames.find((f) => f.id === l.frameId)?.autoClose ?? 0;
+      if (secs <= 0) continue;
+      layerSince.current[l.frameId] ??= now;
+      if (layerDone.current.has(l.frameId)) continue;
+      if ((now - layerSince.current[l.frameId]) / 1000 < secs) continue;
+      layerDone.current.add(l.frameId);
+      setLayers((ls) => ls.slice(0, i));
+      break;
+    }
+  }, [now, layers, frames, setLayers]);
 
   const flip = (id: string) =>
     setFlipped((s) => {
@@ -1556,6 +1673,14 @@ export function Preview({
           const here = stackRef.current[stackRef.current.length - 1]?.id;
           if (here) setDialogs((m) => (m[here] ? { ...m, [here]: null } : m));
         }
+        return;
+      }
+      /* every overlay this screen has open goes at once — the in-page one too, and whatever the
+         visitor had stacked: a "finish" button that puts the whole flow of dialogs away */
+      if (a.kind === "closeAll") {
+        setLayers([]);
+        const here = stackRef.current[stackRef.current.length - 1]?.id;
+        if (here) setDialogs((m) => ({ ...m, [here]: null }));
         return;
       }
       if (a.kind === "look") {

@@ -107,6 +107,7 @@ import {
   hasValueToken,
   maxOf,
   clampMax,
+  AUTO_CLOSE_DEF,
   clampValue,
   MAX_DEF,
   AUTHOR_WIDTHS,
@@ -623,6 +624,24 @@ export function FrameInspector({
                 height={36}
               />
               <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("overlayHint", lang)}</div>
+              {/* a bubble page may be up for a while and then go: the toast nobody has to tap away */}
+              <Toggle on={frame.autoClose !== undefined} onChange={(on) => onChange({ autoClose: on ? AUTO_CLOSE_DEF : undefined })} p={p} icon="timer" label={t("autoClose", lang)} grow />
+              {frame.autoClose !== undefined && (
+                <>
+                  <Field
+                    value={String(frame.autoClose)}
+                    onChange={(v) => {
+                      const n = Number(v.replace(/[^0-9]/g, ""));
+                      onChange({ autoClose: n > 0 ? n : undefined });
+                    }}
+                    placeholder={String(AUTO_CLOSE_DEF)}
+                    p={p}
+                    icon="schedule"
+                    height={40}
+                  />
+                  <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("autoClosePageHint", lang)}</div>
+                </>
+              )}
             </>
           )}
         </div>
@@ -2115,6 +2134,34 @@ export function Inspector({
       </Section>
       )}
 
+      {/* A part that is only good for a while: the activity entry that closes after three days, the
+          bubble that dismisses itself. A container takes its children with it, and a bubble closes
+          the way a tap outside it would. */}
+      {!editOn && (
+        <Section id="auto" icon="timer" title={t("autoClose", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <Toggle on={item.autoClose !== undefined} onChange={(on) => onChange({ autoClose: on ? AUTO_CLOSE_DEF : undefined })} p={p} icon="timer" label={t("autoClose", lang)} grow />
+            {item.autoClose !== undefined && (
+              <>
+                <Field
+                  value={String(item.autoClose)}
+                  onChange={(v) => {
+                    const n = Number(v.replace(/[^0-9]/g, ""));
+                    onChange({ autoClose: n > 0 ? n : undefined });
+                  }}
+                  placeholder={String(AUTO_CLOSE_DEF)}
+                  p={p}
+                  icon="schedule"
+                  height={40}
+                />
+                <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("autoCloseHint", lang)}</div>
+                <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{isOverlayItem(item) ? t("autoCloseBubbleHint", lang) : t("autoCloseSpeedHint", lang)}</div>
+              </>
+            )}
+          </div>
+        </Section>
+      )}
+
       {/* what the part does after it has been tapped: grey out, cool down, change or go */}
       {!editOn && (
         <Section id="transitions" icon="change_circle" title={t("transitions", lang)} p={p}>
@@ -2141,6 +2188,7 @@ const RULE_LABEL: Record<RuleAction["kind"], UIKey> = {
   goto: "ruleGoto",
   back: "ruleBack",
   close: "ruleClose",
+  closeAll: "ruleCloseAll",
   look: "ruleLook",
 };
 
@@ -2280,12 +2328,17 @@ const cardStyle = (p: Palette): React.CSSProperties => ({
   background: p.surfaceContainerLow,
 });
 
+/** the actions that put an overlay away: the one the part stands in, and every one this screen has
+ *  open. A step that both opens and closes wants them in this order. */
+const isClose = (a: RuleAction | undefined) => !!a && (a.kind === "close" || a.kind === "closeAll");
+const isOpen = (a: RuleAction) => a.kind === "goto";
+
 /** The action a picker asks for, keeping what still applies: switching to a jump keeps the page it
  *  went to, and switching to a look starts from the part as it is drawn now. */
 function seededAction(kind: RuleAction["kind"], from: RuleAction, item: Item, frames: Frame[]): RuleAction {
   if (kind === "goto") return { kind, to: from.kind === "goto" ? from.to : frames[0]?.id ?? "", transition: "slide" };
   if (kind === "look") return { kind, icon: item.icon ?? undefined };
-  return { kind: kind as "back" | "close" };
+  return { kind: kind as "back" | "close" | "closeAll" };
 }
 
 /** How each property a step may change is named and drawn, in the row that carries it, in the menu
@@ -2644,6 +2697,31 @@ function StepRow({
           >
             {t("flowStay", lang)}
           </button>
+        </div>
+      )}
+      {/* Closing and opening in one step has an order: a close takes the overlay that is on top at
+          the moment it runs, so a step that opens the next bubble first and closes afterwards closes
+          the bubble it has just opened. The row says so and offers to put the close first. */}
+      {isClose(do2[do2.length - 1]) && do2.slice(0, -1).some(isOpen) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", borderRadius: 10, background: p.surfaceContainerHigh }}>
+          <Icon name="swap_vert" size={16} color={p.onSurfaceVariant} />
+          <span style={{ flex: 1, minWidth: 0, fontSize: 11, lineHeight: 1.4, color: p.onSurfaceVariant }}>{t("ruleOrderHint", lang)}</span>
+          <button
+            type="button"
+            onClick={() => onChange({ do: [...do2.filter(isClose), ...do2.filter((x) => !isClose(x))] })}
+            className="m3-press"
+            style={{ height: 28, padding: "0 12px", borderRadius: 14, border: "none", background: p.primary, color: p.onPrimary, fontSize: 12, fontWeight: 600, cursor: "pointer", flex: "0 0 auto" }}
+          >
+            {t("ruleOrderFix", lang)}
+          </button>
+        </div>
+      )}
+      {/* a close on its own says what it does and what it does not: the overlay the part stands in,
+          not the whole stack — which is the other action, and the two are easy to confuse */}
+      {do2.some((x) => x.kind === "close") && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", borderRadius: 10, background: p.surfaceContainerHigh }}>
+          <Icon name="info" size={16} color={p.onSurfaceVariant} />
+          <span style={{ flex: 1, minWidth: 0, fontSize: 11, lineHeight: 1.4, color: p.onSurfaceVariant }}>{t("ruleCloseHint", lang)}</span>
         </div>
       )}
       {do2.map((a, i) => (

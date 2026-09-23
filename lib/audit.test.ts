@@ -166,6 +166,13 @@ describe("audit: overlays", () => {
     });
     const closed = audit(doc([home, login], [open, group("g2", login, [closer])]), {});
     expect(only(closed, "overlayTrapped")).toEqual([]);
+    /* closing every overlay counts as a way out too: the whole stack goes */
+    const all = item({
+      id: "b",
+      label: "Finish",
+      flow: { looks: [], steps: [{ id: "s", from: ":start", to: ":start", trigger: { kind: "tap" }, do: [{ kind: "closeAll" }] }] },
+    });
+    expect(only(audit(doc([home, login], [open, group("g2", login, [all])]), {}), "overlayTrapped")).toEqual([]);
     const left = audit(
       doc([home, login], [open, group("g2", login, [item({ id: "b", label: "Retry", action: { to: "home", transition: "fade" } })])]),
       {},

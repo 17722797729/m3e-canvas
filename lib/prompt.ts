@@ -564,7 +564,21 @@ function boxCorners(it: Item, lang: Lang): string {
   return `corner radius ${t}dp top / ${b}dp bottom`;
 }
 
-const itemText = (it: Item, lang: Lang) => (lang === "ja" ? itemJa(it) : lang === "zh" ? itemZh(it) : lang === "ko" ? itemKo(it) : itemEn(it));
+/** A part that puts itself away after a while says so wherever it is described: it is a behaviour the
+ *  implementer has to build, not a detail of how the part is drawn. */
+function autoNote(it: Item, lang: Lang): string {
+  if (!it.autoClose) return "";
+  const s = it.autoClose;
+  return {
+    ja: `（${s}秒後に自動で閉じる）`,
+    en: ` (puts itself away after ${s}s)`,
+    zh: `（${s} 秒后自动关闭）`,
+    ko: `(${s}초 뒤 스스로 닫힘)`,
+  }[lang];
+}
+
+const itemText = (it: Item, lang: Lang) =>
+  (lang === "ja" ? itemJa(it) : lang === "zh" ? itemZh(it) : lang === "ko" ? itemKo(it) : itemEn(it)) + autoNote(it, lang);
 
 /* ================= connected runs ================= */
 
@@ -637,10 +651,12 @@ function actionText(a: Action, frames: Frame[], lang: Lang): string | null {
      route. */
   if (isOverlayFrame(target)) {
     const level = overlayLevelText(overlayLevelOfFrame(target), lang);
-    if (lang === "ja") return `${level}として${name}をこの画面の上に重ねて開く`;
-    if (lang === "zh") return `以${level}的形式在本屏幕上方弹出${name}`;
-    if (lang === "ko") return `이 화면 위에 ${level}(으)로 ${name}을(를) 겹쳐 연다`;
-    return `pops the ${name} over this screen as a ${level}`;
+    /* an overlay page can carry its own timer: the bubble that is up for a few seconds and goes */
+    const closes = target.autoClose ? { ja: `（${target.autoClose}秒後に自動で閉じる）`, en: ` (it closes itself after ${target.autoClose}s)`, zh: `（${target.autoClose} 秒后自动关闭）`, ko: `(${target.autoClose}초 뒤 스스로 닫힘)` }[lang] : "";
+    if (lang === "ja") return `${level}として${name}をこの画面の上に重ねて開く${closes}`;
+    if (lang === "zh") return `以${level}的形式在本屏幕上方弹出${name}${closes}`;
+    if (lang === "ko") return `이 화면 위에 ${level}(으)로 ${name}을(를) 겹쳐 연다${closes}`;
+    return `pops the ${name} over this screen as a ${level}${closes}`;
   }
   if (lang === "ja") return `${name}画面へ${a.transition !== "none" ? `${tr}で` : ""}遷移する`;
   if (lang === "zh") return `${a.transition !== "none" ? `以${tr}的方式` : ""}跳转到${name}屏幕`;
@@ -748,6 +764,9 @@ function notes(g: Group, frames: Frame[], lang: Lang): string[] {
         const other = a.target ? (label ? { ja: `「${label}」の`, en: `${q(label)}'s `, zh: `「${label}」的`, ko: `"${label}"의 ` }[lang] : { ja: "別の部品の", en: "another part's ", zh: "另一个组件的", ko: "다른 부품의 " }[lang]) : "";
         return { ja: `${other}${bits.join("、")}`, en: `${other}${bits.join(", ")}`, zh: `${other}${bits.join("、")}`, ko: `${other}${bits.join(", ")}` }[lang];
       }
+      /* an overlay a step puts away says which: the one the part stands in, or the whole stack */
+      if (a.kind === "close") return { ja: "重ね画面を閉じる（一番上だけ）", en: "closes the overlay it is in (the top one only)", zh: "关闭当前叠加层（只关最上面一层）", ko: "오버레이 닫기(맨 위 한 겹만)" }[lang];
+      if (a.kind === "closeAll") return { ja: "重ね画面をすべて閉じる", en: "closes every overlay", zh: "关闭所有叠加层", ko: "모든 오버레이 닫기" }[lang];
       return null;
     };
     for (const machine of [...(it.flow ? [it.flow] : []), ...Object.values(it.slotFlows ?? {})]) {

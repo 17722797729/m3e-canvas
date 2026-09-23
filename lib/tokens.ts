@@ -1577,6 +1577,11 @@ export type Item = {
    *  stops at, while "出售数量 … / 10000" wants a ceiling of its own. Drag, the number on the part,
    *  the ＋/− buttons and the numbers a rule adds all stop here. */
   max?: number;
+  /** Seconds until this part puts itself away — the activity entry that closes after three days, the
+   *  bubble that dismisses itself. The count runs on the preview's own clock and starts when the
+   *  part appears: a container when its screen is shown, an overlay when it opens. A part hides, and
+   *  takes its children with it; an overlay closes the way a tap outside it does. */
+  autoClose?: number;
   /** the background this part paints, or `transparent` to let what is behind it show */
   fill?: FillToken;
   /** containers: the axes the visitor can move the content along; unset holds still */
@@ -1775,6 +1780,22 @@ export function hasTimedSteps(items: Item[]): boolean {
   );
 }
 
+/** Whether any part puts itself away on a clock: a ticker has to run for that too, or a document
+ *  whose only timer is an auto-close would sit there and never count down. */
+export function hasAutoClose(items: Item[]): boolean {
+  return items.some((it) => !!it.autoClose || (it.children ? hasAutoClose(it.children) : false));
+}
+
+/** What a part that puts itself away does when its time is up: it keeps the look it is in and hides
+ *  itself, children and all — the same latch a button outside it would set, so a container's contents
+ *  go with it and nothing behind a hidden part can be tapped. An overlay takes the other road and
+ *  closes, which is the runtime's own business rather than a patch on the part. */
+/** What a new auto-close counts to before the author says otherwise: long enough to read a bubble,
+ *  short enough that a prototype is not slowed down by it. */
+export const AUTO_CLOSE_DEF = 5;
+
+export const AUTO_HIDE_STEP: PartStep = { id: "auto-close", from: START_LOOK, trigger: { kind: "after", seconds: 0 }, do: [{ kind: "look", hidden: true }] };
+
 /** Where a part is: the look it is in, and the moment on the preview's clock it got there. */
 export type AtLook = { look: string; since: number };
 export type MachineAt = Record<string, AtLook | undefined>;
@@ -1839,7 +1860,7 @@ export function migrateFlows(groups: Group[]): Group[] {
       const legacy = st as PartStep & { when?: unknown };
       const acts = st.do ?? [];
       const kept = acts
-        .filter((a) => a.kind === "goto" || a.kind === "back" || a.kind === "close" || a.kind === "look")
+        .filter((a) => a.kind === "goto" || a.kind === "back" || a.kind === "close" || a.kind === "closeAll" || a.kind === "look")
         /* a look was once able to restyle the part it aims at: that choice is gone */
         .map((a) => (a.kind === "look" && a.variant !== undefined ? { kind: "look" as const, target: a.target, icon: a.icon, label: a.label, color: a.color } : a));
       /* Nothing to drop: the very same step goes back, so an untouched machine keeps its identity. */
@@ -1900,6 +1921,8 @@ export type RuleAction =
   | { kind: "back" }
   /** puts away the overlay the part stands in */
   | { kind: "close" }
+  /** every overlay this screen has open, a page that closes the whole stack in one tap */
+  | { kind: "closeAll" }
   /** What a step changes about a part: `target` names the part it changes, and leaving it out changes
    *  the part the step belongs to — a claim button can therefore turn the gift icon beside it into a
    *  claimed one. Only the properties the action names are written, so a step that says nothing about
@@ -1990,6 +2013,7 @@ export const RULE_ACTIONS: { key: RuleAction["kind"]; icon: string }[] = [
   { key: "goto", icon: "login" },
   { key: "back", icon: "arrow_back" },
   { key: "close", icon: "close_fullscreen" },
+  { key: "closeAll", icon: "layers_clear" },
   { key: "look", icon: "format_paint" },
 ];
 export const isRuleKind = (v: unknown): v is RuleAction["kind"] => RULE_ACTIONS.some((a) => a.key === v);
@@ -2458,6 +2482,9 @@ export type Frame = {
   role?: FrameRole;
   /** overlays only: the level whose rules it takes. Unset reads as "modal". */
   level?: OverlayLevel;
+  /** overlay pages only: seconds until this page closes itself, counted from it opening — a bubble
+   *  that dismisses itself the way a toast does. Unset means it waits for the visitor. */
+  autoClose?: number;
 };
 
 /** how Tidy stacks the body of a screen: from the top, centered, against the bottom bar, or spread out */

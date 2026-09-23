@@ -141,6 +141,9 @@ export const FLOW_TEXT: Record<
     /** what a part becomes while a look rule holds */
     /** everything a look may change: the words, the look, the colours, and the switches */
     look: (action: import("./tokens").RulePatch & { variant?: string }) => string;
+    /** what a step that closes an overlay says: the one it stands in, or all of them */
+    closeWord: string;
+    closeAllWord: string;
     jump: (from: string, item: string, to: string) => string;
     jumpMarkdown: (from: string, item: string, to: string) => string;
     jumpLine: (from: string, item: string, to: string) => string;
@@ -189,6 +192,8 @@ export const FLOW_TEXT: Record<
     dialogLine: (from, item, to) => `${from} の「${item}」をタップすると ${to} のポップアップが開きます。`,
     ruleWrite: (item, when, write) => `「${item}」をタップすると${when ? `${when} のときは` : ""}${write} になります。`,
     look: (a) => lookClauses("ja", a).join('、').length ? lookClauses("ja", a).join('、') : "見た目が変わる",
+    closeWord: "今の重ね画面を閉じる",
+    closeAllWord: "重ね画面をすべて閉じる",
     tapHow: "タップすると",
     afterHow: (seconds) => `${seconds} 秒後に`,
     drawnLook: "最初の見た目",
@@ -244,6 +249,8 @@ export const FLOW_TEXT: Record<
     dialogLine: (from, item, to) => `Tapping "${item}" on ${from} opens the ${to} dialog.`,
     ruleWrite: (item, when, write) => `Tapping "${item}"${when ? ` when ${when}` : ""} sets ${write}.`,
     look: (a) => lookClauses("en", a).join(', ').length ? lookClauses("en", a).join(', ') : "its look changes",
+    closeWord: "closes the overlay it is in",
+    closeAllWord: "closes every overlay",
     tapHow: "Tapping",
     afterHow: (seconds) => `After ${seconds} seconds,`,
     drawnLook: "the drawn look",
@@ -299,6 +306,8 @@ export const FLOW_TEXT: Record<
     dialogLine: (from, item, to) => `点击 ${from} 的「${item}」弹出 ${to} 弹框。`,
     ruleWrite: (item, when, write) => `点击「${item}」${when ? `且 ${when} 时` : ""}，${write}。`,
     look: (a) => lookClauses("zh", a).join('，').length ? lookClauses("zh", a).join('，') : "外观改变",
+    closeWord: "关闭当前叠加层",
+    closeAllWord: "关闭所有叠加层",
     tapHow: "点击后",
     afterHow: (seconds) => `${seconds} 秒后`,
     drawnLook: "起始外观",
@@ -354,6 +363,8 @@ export const FLOW_TEXT: Record<
     dialogLine: (from, item, to) => `${from}의 "${item}"을(를) 탭하면 ${to} 팝업이 열립니다.`,
     ruleWrite: (item, when, write) => `"${item}"을(를) 탭하면${when ? ` ${when}일 때` : ""} ${write}이(가) 됩니다.`,
     look: (a) => lookClauses("ko", a).join(', ').length ? lookClauses("ko", a).join(', ') : "모양이 바뀐다",
+    closeWord: "현재 오버레이 닫기",
+    closeAllWord: "모든 오버레이 닫기",
     tapHow: "탭하면",
     afterHow: (seconds) => `${seconds}초 뒤에`,
     drawnLook: "처음 모양",
@@ -457,9 +468,13 @@ function stepText(it: Item, flow: PartFlow | undefined, step: PartStep, who: str
   return x.step(who, how, lookWords(it, flow, step.to, lang), lookChanges(flow, step.to, lang), extra);
 }
 
-/** What else a step does, for the actions that are not a jump of their own. */
+/** What else a step does, for the actions that are not a jump of their own. A close says which
+ *  overlays it takes: the one the part stands in, or every one this screen has open. */
 function actionWords(a: RuleAction, lang: Lang): string {
-  return a.kind === "look" ? FLOW_TEXT[lang].look(a) : "";
+  if (a.kind === "look") return FLOW_TEXT[lang].look(a);
+  if (a.kind === "close") return FLOW_TEXT[lang].closeWord;
+  if (a.kind === "closeAll") return FLOW_TEXT[lang].closeAllWord;
+  return "";
 }
 
 /** What a tap rule says: disable, cooldown, label, variant and hide, composed for the requested

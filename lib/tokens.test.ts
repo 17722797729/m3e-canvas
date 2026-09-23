@@ -4,7 +4,7 @@ import { contrastRatio } from "./color";
 import { itemNameOf } from "./flow";
 import { getLang, KIND_TEXT } from "./i18n";
 
-import { CELL_DEF, CELL_MAX, CELL_MIN, COLS_MAX, ROWS_MAX, cellGap, cellOf, scrollContent, slotGrid, gridCells, cellBox, gridCheckZ, rulePatch, ruleFieldsFor, readoutOf, hasReadout, unitOf, mixText, readText, VALUE_TOKEN, hasValueToken, valueAfter, maxOf, clampMax, MAX_DEF, MAX_MAX, isValueOp, withGridCells, BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill, childShown, connectedButton, DIALOG_COLOR, childDrawn, badgeSurface, buttonScale, findItemIn, foldMargins, radiiOfRuns, roundByNature, runPartRadii, ROUND_SHAPES, foldPlace, foldShift, layoutOf, NO_FOLD, fitTabPanels, keepPanelSlots, liftAbove, isStateEffect, STATE_EFFECTS, START_LOOK, firstTapStep, firstDueStep, waitLeft, lookItem, lookAt, statesAsFlow, migrateFlows, hasTimedSteps, fillColor, fillInk, TRANSPARENT, cardFillOf, type PartFlow, type PartLook, type PartStep, type MachineAt, NAV_ICON, NAV_INDICATOR, NAV_INDICATOR_R, NAV_LABEL_FONT, selectedAncestor, takesText, panelSlotFor, refillPanels, restorePanel, slotsOf, resizedChildren, needsTabPanels, tabIndexOf, tabPanelId, tabRenamePatch, tabPanelsPatch, tabStyleOf, TAB_PANEL_H, TAB_ROW_H, onToken, pageTintOf, PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type Kind, type ItemState, type PlacedItem, type Frame } from "./tokens";
+import { CELL_DEF, CELL_MAX, CELL_MIN, COLS_MAX, ROWS_MAX, cellGap, cellOf, scrollContent, slotGrid, gridCells, cellBox, gridCheckZ, rulePatch, ruleFieldsFor, readoutOf, hasReadout, unitOf, mixText, readText, VALUE_TOKEN, hasValueToken, valueAfter, maxOf, clampMax, MAX_DEF, MAX_MAX, isValueOp, withGridCells, BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill, childShown, connectedButton, DIALOG_COLOR, childDrawn, badgeSurface, buttonScale, findItemIn, foldMargins, radiiOfRuns, roundByNature, runPartRadii, ROUND_SHAPES, foldPlace, foldShift, layoutOf, NO_FOLD, fitTabPanels, keepPanelSlots, liftAbove, isStateEffect, STATE_EFFECTS, START_LOOK, firstTapStep, firstDueStep, waitLeft, lookItem, lookAt, statesAsFlow, migrateFlows, hasTimedSteps, hasAutoClose, AUTO_HIDE_STEP, AUTO_CLOSE_DEF, RULE_ACTIONS, isRuleKind, fillColor, fillInk, TRANSPARENT, cardFillOf, type PartFlow, type PartLook, type PartStep, type MachineAt, NAV_ICON, NAV_INDICATOR, NAV_INDICATOR_R, NAV_LABEL_FONT, selectedAncestor, takesText, panelSlotFor, refillPanels, restorePanel, slotsOf, resizedChildren, needsTabPanels, tabIndexOf, tabPanelId, tabRenamePatch, tabPanelsPatch, tabStyleOf, TAB_PANEL_H, TAB_ROW_H, onToken, pageTintOf, PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type Kind, type ItemState, type PlacedItem, type Frame } from "./tokens";
 
 afterEach(() => setGlobalShape("rounded")); // restore the module default
 
@@ -520,6 +520,34 @@ describe("a part's own state machine", () => {
     expect(resolveStates(it, at("building", 1000), 12000).item.label).toBe("建造中");
     expect(hasTimedSteps([it])).toBe(true);
     expect(hasTimedSteps([btn()])).toBe(false);
+  });
+
+  /* A part that puts itself away on a clock: the container's children go with it because the part
+     hides, and a document whose only timer is one of these still needs the preview's ticker to run. */
+  it("knows which parts put themselves away, and what they do when the time is up", () => {
+    const entry = { ...makeItem("box"), id: "entry", autoClose: 259200 };
+    expect(hasAutoClose([entry])).toBe(true);
+    expect(hasAutoClose([btn()])).toBe(false);
+    /* inside a container counts too: the part the visitor never sees on its own still has a clock */
+    const nested = { ...makeItem("box"), id: "outer", children: [{ ...makeItem("button"), id: "inner", autoClose: 3 }] as PlacedItem[] };
+    expect(hasAutoClose([nested])).toBe(true);
+    /* what it does is hide itself, which is what takes the children with it */
+    expect(AUTO_HIDE_STEP.do).toEqual([{ kind: "look", hidden: true }]);
+    expect(AUTO_HIDE_STEP.trigger).toEqual({ kind: "after", seconds: 0 });
+    /* and a part with no timer hands nothing to the ticker */
+    expect(hasAutoClose([{ ...nested, children: [] }])).toBe(false);
+    expect(AUTO_CLOSE_DEF).toBeGreaterThan(0);
+  });
+
+  /* Two ways to put an overlay away, and they are easy to confuse: the top one, or the whole stack. */
+  it("offers closing the overlay the part is in and closing every one", () => {
+    expect(RULE_ACTIONS.map((a) => a.key)).toEqual(["goto", "back", "close", "closeAll", "look"]);
+    expect(isRuleKind("closeAll")).toBe(true);
+    expect(isRuleKind("closeEverything")).toBe(false);
+    /* an action from a build that does not know closeAll is still read as one: stays put, hides all */
+    const it = makeItem("button");
+    expect(AUTO_HIDE_STEP.do).toEqual([{ kind: "look", hidden: true }]);
+    expect(it.kind).toBe("button");
   });
 
   it("reads the state rules of an older document back as a machine", () => {
