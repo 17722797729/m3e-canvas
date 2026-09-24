@@ -1,4 +1,4 @@
-import { CONTENT_W, FULL_WIDTH, Frame, Group, Item, KIND_SPEC, Kind, PHONE_MARGIN, RAIL_COLLAPSED_W, railExpansionSide, railWidth, railLayoutWidth, canJoin, isPhoneFrame, scaleR, carryItemSize, connectSpecOf, frameOfGroup, frameRect, frameSizeOf, groupBounds, layoutOf, isExpanded } from "./tokens";
+import { CONTENT_W, FULL_WIDTH, Frame, Group, Item, KIND_SPEC, Kind, PHONE_MARGIN, RAIL_COLLAPSED_W, TabSide, railExpansionSide, railWidth, railLayoutWidth, canJoin, isPhoneFrame, scaleR, carryItemSize, connectSpecOf, frameOfGroup, frameRect, frameSizeOf, groupBounds, layoutOf, isExpanded, sizeOf } from "./tokens";
 
 /* Rule-based layout for one screen. Nothing here is guessed by a model.
  *
@@ -202,6 +202,33 @@ export function pullInto(g: Group, frame: Frame, widths: Record<string, number>)
   /* a bar as wide as the screen sits on its left edge; a narrower one keeps its place */
   if (g.items.length === 1 && FULL_WIDTH.includes(g.items[0].kind) && bb.r - bb.l >= fr.r - fr.l) dx = fr.l - bb.l;
   return dx || dy ? { ...g, x: g.x + Math.round(dx), y: g.y + Math.round(dy) } : g;
+}
+
+/** Whether a bar is wide enough to sit in a screen's slot — the body, beside any rail. A bar the
+ *  author narrowed is a part they placed rather than a bar that spans anything, and dropping one
+ *  keeps the place it was let go at. */
+export function spansSlot(it: Item, slot: { x: number; w: number }, widths: Record<string, number>): boolean {
+  return FULL_WIDTH.includes(it.kind) && sizeOf(it, widths).w >= slot.w;
+}
+
+/** How far a sideways drag of a screen-wide row has to travel before it means "the other side".
+ *  A rail's worth: a smaller move is a slip of the hand, and a row that was only nudged keeps
+ *  the side it had. */
+export const SIDE_FLIP_MIN = 24;
+
+/** Where the labels of a side tab row end up after being dragged: the side of the screen its
+ *  middle was dropped on, or null when nothing should change.
+ *
+ *  A row as wide as its screen has no room left to move sideways, so a sideways drag of one can
+ *  only spring back where it started — and that is the one gesture that plainly says "put these
+ *  labels on the other side". A narrower row is a part being placed, and its side is the
+ *  author's own setting; a drag that comes to rest near the middle changes nothing. */
+export function sideFlip(row: Item, frame: Frame, dropLeft: number, widths: Record<string, number>): TabSide | null {
+  if (row.kind !== "sideTabs") return null;
+  const fw = frameSizeOf(frame).w;
+  if (sizeOf(row, widths).w < fw) return null;
+  const off = dropLeft + sizeOf(row, widths).w / 2 - (frame.x + fw / 2);
+  return Math.abs(off) < SIDE_FLIP_MIN ? null : off < 0 ? "left" : "right";
 }
 
 /** A screen changing size, and everything that follows from it: the screens to its

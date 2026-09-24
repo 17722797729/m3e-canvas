@@ -62,6 +62,13 @@ export const BAR_FOLDED_W = 56;
 export const BAR_FOLDED_H = 56;
 /** A tab row: the row itself, and the panel area a row gets when its panels are made for it. */
 export const TAB_ROW_H = 48;
+/** The label column a side tab row keeps on its left: the room its destinations need, which is what
+ *  the page beside them starts after. */
+export const SIDE_TAB_W = 132;
+/** The share of a side row the labels take by default, as a percentage of its width. */
+export const SIDE_RAIL_PCT = 32;
+export const SIDE_RAIL_MIN = 10;
+export const SIDE_RAIL_MAX = 50;
 export const TAB_PANEL_H = 240;
 export const RAIL_ITEM_H = 52;
 export const RAIL_GAP = 12;
@@ -170,7 +177,10 @@ export function railCell(it: Item, count: number, index: number) {
   const rail = railMetrics(it);
   const wide = isWideRail(it);
   const cell = navCell(count, it.navPerRow, index);
-  const itemW = RAIL_W - 12;
+  /* A destination takes the room the rail has for it: the plain 56dp-wide pill on a rail at its own
+     width, and the whole inner width once the author stretches the rail — which is what gives a
+     longer label somewhere to be. A rail squeezed narrower takes its destinations down with it. */
+  const itemW = Math.max(RAIL_CELL_MIN, rail.width - 12);
   /* the narrow rail's columns are laid out as one centred row */
   const spread = cell.lines * itemW + (cell.lines - 1) * RAIL_GAP;
   const start = Math.round((wide ? 0 : (rail.width * cell.lines - spread) / 2));
@@ -622,8 +632,38 @@ export type Kind =
   | "fabMenu"
   | "toolbar"
   | "tabs"
+  | "sideTabs"
   | "radio"
   | "badge";
+
+/**
+ * A row whose children are the pages of its tabs: the tabs across the top, and the same thing stood on
+ * its side, with the destinations down the left. Everything about panels — one per tab, in tab order,
+ * the one in front drawn — is the same for both, so they are one thing to the rest of the editor.
+ */
+export const isTabRow = (it: Item | null | undefined): boolean => !!it && (it.kind === "tabs" || it.kind === "sideTabs");
+
+/** Whether a destination draws its icon, and the badge it carries when it has one. A destination can
+ *  hide either without losing it: an author who takes a badge away for a while wants it back. */
+export const tabShowsIcon = (tab: NavTab) => !tab.hideIcon && !!tab.icon;
+export const tabBadge = (tab: NavTab): string | null => (tab.hideBadge ? null : (tab.badge ?? "").trim() || null);
+
+/** Which edge of a tab row its labels sit on. A row across the page uses top or bottom; a row stood on
+ *  its side uses left or right. */
+export type TabSide = "top" | "bottom" | "left" | "right";
+export const TAB_SIDES: TabSide[] = ["top", "bottom", "left", "right"];
+export const isTabSide = (v: unknown): v is TabSide => TAB_SIDES.some((s) => s === v);
+
+/**
+ * Where a tab row keeps its labels — and so where its page goes, which is the other side. A value the
+ * kind does not use reads as that kind's own default, so a document drawn before the choice existed,
+ * or one whose kind changed, keeps the look it was designed with: the strip on top, the labels on the
+ * left.
+ */
+export const labelSideOf = (it: { kind?: Kind; tabSide?: TabSide }): TabSide =>
+  it.kind === "sideTabs" ? (it.tabSide === "right" ? "right" : "left") : it.tabSide === "bottom" ? "bottom" : "top";
+/** The side row: the labels stand in a column instead of a strip. */
+export const isSideTabs = (it: Item | undefined): boolean => !!it && it.kind === "sideTabs";
 
 export type Axis = "x" | "y";
 /** kinds that fuse into a run: buttons side by side, list items stacked */
@@ -1381,6 +1421,26 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     defIcon: null,
     defVariant: "tonal",
   },
+  sideTabs: {
+    label: "Side tabs",
+    noun: "サイドタブ",
+    category: "navigation",
+    paletteIcon: "vertical_split",
+    w: PHONE_W,
+    h: SIDE_TAB_W,
+    radius: 0,
+    hasVariant: false,
+    hasLabel: false,
+    hasSupporting: false,
+    hasIcon: false,
+    hasTabs: true,
+    /* the labels stand down the left, so the width is split and the height is the page */
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: WIDTH_PRESETS },
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [160, 240, 320] },
+    defLabel: "",
+    defIcon: null,
+    defVariant: "filled",
+  },
   tabs: {
     label: "Tabs",
     noun: "タブ",
@@ -1456,6 +1516,7 @@ export const KIND_ORDER: Kind[] = [
   "navRail",
   "toolbar",
   "tabs",
+  "sideTabs",
   "searchBar",
   "card",
   "listItem",
@@ -1486,6 +1547,14 @@ export const KIND_ORDER: Kind[] = [
 export type NavTab = {
   icon: string;
   label: string;
+  /** whether the icon is drawn: unset means it is, so a destination keeps its icon when the author
+   *  hides it for a while and wants it back, rather than having to pick it again */
+  hideIcon?: boolean;
+  /** a short thing this destination says about itself — a count of what waits behind it, a "new"
+   *  — drawn at its top trailing corner in the error colour, the way a game marks a tab */
+  badge?: string;
+  /** whether that badge is drawn: unset means it is */
+  hideBadge?: boolean;
   /** the preview greys this destination out once its own rule has fired (never saved) */
   disabled?: boolean;
   /** the preview keeps this destination a size up once its own rule has fired (never saved) */
@@ -1573,6 +1642,19 @@ export type Item = {
   /** A text that reads a part keeps its own words as well (`shows` + `mix`): the value lands where
    *  the words say `{v}`, so "出售数量： {v} / 10000" is a sentence with a live number in it. */
   mix?: boolean;
+  /** The panel of a tab: the room under a tab row that holds what that tab shows. Its box is the
+   *  row's to decide — one panel per tab, filling the area under the strip — so it is not dragged,
+   *  not sized, and never listed as a container the author placed. */
+  panel?: boolean;
+  tabSide?: TabSide;
+  /** A side row only: the share of its width the labels take, as a percentage — the page takes the
+   *  rest, so this is the ratio between the two. Unset is a third of the box, which is the column the
+   *  part has always had. */
+  sideRail?: number;
+  /** How far the part is turned, in degrees: unset is straight. It turns the way it is drawn — the
+   *  box, its corners, its words and everything it holds — while the place it takes in the layout, and
+   *  the rectangle the editor lines it up by, stay where they are. */
+  rot?: number;
   /** The top of a slider's or a stepper's range: unset is a hundred, which is what a percentage
    *  stops at, while "出售数量 … / 10000" wants a ceiling of its own. Drag, the number on the part,
    *  the ＋/− buttons and the numbers a rule adds all stop here. */
@@ -1989,7 +2071,7 @@ export function ruleFieldsFor(it: Item): RuleField[] {
   if (spec.hasFill) out.push("fill");
   if (it.kind === "invGrid") out.push("checkboxes");
   if (spec.hasChecked || it.kind === "listItem") out.push("checked");
-  if ((it.kind === "tabs" || it.kind === "select") && (it.tabs?.length ?? 0) > 0) out.push("selected");
+  if ((isTabRow(it) || it.kind === "select") && (it.tabs?.length ?? 0) > 0) out.push("selected");
   if (spec.hasValue) out.push("value");
   /* the three flags a look carries: they are how a rule greys a part out, takes it off the screen
      or makes it stand a size up, without that part needing a machine of its own */
@@ -2107,7 +2189,7 @@ export const TRANSITIONS: { key: Transition; label: string; icon: string }[] = [
 export function actionSlotsOf(it: Item): IconSlot[] {
   if (it.kind === "topAppBar" || it.kind === "bottomNav" || it.kind === "navRail" || it.kind === "toolbar") return iconSlotsOf(it).filter((s) => !!s.value);
   if (it.kind === "fabMenu") return (it.tabs ?? []).map((t, i) => ({ key: `tab:${i}`, label: t.label || `${i + 1}`, value: t.icon || null }));
-  if (it.kind === "tabs") return (it.tabs ?? []).map((t, i) => ({ key: `tab:${i}`, label: t.label || `${i + 1}`, value: null }));
+  if (isTabRow(it)) return (it.tabs ?? []).map((t, i) => ({ key: `tab:${i}`, label: t.label || `${i + 1}`, value: null }));
   return [];
 }
 
@@ -2679,7 +2761,7 @@ export const backTarget = (layers: Layer[]): "layer" | "screen" | "blocked" => {
 };
 
 /** parts that span the screen edge to edge and follow its width when it changes */
-export const FULL_WIDTH: Kind[] = ["topAppBar", "bottomNav", "tabs"];
+export const FULL_WIDTH: Kind[] = ["topAppBar", "bottomNav", "tabs", "sideTabs"];
 
 /** Kinds drawn to the width of what they say until the author gives them one. Their own width has to
  *  beat the measurement the canvas took of them, in `sizeOf` and in the renderer alike. */
@@ -3000,6 +3082,7 @@ const TOOLBAR_ICONS = ["format_bold", "format_italic", "format_underlined", "att
 export function defaultTabsFor(kind: Kind): NavTab[] {
   switch (kind) {
     case "tabs":
+    case "sideTabs":
       return TAB_LABELS[getLang()].map((label) => ({ icon: "", label }));
     case "select":
       return SELECT_OPTIONS[getLang()].map((label) => ({ icon: "", label }));
@@ -3068,7 +3151,7 @@ export function makeItem(kind: Kind): Item {
     /* the expressive rail, whose header is its own fold button */
     it.railExpanded = false;
   }
-  if (kind === "tabs" || kind === "fabMenu" || kind === "select") it.tabs = defaultTabsFor(kind);
+  if (kind === "tabs" || kind === "sideTabs" || kind === "fabMenu" || kind === "select") it.tabs = defaultTabsFor(kind);
   if (kind === "toolbar") it.tabs = defaultTabsFor(kind).slice(0, 4);
   return it;
 }
@@ -3125,6 +3208,7 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
     case "toolbar":
       return { w: it.size ?? toolbarWidth(it), h: it.size2 ?? s.h };
     case "tabs":
+    case "sideTabs":
       return { w: n, h: it.size2 ?? s.h };
     case "text":
       return { w: widths[it.id] ?? 120, h: Math.round(n * 1.3) };
@@ -3194,7 +3278,8 @@ export function baseRadii(it: Item): Radii {
     // falls through
     case "bottomNav":
     case "topAppBar":
-    case "tabs": {
+    case "tabs":
+    case "sideTabs": {
       const t = it.radiusTop ?? 0;
       const b = it.radiusBottom ?? 0;
       return { tl: t, tr: t, bl: b, br: b };
@@ -3293,33 +3378,56 @@ export function removeTabPatch(it: Item, i: number): Pick<Item, "tabs" | "select
     sel === undefined ? undefined : sel > i ? sel - 1 : sel < i ? sel : it.kind === "select" ? undefined : Math.min(i, last);
   /* a tab row's panels follow the tabs, or the one that was dropped would sit in the document under
      the name of a tab that no longer exists */
-  const children = it.kind === "tabs" ? withoutPanel(it.children, (j) => j === i) : undefined;
+  const children = isTabRow(it) ? withoutPanel(it.children, (j) => j === i) : undefined;
+  /* what a removed tab's panel held moves into the panel in front rather than sitting in a shell no
+     canvas can ever show */
+  const folded = children ? foldOrphanPanels({ ...it, tabs, selected, children }).children : undefined;
   return {
     tabs,
     selected,
     actions: remapTabActions(it.actions, (j) => (j === i ? undefined : j > i ? j - 1 : j)),
-    ...(children ? { children } : undefined),
+    ...(folded ? { children: folded } : undefined),
   };
 }
 
 /** the patch that sets the entry count: extra entries come from the defaults, and the tap targets of dropped entries go */
-export function tabCountPatch(it: Item, n: number, defaults: NavTab[]): Pick<Item, "tabs" | "selected" | "actions" | "children"> {
+export function tabCountPatch(it: Item, n: number, defaults: NavTab[]): Pick<Item, "tabs" | "selected" | "actions" | "children" | "size2"> {
   const cur = it.tabs ?? [];
   const tabs: NavTab[] = [];
   for (let i = 0; i < n; i++) tabs.push(cur[i] ? { ...cur[i] } : { ...defaults[i % defaults.length] });
-  const children = it.kind === "tabs" ? withoutPanel(it.children, (j) => j >= n) : undefined;
+  const keptRaw = isTabRow(it) ? withoutPanel(it.children, (j) => j >= n) : undefined;
+  const kept = keptRaw ? foldOrphanPanels({ ...it, tabs, children: keptRaw }).children : undefined;
+  /* A tab with no panel under it is a label with nothing to show — and a panel is the tab's slot,
+     known by its place in the row, so a tab that arrives without one can never be filled. The panels
+     the new tabs need are made here, the way a removal puts the slot it opened back. */
+  const kids = kept ? [...kept] : undefined;
+  if (kids) {
+    const row = { ...it, tabs };
+    const w = sizeOf(row, {}).w;
+    const area = panelArea(row);
+    while (kids.length < n) kids.push(freshPanel(tabs[kids.length]?.label ?? "", w, area, kids.length));
+    return {
+      tabs,
+      selected: it.selected !== undefined && it.selected >= n ? undefined : it.selected,
+      actions: remapTabActions(it.actions, (j) => (j < n ? j : undefined)),
+      children: kids,
+      /* the strip keeps its height and the rest of the box goes to the panels, so a row that only
+         had room for its tabs grows to hold the new one */
+      size2: Math.max(it.size2 ?? TAB_ROW_H, TAB_ROW_H + area),
+    };
+  }
   return {
     tabs,
     selected: it.selected !== undefined && it.selected >= n ? undefined : it.selected,
     actions: remapTabActions(it.actions, (j) => (j < n ? j : undefined)),
-    ...(children ? { children } : undefined),
+    ...(kept ? { children: kept } : undefined),
   };
 }
 
 /** Whether a tab row is still short of panels, or of the room to show them. Cheap enough to ask on
  *  every render: it allocates nothing, unlike the patch that fixes it. */
 export const needsTabPanels = (it: Item) =>
-  it.kind === "tabs" && (it.tabs?.length ?? 0) > 0 && ((it.children?.length ?? 0) < (it.tabs?.length ?? 0) || (it.size2 ?? TAB_ROW_H) < TAB_ROW_H + TAB_PANEL_H);
+  isTabRow(it) && (it.tabs?.length ?? 0) > 0 && ((it.children?.length ?? 0) < (it.tabs?.length ?? 0) || (it.size2 ?? TAB_ROW_H) < tabRowMin(it));
 
 /**
  * Where a part lands when it becomes a child: inside the box, pulled in when it sat past the edge, and
@@ -3348,9 +3456,56 @@ export function childAt(
 /** The room a tab row leaves for the panels under its tab strip. */
 const panelArea = (row: Item) => Math.max(TAB_PANEL_H, (row.size2 ?? TAB_ROW_H) - TAB_ROW_H);
 
+/** What a side row's labels take of its width: their own column, never more than half the box, so the
+ *  page beside them keeps something to be. */
+export const sideRailW = (row: Item) => {
+  const width = row.size ?? PHONE_W;
+  const pct = Math.max(SIDE_RAIL_MIN, Math.min(SIDE_RAIL_MAX, Math.round(row.sideRail ?? SIDE_RAIL_PCT)));
+  return Math.max(48, Math.round((width * pct) / 100));
+};
+
+/** How tall a tab row has to be to show a page at all: a strip's height under the labels, or — on its
+ *  side — simply the room a page needs. */
+export const tabRowMin = (row: Item) => (isSideTabs(row) ? TAB_ROW_H + TAB_PANEL_H : TAB_ROW_H + TAB_PANEL_H);
+
+/**
+ * The box a tab row leaves for the page of the tab in front: under the strip for a row of tabs, beside
+ * the labels for a row stood on its side. One place decides it, so a panel is always where its row can
+ * show it — and so a drop, a resize and the canvas all agree.
+ */
+export const panelBox = (row: Item, w: number, h: number): { x: number; y: number; size: number; size2: number } => {
+  const rail = sideRailW(row);
+  switch (labelSideOf(row)) {
+    /* the labels under the page, which is the strip at the foot of the box */
+    case "bottom":
+      return { x: 0, y: 0, size: Math.round(w), size2: Math.max(0, Math.round(h - TAB_ROW_H)) };
+    /* the labels down the right, so the page takes the left */
+    case "right":
+      return { x: 0, y: 0, size: Math.max(0, Math.round(w - rail)), size2: Math.max(0, Math.round(h)) };
+    case "left":
+      return { x: rail, y: 0, size: Math.max(0, Math.round(w - rail)), size2: Math.max(0, Math.round(h)) };
+    default:
+      return { x: 0, y: TAB_ROW_H, size: Math.round(w), size2: Math.max(0, Math.round(h - TAB_ROW_H)) };
+  }
+};
+
 /** The empty panel a tab starts with: the row's own width, right under its tab strip. */
-export function freshPanel(label: string, w: number, area: number): PlacedItem {
-  return { ...makeItem("box"), label, x: 0, y: TAB_ROW_H, size: w, size2: area };
+export function freshPanel(label: string, w: number, area: number, at = 0): PlacedItem {
+  /* A panel is scaffolding with a name of its own: without one the layers list reads it as another
+     container the author made, and a row they cannot remove — the panel comes straight back, since a
+     row's panels are known by their place — is the most confusing row there is. Named, it says which
+     tab it belongs to. */
+  const words = label.trim();
+  return {
+    ...makeItem("box"),
+    panel: true,
+    name: words ? `${t("tabPanel")} · ${words}` : `${t("tabPanel")} ${at + 1}`,
+    label,
+    x: 0,
+    y: TAB_ROW_H,
+    size: w,
+    size2: area,
+  };
 }
 
 /**
@@ -3361,12 +3516,23 @@ export function freshPanel(label: string, w: number, area: number): PlacedItem {
  */
 export function tabPanelsPatch(it: Item): Pick<Item, "children" | "size2"> | null {
   const tabs = it.tabs ?? [];
-  if (it.kind !== "tabs" || tabs.length === 0) return null;
+  if (!isTabRow(it) || tabs.length === 0) return null;
   const have = it.children ?? [];
-  const area = panelArea(it);
-  const w = sizeOf(it, {}).w;
-  const children = have.length >= tabs.length ? have : [...have, ...Array.from({ length: tabs.length - have.length }, (_, k) => freshPanel(tabs[have.length + k].label, w, area))];
-  const size2 = TAB_ROW_H + area;
+  const size = sizeOf(it, {});
+  /* the row grows to hold a page before the panels are laid out in it, so the panel a fresh tab gets
+     is exactly the room the row will have — not the room it had */
+  const size2 = Math.max(it.size2 ?? 0, tabRowMin(it));
+  const box = panelBox({ ...it, size2 }, size.w, size2);
+  const children =
+    have.length >= tabs.length
+      ? have
+      : [
+          ...have,
+          ...Array.from({ length: tabs.length - have.length }, (_, k) =>
+            /* a fresh panel is the room its tab shows, in the place its row puts it */
+            ({ ...freshPanel(tabs[have.length + k].label, box.size, box.size2, have.length + k), x: box.x, y: box.y }),
+          ),
+        ];
   const grown = it.size2 === undefined || it.size2 < size2;
   if (children.length === have.length && !grown) return null;
   return { children, size2 };
@@ -3381,11 +3547,13 @@ export function tabPanelsPatch(it: Item): Pick<Item, "children" | "size2"> | nul
  */
 export function keepPanelSlots(row: Item, gone: number[]): PlacedItem[] {
   const out = [...(row.children ?? [])];
-  if (row.kind !== "tabs" || gone.length === 0) return out;
-  const w = sizeOf(row, {}).w;
-  const area = panelArea(row);
+  if (!isTabRow(row) || gone.length === 0) return out;
+  const size = sizeOf(row, {});
+  const h2 = Math.max(row.size2 ?? 0, tabRowMin(row));
+  const box = panelBox({ ...row, size2: h2 }, size.w, h2);
   /* from the back, so an insert never moves a place still to be filled */
-  for (const at of [...new Set(gone)].sort((a, b) => b - a)) out.splice(at, 0, freshPanel(row.tabs?.[at]?.label ?? "", w, area));
+  for (const at of [...new Set(gone)].sort((a, b) => b - a))
+    out.splice(at, 0, { ...freshPanel(row.tabs?.[at]?.label ?? "", box.size, box.size2, at), x: box.x, y: box.y });
   return out;
 }
 
@@ -3395,7 +3563,7 @@ export function keepPanelSlots(row: Item, gone: number[]): PlacedItem[] {
  * panel is free — a panel with something in it is the author's work and is never overwritten.
  */
 export function panelSlotFor(row: Item, part: Item): number | null {
-  if (row.kind !== "tabs" || part.kind !== "box") return null;
+  if (!isTabRow(row) || part.kind !== "box") return null;
   const label = part.label.trim();
   if (!label) return null;
   const kids = row.children ?? [];
@@ -3415,16 +3583,26 @@ export function restorePanel(row: Item, part: PlacedItem, widths: Record<string,
   const kids = [...(row.children ?? [])];
   /* the caller makes the row's panels first, so the slot is usually there already; a short list is
      filled out so the part still lands on the tab it is named after */
-  while (kids.length <= at) kids.push(freshPanel(row.tabs?.[kids.length]?.label ?? "", sizeOf(row, {}).w, panelArea(row)));
-  kids[at] = liftAbove({ ...part, x: 0, y: TAB_ROW_H }, layerOf(row) + 1);
-  const size = sizeOf(row, widths);
-  return fitTabPanels(kids, size.w, size.h);
+  const size = sizeOf(row, {});
+  const h2 = Math.max(row.size2 ?? 0, tabRowMin(row));
+  const box = panelBox({ ...row, size2: h2 }, size.w, h2);
+  while (kids.length <= at) kids.push({ ...freshPanel(row.tabs?.[kids.length]?.label ?? "", box.size, box.size2, kids.length), x: box.x, y: box.y });
+  /* the part goes into the slot with the row's own box: the same place, whichever way the row faces */
+  kids[at] = liftAbove({ ...part, x: box.x, y: box.y, size: box.size, size2: box.size2 }, layerOf(row) + 1);
+  return fitTabPanels(kids, row, size.w, h2);
 }
 
 /** Panels follow their row when it is resized: the row keeps its height and the panels take what is
  *  left, rather than being stretched away from the row the way proportional scaling would. */
-export const fitTabPanels = (panels: PlacedItem[], w: number, h: number): PlacedItem[] =>
-  panels.map((c) => ({ ...c, x: 0, y: TAB_ROW_H, size: w, size2: Math.max(0, Math.round(h - TAB_ROW_H)) }));
+export const fitTabPanels = (panels: PlacedItem[], row: Item, w: number, h: number, floor = LAYER_DEFAULT): PlacedItem[] => {
+  const box = panelBox(row, w, h);
+  return panels.map((c) => {
+    /* A panel below its own row is not drawn at all — a child under its container never is — so a row
+       the author lifted takes its panels up with it, exactly as a board takes its cells. */
+    const fitted: PlacedItem = { ...c, x: box.x, y: box.y, size: box.size, size2: box.size2 };
+    return liftAbove(fitted, floor);
+  });
+};
 
 /**
  * The nearest part among `ids` that holds `id`: the container the author picked in the layers panel.
@@ -3538,6 +3716,18 @@ export function resizedChildren(before: Item, patch: Partial<Item>, widths: Reco
     const next = { ...before, ...patch } as PlacedItem;
     return liftAbove(next, layerOf(next)).children;
   }
+  /* A tab row's panels answer a change of layer as well as a change of size: the row is what they hang
+     under, and one left below it is a panel nothing draws. */
+  /* A tab row's panels answer a change of layer, and a change of side: the labels moving to the other
+     edge sends the page to the other side with them, and a panel left where it was is a blank box the
+     author cannot explain. */
+  if (isTabRow(before) && ("z" in patch || "tabSide" in patch || "sideRail" in patch) && !("size" in patch || "size2" in patch)) {
+    const kids = patch.children ?? before.children;
+    if (!kids?.length) return undefined;
+    const row = { ...before, ...patch } as Item;
+    const now = sizeOf(row, widths);
+    return fitTabPanels(kids as PlacedItem[], row, now.w, now.h, layerOf(row));
+  }
   if (!("size" in patch || "size2" in patch)) return undefined;
   const kids = patch.children ?? before.children;
   if (!kids?.length) return undefined;
@@ -3545,19 +3735,56 @@ export function resizedChildren(before: Item, patch: Partial<Item>, widths: Reco
      so its children keep the size they were drawn at. */
   if (before.scroll) return undefined;
   const next = { ...before, ...patch };
-  if (before.kind === "tabs") {
+  if (isTabRow(before)) {
     const now = sizeOf(next, widths);
-    return fitTabPanels(kids, now.w, now.h);
+    return fitTabPanels(kids as PlacedItem[], next, now.w, now.h, layerOf(next));
   }
   const was = sizeOf(before, widths);
   const now = sizeOf(next, widths);
   return scaleChildren(kids, now.w / Math.max(1, was.w), now.h / Math.max(1, was.h));
 }
 
+/**
+ * The parts a step may be aimed at. A step can name a part anywhere in the document, not only on the
+ * page its own part stands on: a pickup on one page fills a slot in the bag on another, and the two
+ * are the same prototype. The page is carried along because two pages can each hold a "Bag slot" —
+ * the list has to say which one it means — and the parts of the page in play come first, since that
+ * is where an author usually aims.
+ *
+ * A board's own cells are left out: they are the board's slots rather than parts of a screen. What
+ * is left out too is the part the step belongs to and everything it holds, which a step that leaves
+ * `target` out already means.
+ */
+export type RuleTarget = { id: string; name: string; kind: Kind; where: string; item: Item };
+
+export function ruleTargets(
+  groups: Group[],
+  frameIdOf: (groupId: string) => string | null,
+  frameName: (frameId: string) => string,
+  pageId: string | null,
+  /** the part the step belongs to and everything it holds: a step that names nothing means it */
+  except: Set<string>,
+  nameOfPart: (it: Item) => string,
+): RuleTarget[] {
+  const here: RuleTarget[] = [];
+  const away: RuleTarget[] = [];
+  for (const g of groups) {
+    const frameId = frameIdOf(g.id);
+    const where = frameId ? frameName(frameId) : "";
+    const mine = frameId !== null && frameId === pageId;
+    for (const it of itemsOf([g])) {
+      if (except.has(it.id) || isGridCell(it)) continue;
+      const hit: RuleTarget = { id: it.id, name: nameOfPart(it), kind: it.kind, where, item: it };
+      (mine ? here : away).push(hit);
+    }
+  }
+  return [...here, ...away];
+}
+
 /* ---------- what a bound text reads ---------- */
 
 /** The kinds whose value a text can read: the ones a visitor can move or choose. */
-export const READOUT_KINDS: Kind[] = ["slider", "stepper", "progressBar", "linearProgress", "circularProgress", "select", "tabs"];
+export const READOUT_KINDS: Kind[] = ["slider", "stepper", "progressBar", "linearProgress", "circularProgress", "select", "tabs", "sideTabs"];
 
 /** Whether a part has a value worth showing beside it. */
 export const hasReadout = (it: Item) => READOUT_KINDS.includes(it.kind) || !!it.switch;
@@ -3578,7 +3805,7 @@ export const unitOf = (it: Item) => it.unit !== false;
 export function readoutOf(it: Item, live?: number, lang?: Lang, unit = true): string {
   const words = { on: { ja: "オン", en: "On", zh: "开", ko: "켜짐" }, off: { ja: "オフ", en: "Off", zh: "关", ko: "꺼짐" } };
   const pick = (w: { ja: string; en: string; zh: string; ko: string }) => w[lang ?? getLang()];
-  if (it.kind === "tabs" || it.kind === "select") {
+  if (isTabRow(it) || it.kind === "select") {
     const tabs = it.tabs ?? [];
     return tabs[tabIndexOf(it)]?.label.trim() || "—";
   }
@@ -3725,6 +3952,73 @@ export function gridCells(it: Item, widths: Record<string, number>): PlacedItem[
  * that were only drawn, and a board may arrive from a file with no cells at all. Reading is when
  * both are put right, so nothing downstream has to wonder whether a board has its slots.
  */
+/**
+ * Panels of a row an older build drew come back named: a panel is scaffolding, and one with no name
+ * of its own reads in the layers list as another container the author made — a row they cannot
+ * remove, because a row's panels are known by their place and come straight back. A panel the
+ * author has named is left exactly as it is.
+ */
+export function syncTabPanels(groups: Group[]): Group[] {
+  const walk = (it: Item): Item => {
+    const kids = it.children?.map(walk) as PlacedItem[] | undefined;
+    let next: Item = kids ? { ...it, children: kids } : it;
+    if (!isTabRow(next)) return next;
+    next = foldOrphanPanels(next);
+    const patch = tabPanelsPatch(next);
+    if (patch) next = { ...next, ...patch };
+    /* A panel's box is the row's: the room under the strip, the row's own width. A panel an older
+       build left with a box of its own — one that covers the tab strip, or reaches past the row —
+       takes the author's aim away from the tabs and puts a drop inside a panel that cannot be seen.
+       Fitting it here is the same thing a resize does, so the row and its panels always agree. */
+    const size = sizeOf(next, {});
+    return nameOneRow({ ...next, children: fitTabPanels((next.children ?? []) as PlacedItem[], next, size.w, size.h, layerOf(next)) });
+  };
+  return groups.map((g) => ({ ...g, items: g.items.map(walk) }));
+}
+
+/** How far a part may be turned: past half a turn it is the same picture again, and the control is
+ *  easier to aim than a circle that keeps going. */
+export const ROT_MAX = 180;
+/** The turn a part stands at, in degrees: what the author set, brought into range. */
+export const rotOf = (it: Item) => Math.max(-ROT_MAX, Math.min(ROT_MAX, Math.round(it.rot ?? 0)));
+/** The turn as a transform, so the canvas, the preview and an export draw it the same way. Unset
+ *  means no transform at all, which keeps a part that is not turned free of one. */
+export const rotStyle = (it: Item): string | undefined => (rotOf(it) ? `rotate(${rotOf(it)}deg)` : undefined);
+
+/** Whether a part is the panel of a tab: a box that stands for one destination of a tab row. */
+export const isTabPanel = (it: Item | undefined): boolean => !!it?.panel;
+
+/** One tab row with every unnamed panel named after the tab it stands for. */
+function nameOneRow(it: Item): Item {
+  if (!isTabRow(it)) return it;
+  return {
+    ...it,
+    children: (it.children ?? []).map((c, i) => {
+      /* a child of a tab row is that row's panel, whether or not the build that made it said so */
+      const panel: PlacedItem = c.panel ? c : { ...c, panel: true };
+      if (panel.name?.trim() || panel.kind !== "box") return panel;
+      const words = (panel.label ?? "").trim() || (it.tabs?.[i]?.label ?? "").trim();
+      return { ...panel, name: words ? `${t("tabPanel")} · ${words}` : `${t("tabPanel")} ${i + 1}` };
+    }),
+  };
+}
+
+export function namePanels(groups: Group[]): Group[] {
+  const walk = (it: Item): Item => {
+    const kids = it.children?.map(walk) as PlacedItem[] | undefined;
+    if (!isTabRow(it) || !kids?.length) return kids ? { ...it, children: kids } : it;
+    return {
+      ...it,
+      children: kids.map((c, i) => {
+        if (c.name?.trim() || c.kind !== "box") return c;
+        const words = (c.label ?? "").trim() || (it.tabs?.[i]?.label ?? "").trim();
+        return { ...c, name: words ? `${t("tabPanel")} · ${words}` : `${t("tabPanel")} ${i + 1}` };
+      }),
+    };
+  };
+  return groups.map((g) => ({ ...g, items: g.items.map(walk) }));
+}
+
 export function withGridCells(groups: Group[]): Group[] {
   const one = (it: Item): Item => {
     const kids = it.children?.map(one) as PlacedItem[] | undefined;
@@ -3873,7 +4167,7 @@ export function scrollOffset(
 /** The children patch a tab rename carries: a panel still named after its tab follows it, and one the
  *  author has named themselves is left alone. */
 export function tabRenamePatch(it: Item, i: number, label: string): Pick<Item, "children"> | null {
-  const panel = it.kind === "tabs" ? it.children?.[i] : undefined;
+  const panel = isTabRow(it) ? it.children?.[i] : undefined;
   if (!panel || panel.label !== (it.tabs?.[i]?.label ?? "")) return null;
   return { children: it.children!.map((c, j) => (j === i ? { ...c, label } : c)) };
 }
@@ -3910,9 +4204,55 @@ function withoutPanel(kids: PlacedItem[] | undefined, gone: (j: number, count: n
   return [...kept, ...orphans];
 }
 
+/**
+ * A tab row with more panels than tabs: the extra ones are panels a removed tab left behind, kept so
+ * the work in them is not lost — but nothing can ever show them. The row draws the panel of the tab in
+ * front, and a panel with no tab behind it can never be that one, so anything dropped into it (it is
+ * listed, and it takes a drop like any other container) is invisible for good.
+ *
+ * Their contents move into the panel of the tab in front, where the author can see and reach them
+ * again, and the empty shells go. A row with nothing to fold is handed back as it is.
+ */
+export function foldOrphanPanels(it: Item): Item {
+  const tabs = it.tabs ?? [];
+  const kids = it.children ?? [];
+  if (!isTabRow(it) || tabs.length === 0 || kids.length <= tabs.length) return it;
+  const front = tabIndexOf(it);
+  const moved = kids.slice(tabs.length).flatMap((panel) => panel.children ?? []);
+  if (moved.length === 0) return { ...it, children: kids.slice(0, tabs.length) };
+  return {
+    ...it,
+    children: kids.slice(0, tabs.length).map((panel, i) =>
+      i === front ? { ...panel, children: [...(panel.children ?? []), ...moved.map((c) => liftAbove(c, layerOf(panel) + 1))] as PlacedItem[] } : panel,
+    ),
+  };
+}
+
 /** Whether a container draws a child of its own: a tab row keeps only the panel of the tab in front,
  *  which is what makes switching tabs switch the page under them. */
-export const childDrawn = (parent: Item, child: Item, index: number) => childShown(parent, child) && (parent.kind !== "tabs" || index === tabIndexOf(parent));
+export const childDrawn = (parent: Item, child: Item, index: number) => childShown(parent, child) && (!isTabRow(parent) || index === tabIndexOf(parent));
+
+/**
+ * Every part the canvas actually draws, found by walking the tree the way the canvas draws it: a
+ * child that sits below its container is not drawn, and a tab row draws only the panel of the tab in
+ * front.
+ *
+ * A part that is not drawn is not a place a drop can land either. Two panels of one tab row stand at
+ * the same place, so a drag inside the panel on show would otherwise find the panel of the tab behind
+ * it — smaller, and just as close under the pointer — take the part into it, and the part would leave
+ * the screen and its own row behind without a word.
+ */
+export function drawnIds(items: Item[]): Set<string> {
+  const out = new Set<string>();
+  const walk = (it: Item) => {
+    out.add(it.id);
+    (it.children ?? []).forEach((c, i) => {
+      if (childDrawn(it, c, i)) walk(c);
+    });
+  };
+  items.forEach(walk);
+  return out;
+}
 
 /** how far a scrollable tab row is shifted left so the selected tab is in view with half of the
  *  next one peeking in; the drawing and the preview's hit areas share it, so a tap lands on the tab that is shown */
@@ -3957,6 +4297,9 @@ export function iconSlotsOf(it: Item): IconSlot[] {
     case "bottomNav":
     case "navRail":
     case "toolbar":
+    /* a tab row's icons are its destinations' own, exactly as a bar's are */
+    case "tabs":
+    case "sideTabs":
       return (it.tabs ?? []).map((t, i) => ({
         key: `tab:${i}`,
         label: `${i + 1}`,

@@ -15,6 +15,8 @@
  *  - Groups of different families do not join
  *  - carryFrame: phone <-> desktop conversion swaps a stand-alone bottomNav with a navRail
  *  - carryFrame: a navRail placed on the right stays on the right
+ *  - sideFlip: a screen-wide side tab row dragged past the middle changes side, a nudge does not
+ *  - spansSlot: a bar that spans the body takes the slot; one the author narrowed keeps its place
  */
 import { describe, expect, it } from "vitest";
 import { frameOfGroup } from "./tokens";
@@ -23,6 +25,9 @@ import {
   pullInto,
   railSide,
   barSlotOf,
+  sideFlip,
+  SIDE_FLIP_MIN,
+  spansSlot,
   carryFrame,
   bodyRect,
 } from "./tidy";
@@ -91,6 +96,80 @@ describe("pullInto", () => {
     const g = group("g1", 100, 0, [topBar("t")]); // already starts before phoneFrame ends but x > 0
     const out = pullInto(g, phoneFrame, widths);
     expect(out.x).toBe(0);
+  });
+});
+
+describe("spansSlot", () => {
+  const navBar = (id: string, w?: number): Item => ({
+    id,
+    kind: "bottomNav",
+    label: "",
+    icon: null,
+    variant: "filled",
+    ...(w === undefined ? {} : { size: w }),
+    tabs: [{ icon: "home", label: "A" }],
+  });
+  const slot = { x: 0, w: PHONE_W };
+
+  it("a bar as wide as the body sits in the slot", () => {
+    expect(spansSlot(navBar("b"), slot, widths)).toBe(true);
+    expect(spansSlot(navBar("b", PHONE_W), slot, widths)).toBe(true);
+  });
+
+  it("a bar the author narrowed keeps its own place", () => {
+    expect(spansSlot(navBar("b", 300), slot, widths)).toBe(false);
+  });
+
+  it("a bar wider than the body is pulled in, so it still spans", () => {
+    expect(spansSlot(navBar("b", PHONE_W + 90), slot, widths)).toBe(true);
+  });
+
+  it("a part that is not a bar never takes the slot", () => {
+    expect(spansSlot(btn("x"), slot, widths)).toBe(false);
+  });
+});
+
+describe("sideFlip", () => {
+  const sideTabs = (id: string, w = PHONE_W): Item => ({
+    id,
+    kind: "sideTabs",
+    label: "",
+    icon: null,
+    variant: "filled",
+    size: w,
+    size2: 240,
+    tabs: [{ icon: "home", label: "A" }, { icon: "sell", label: "B" }],
+  });
+
+  /* A row as wide as the screen sits at the screen's left edge, which puts its middle on the
+     screen's middle: the drag is measured from there, so the "no change" band is around 0. */
+  it("a screen-wide row let go past the middle moves its labels right", () => {
+    const row = sideTabs("st");
+    expect(sideFlip(row, phoneFrame, SIDE_FLIP_MIN, widths)).toBe("right");
+    expect(sideFlip(row, phoneFrame, 150, widths)).toBe("right");
+    expect(sideFlip(row, phoneFrame, PHONE_W, widths)).toBe("right");
+  });
+
+  it("and let go short of the middle moves them left", () => {
+    const row = sideTabs("st");
+    expect(sideFlip(row, phoneFrame, -SIDE_FLIP_MIN, widths)).toBe("left");
+    expect(sideFlip(row, phoneFrame, -150, widths)).toBe("left");
+  });
+
+  it("a nudge around the middle leaves the side alone", () => {
+    const row = sideTabs("st");
+    expect(sideFlip(row, phoneFrame, -1, widths)).toBeNull();
+    expect(sideFlip(row, phoneFrame, 1, widths)).toBeNull();
+  });
+
+  it("a row narrower than the screen is being placed, not flipped", () => {
+    const row = sideTabs("st", PHONE_W - 80);
+    expect(sideFlip(row, phoneFrame, PHONE_W, widths)).toBeNull();
+  });
+
+  it("a row that is not a side tab row never flips", () => {
+    const bar = topBar("t");
+    expect(sideFlip(bar, phoneFrame, PHONE_W, widths)).toBeNull();
   });
 });
 

@@ -1,11 +1,13 @@
 "use client";
 
 import { ReactNode, createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Frame, Group, Item, KIND_SPEC, Palette, byLayer, explodeGroup, findItemIn, isOverlayFrame, isPhoneFrame, layerOf, overlayLevelOfFrame, pageTintOf, parentOf, subtreeOf, tabIndexOf, takesText } from "@/lib/tokens";
+import { Frame, Group, Item, KIND_SPEC, Palette, byLayer, explodeGroup, findItemIn, isOverlayFrame, isPhoneFrame, isTabRow, layerOf, overlayLevelOfFrame, pageTintOf, parentOf, subtreeOf, tabIndexOf, takesText } from "@/lib/tokens";
 import { contrastRatio } from "@/lib/color";
 import { splitByPage } from "@/lib/pages";
 import { Icon } from "./M3Node";
+import { inputBox } from "./ui";
 import { Lang, KIND_TEXT, overlayLevelText, t, useLang } from "@/lib/i18n";
+import { LayerHit, layerName, searchLayers } from "@/lib/search";
 
 /* Rows never animate their size: opening a row only adds rows under it, so
  * nothing stretches. Only the drag itself moves.
@@ -64,6 +66,7 @@ function Row({
   badgeTitle,
   tint,
   plain,
+  movable,
   onNest,
   onRename,
   onMagnify,
@@ -95,6 +98,8 @@ function Row({
   tint?: { bg: string; ink: string } | null;
   /** a row that is not reorderable (a page, or a part inside a container) */
   plain?: boolean;
+  /** a row with no level of its own that can still be picked up and dropped on a container */
+  movable?: boolean;
   /** asks to put this row's part inside a container on the same screen */
   onNest?: () => void;
   /** writes the name the author typed over this row's own */
@@ -130,11 +135,14 @@ function Row({
   const resting = tint ? tint.bg : depth === 0 ? p.surfaceContainerLow : p.surface;
   const bg = hover ? (canTake ? p.tertiaryContainer : p.surfaceContainerHigh) : on ? p.secondaryContainer : resting;
   const ink = (want: string) => (contrastRatio(want, bg) >= 3 ? want : contrastRatio(p.onSurface, bg) >= contrastRatio(p.onSurfaceVariant, bg) ? p.onSurface : p.onSurfaceVariant);
-  const draggable = !plain;
+  const draggable = !plain || !!movable;
+  /* A movable row stands in no level of its own: dropping it anywhere but on a container does
+     nothing, rather than sliding a part of a run that is not on screen. */
+  const levelKey = movable && plain ? "" : dnd.level;
   const h = depth === 0 ? 40 : 36;
   const body = (
     <div
-      {...(draggable ? { "data-value": id, "data-level": dnd.level, "data-part": id, "data-holds": holds ? "1" : undefined, "data-takes-text": takesText ? "1" : undefined } : { "data-part": id, "data-holds": holds ? "1" : undefined, "data-takes-text": takesText ? "1" : undefined })}
+      {...(draggable ? { "data-value": id, "data-level": levelKey, "data-part": id, "data-holds": holds ? "1" : undefined, "data-takes-text": takesText ? "1" : undefined } : { "data-part": id, "data-holds": holds ? "1" : undefined, "data-takes-text": takesText ? "1" : undefined })}
       style={{
         display: "flex",
         alignItems: "center",
@@ -152,9 +160,7 @@ function Row({
         touchAction: draggable ? "none" : undefined,
       }}
     >
-      {plain ? (
-        <span style={{ width: depth === 0 ? 24 : 20, height: h, flex: "0 0 auto" }} />
-      ) : (
+      {draggable ? (
         <span
           onPointerDown={(e) => {
             dnd.begin(e, id, id, !!holds);
@@ -163,6 +169,8 @@ function Row({
         >
           <Icon name="drag_indicator" size={18} />
         </span>
+      ) : (
+        <span style={{ width: depth === 0 ? 24 : 20, height: h, flex: "0 0 auto" }} />
       )}
       {typing !== null ? (
         <input
@@ -290,6 +298,7 @@ function PartRow({
   openIds,
   toggle,
   reorderable = false,
+  movable = false,
   onNest,
   onRename,
   onMagnify,
@@ -309,6 +318,11 @@ function PartRow({
   openIds: Set<string>;
   toggle: (id: string) => void;
   reorderable?: boolean;
+  /** A part a container holds can be picked up and dropped into another container: its row has no
+   *  level to reorder in, so a drag means "put this somewhere else" and nothing else. Without it the
+   *  author has to take the part out of its container first and then drag it in — two gestures for
+   *  one move. */
+  movable?: boolean;
   /** asks to put this part inside one of the screen's containers */
   onNest?: (it: Item) => void;
   /** writes a name the author typed over this part's own in the list */
@@ -329,6 +343,8 @@ function PartRow({
   onTabRename?: (itemId: string, index: number, name: string) => void;
 }) {
   const lang = useLang();
+  /* A tab row shows its panels as well: one per tab, in tab order, named after the tab they belong
+     to, so a tab the author just added is visibly a tab *and* the panel under it. */
   const kids = [...(it.children ?? [])].sort(byLayer).reverse();
   /* a bar's destinations are buttons of their own: they belong under it in the tree */
   const slots = (it.tabs ?? []).map((t, i) => ({ key: `tab:${i}`, at: i, icon: t.icon, label: t.label, place: i + 1 }));
@@ -339,7 +355,7 @@ function PartRow({
   /* What can take a dropped part: a container, and a tab row — which receives into the panel of the
      tab in front. A bar can *open* to its destinations, but those are its own buttons, not room for a
      part, so it must not light up as a place to drop one. */
-  const holds = it.kind === "box" || it.kind === "tabs";
+  const holds = it.kind === "box" || isTabRow(it);
   const takesTextRow = !holds && takesText(it);
   const open = (kids.length > 0 || slots.length > 0) && openIds.has(it.id);
   return (
@@ -348,6 +364,7 @@ function PartRow({
       p={p}
       depth={depth}
       plain={!reorderable}
+      movable={reorderable || movable}
       icon={<Icon name={(KIND_SPEC[it.kind] ?? KIND_SPEC.box).paletteIcon} size={16} />}
       label={nameOf(it, lang)}
       on={sel.has(it.id)}
@@ -370,7 +387,7 @@ function PartRow({
       {kids.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {kids.map((c) => (
-            <PartRow key={c.id} it={c} p={p} depth={depth + 1} sel={sel} onSelect={onSelect} onDragging={onDragging} openIds={openIds} toggle={toggle} hoverId={hoverId} onFree={onFree} onRename={onRename} inContainer onMagnify={onMagnify} magnifiedId={magnifiedId} onTabSelect={onTabSelect} onTabRename={onTabRename} />
+            <PartRow key={c.id} it={c} p={p} depth={depth + 1} sel={sel} onSelect={onSelect} onDragging={onDragging} openIds={openIds} toggle={toggle} hoverId={hoverId} onFree={onFree} onRename={onRename} inContainer movable={reorderable || movable} onMagnify={onMagnify} magnifiedId={magnifiedId} onTabSelect={onTabSelect} onTabRename={onTabRename} />
           ))}
         </div>
       )}
@@ -380,7 +397,7 @@ function PartRow({
           {slots.map((sl) => {
             /* a destination of a tab row is the tab itself: the row in front is marked, and picking
                another switches the row to it, exactly as picking its panel does */
-            const isTabSlot = it.kind === "tabs" && sl.key.startsWith("tab:");
+            const isTabSlot = isTabRow(it) && sl.key.startsWith("tab:");
             const tabIndex = isTabSlot ? Number(sl.key.slice(4)) : -1;
             return (
             <Row
@@ -528,6 +545,16 @@ export function LayersPanel({
 }) {
   const lang = useLang();
   const sel = new Set(selectedIds);
+  /* What the author is looking for. A document with more pages than fit has no other way to a row:
+     the query is matched against the name a row shows, the words the part says, its destinations and
+     its kind, so "按钮" finds every button and "save" finds the one called Save. */
+  const [q, setQ] = useState("");
+  const hits = useMemo(() => searchLayers(frames, groups, frameIdOf, q, lang), [frames, groups, frameIdOf, q, lang]);
+  const searching = q.trim().length > 0;
+  const openHit = (h: LayerHit) => {
+    if (h.frameId) onFrame(h.frameId);
+    if (h.itemId) onSelect([h.itemId], false);
+  };
   const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
   const [openFrames, setOpenFrames] = useState<Set<string>>(() => new Set(frameId ? [frameId] : []));
   /* the page in play is always open, so the panel shows where an edit lands */
@@ -827,8 +854,73 @@ export function LayersPanel({
   return (
     <DndCtx.Provider value={{ levels, level: "", dragging: draggingRow, carrying: carryingKind, begin }}>
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* What the author types here looks through every page at once: a row's name, the words it
+          says, its destinations and its kind. The list under it is the plain tree until they do. */}
+      <div style={{ padding: "10px 10px 2px", display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ position: "relative", flex: 1, minWidth: 0, display: "inline-flex", alignItems: "center" }}>
+          <span style={{ position: "absolute", left: 12, display: "inline-flex", color: p.onSurfaceVariant, pointerEvents: "none" }}>
+            <Icon name="search" size={18} />
+          </span>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              /* Escape clears the field, Enter takes the first hit: the two things a search box
+                 owes a keyboard, and the reason this is not the shared Field */
+              if (e.key === "Escape") {
+                e.stopPropagation();
+                setQ("");
+              }
+              if (e.key === "Enter" && hits[0]) openHit(hits[0]);
+            }}
+            placeholder={t("searchLayers", lang)}
+            aria-label={t("searchLayers", lang)}
+            style={{ ...inputBox(p), width: "100%", height: 40, padding: `0 ${q ? 34 : 12}px 0 38px`, color: p.onSurface, fontSize: 13, outline: "none", boxSizing: "border-box" }}
+          />
+          {q && (
+            <button
+              type="button"
+              onClick={() => setQ("")}
+              title={t("searchClear", lang)}
+              className="m3-press"
+              style={{ position: "absolute", right: 6, width: 26, height: 26, border: "none", borderRadius: 13, background: "transparent", color: p.onSurfaceVariant, cursor: "pointer", display: "grid", placeItems: "center" }}
+            >
+              <Icon name="close" size={16} />
+            </button>
+          )}
+        </span>
+      </div>
       <div className="no-scrollbar" style={{ flex: 1, overflowY: "auto", padding: "8px 10px 12px" }}>
-        {frames.length === 0 && loose.length === 0 ? (
+        {searching ? (
+          /* A search reaches across pages, so its rows are flat: the page a part lives on rides along
+             as the badge, and picking a row opens that page and selects the part on it. */
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ padding: "2px 6px 4px", fontSize: 11, color: p.outline }}>{t("searchCount", lang).replace("{n}", String(hits.length))}</div>
+            {hits.map((h) => (
+              <Row
+                key={h.itemId ?? `page:${h.frameId}`}
+                id={h.itemId ? `hit:${h.itemId}` : `hitpage:${h.frameId}`}
+                p={p}
+                depth={0}
+                plain
+                icon={<Icon name={h.icon} size={18} />}
+                label={h.label}
+                badge={h.where || undefined}
+                badgeTitle={h.where ? t("screen", lang) : undefined}
+                tint={h.itemId === null && h.frameId ? pageTintOf(frames.find((f) => f.id === h.frameId)!, p) : undefined}
+                on={h.itemId ? sel.has(h.itemId) : h.frameId === frameId}
+                onSelect={() => openHit(h)}
+                onDragging={onDragging}
+              />
+            ))}
+            {hits.length === 0 && (
+              <div style={{ padding: "18px 12px", textAlign: "center", color: p.outline, fontSize: 12 }}>
+                <Icon name="search_off" size={28} />
+                <div style={{ marginTop: 6 }}>{t("searchNoHit", lang).replace("{q}", q.trim())}</div>
+              </div>
+            )}
+          </div>
+        ) : frames.length === 0 && loose.length === 0 ? (
           <div style={{ padding: 24, textAlign: "center", color: p.outline, fontSize: 12 }}>
             <Icon name="layers_clear" size={32} />
             <div style={{ marginTop: 8 }}>{t("noLayers", lang)}</div>

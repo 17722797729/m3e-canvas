@@ -56,6 +56,8 @@ import {
   type NavTab,
   sizeOf,
   isScrollableTabs,
+  sideRailW,
+  labelSideOf,
   tabScrollOffset,
   SCROLL_TAB_W,
   /* overlays: a level is a bundle of runtime rules, and the stack is the order they were
@@ -182,7 +184,7 @@ const flips = (_it: Item) => false;
 /** The parts whose taps are destinations rather than one target: a bar, a rail, a toolbar or a row
  *  of tabs. Their choice belongs to the screen, and the same destinations on two screens are one
  *  choice to the visitor — which is what the key below is built from. */
-const isNavKind = (it: Item) => it.kind === "bottomNav" || it.kind === "navRail" || it.kind === "tabs";
+const isNavKind = (it: Item) => it.kind === "bottomNav" || it.kind === "navRail" || it.kind === "tabs" || it.kind === "sideTabs";
 const navKeyOf = (it: Item) => `nav:${it.kind}:${(it.tabs ?? []).map((t) => t.label).join("|")}`;
 
 /** The kinds whose value a visitor changes: a slider to scrub, a stepper to walk, a slider field to
@@ -523,13 +525,24 @@ function Tappable({
       });
     }
   }
+  if (onSlot && item.kind === "sideTabs") {
+    const n = item.tabs?.length ?? 0;
+    /* A side row's destinations are rows down one edge — the left, or the right when the author put
+       them there — so their hit areas are too; the page beside them belongs to whatever it holds. */
+    const rail = sideRailW(item);
+    const atRight = labelSideOf(item) === "right";
+    for (let i = 0; i < n; i++)
+      slots.push({ key: `tab:${i}`, style: { ...(atRight ? { right: 0 } : { left: 0 }), width: rail, top: 8 + i * TAB_ROW_H, height: TAB_ROW_H, borderRadius: 12 } });
+  }
   if (onSlot && item.kind === "tabs" && !scrollTabs) {
     const n = item.tabs?.length ?? 0;
-    /* A tab row is only its row: the rest of the box is the panel of the tab in front, and a tap
-       there belongs to whatever the panel holds, not to the row above it. A row wide enough to
-       scroll has its own areas, measured inside the scrolling layer, so they are not added here. */
+    /* A tab row is only its strip: the rest of the box is the page of the tab in front, and a tap
+       there belongs to whatever the page holds, not to the labels — which sit on the edge the author
+       chose, the top or the foot of the box. A row wide enough to scroll has its own areas, measured
+       inside the scrolling layer, so they are not added here. */
+    const atBottom = labelSideOf(item) === "bottom";
     for (let i = 0; i < n; i++)
-      slots.push({ key: `tab:${i}`, style: { left: `${(i / n) * 100}%`, width: `${100 / n}%`, top: 0, height: TAB_ROW_H, borderRadius: 16 } });
+      slots.push({ key: `tab:${i}`, style: { left: `${(i / n) * 100}%`, width: `${100 / n}%`, ...(atBottom ? { bottom: 0 } : { top: 0 }), height: TAB_ROW_H, borderRadius: 16 } });
   }
   if (onSlot && item.kind === "navRail") {
     /* folded, the rail holds nothing but its own button: there is no destination left to tap */

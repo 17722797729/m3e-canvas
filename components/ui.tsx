@@ -1098,7 +1098,7 @@ export function Pick<K extends string>({
   title,
   p,
 }: {
-  options: { key: K; label: string; icon?: string }[];
+  options: { key: K; label: string; icon?: string; group?: string }[];
   value: K;
   onChange: (k: K) => void;
   title?: string;
@@ -1123,7 +1123,9 @@ export function Pick<K extends string>({
   }, [open]);
   const current = options.find((o) => o.key === value);
   const needle = q.trim().toLowerCase();
-  const shown = needle ? options.filter((o) => o.label.toLowerCase().includes(needle)) : options;
+  /* A search reaches the group too: a long list is filed under the page each part lives on, and
+     typing the page's name is how an author asks for what is on it. */
+  const shown = needle ? options.filter((o) => o.label.toLowerCase().includes(needle) || (o.group ?? "").toLowerCase().includes(needle)) : options;
   return (
     <div ref={ref} style={{ position: "relative", flex: 1, minWidth: 0 }}>
       <button
@@ -1182,7 +1184,14 @@ export function Pick<K extends string>({
               <Field value={q} onChange={setQ} placeholder={t("search", lang)} p={p} icon="search" height={32} />
             </div>
           )}
-          {shown.map((o) => (
+          {shown.map((o, i) => (
+            <>
+            {/* a group's name stands over its entries, once, the way a long list is filed */}
+            {o.group && o.group !== shown[i - 1]?.group && (
+              <div key={`g-${o.group}`} style={{ padding: "6px 8px 2px", fontSize: 10, fontWeight: 700, letterSpacing: 0.3, color: p.outline, textTransform: "uppercase" }}>
+                {o.group}
+              </div>
+            )}
             <button
               key={o.key}
               type="button"
@@ -1211,6 +1220,7 @@ export function Pick<K extends string>({
               {o.icon && <Icon name={o.icon} size={16} />}
               <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.label}</span>
             </button>
+            </>
           ))}
           {shown.length === 0 && <div style={{ padding: "8px", fontSize: 12, color: p.outline, textAlign: "center" }}>{t("searchOff", lang)}</div>}
         </div>

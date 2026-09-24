@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { contrastRatio } from "./color";
 import { itemNameOf } from "./flow";
-import { getLang, KIND_TEXT } from "./i18n";
+import { getLang, KIND_TEXT, t } from "./i18n";
 
-import { CELL_DEF, CELL_MAX, CELL_MIN, COLS_MAX, ROWS_MAX, cellGap, cellOf, scrollContent, slotGrid, gridCells, cellBox, gridCheckZ, rulePatch, ruleFieldsFor, readoutOf, hasReadout, unitOf, mixText, readText, VALUE_TOKEN, hasValueToken, valueAfter, maxOf, clampMax, MAX_DEF, MAX_MAX, isValueOp, withGridCells, BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill, childShown, connectedButton, DIALOG_COLOR, childDrawn, badgeSurface, buttonScale, findItemIn, foldMargins, radiiOfRuns, roundByNature, runPartRadii, ROUND_SHAPES, foldPlace, foldShift, layoutOf, NO_FOLD, fitTabPanels, keepPanelSlots, liftAbove, isStateEffect, STATE_EFFECTS, START_LOOK, firstTapStep, firstDueStep, waitLeft, lookItem, lookAt, statesAsFlow, migrateFlows, hasTimedSteps, hasAutoClose, AUTO_HIDE_STEP, AUTO_CLOSE_DEF, RULE_ACTIONS, isRuleKind, fillColor, fillInk, TRANSPARENT, cardFillOf, type PartFlow, type PartLook, type PartStep, type MachineAt, NAV_ICON, NAV_INDICATOR, NAV_INDICATOR_R, NAV_LABEL_FONT, selectedAncestor, takesText, panelSlotFor, refillPanels, restorePanel, slotsOf, resizedChildren, needsTabPanels, tabIndexOf, tabPanelId, tabRenamePatch, tabPanelsPatch, tabStyleOf, TAB_PANEL_H, TAB_ROW_H, onToken, pageTintOf, PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type Kind, type ItemState, type PlacedItem, type Frame } from "./tokens";
+import { CELL_DEF, CELL_MAX, CELL_MIN, COLS_MAX, ROWS_MAX, cellGap, cellOf, scrollContent, slotGrid, gridCells, cellBox, gridCheckZ, rulePatch, ruleFieldsFor, readoutOf, hasReadout, unitOf, mixText, readText, VALUE_TOKEN, hasValueToken, valueAfter, maxOf, clampMax, MAX_DEF, MAX_MAX, isValueOp, withGridCells, BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill, childShown, connectedButton, DIALOG_COLOR, childDrawn, badgeSurface, buttonScale, findItemIn, foldMargins, radiiOfRuns, roundByNature, runPartRadii, ROUND_SHAPES, foldPlace, foldShift, layoutOf, NO_FOLD, fitTabPanels, keepPanelSlots, liftAbove, isStateEffect, STATE_EFFECTS, START_LOOK, firstTapStep, firstDueStep, waitLeft, lookItem, lookAt, statesAsFlow, migrateFlows, hasTimedSteps, hasAutoClose, namePanels, rotOf, rotStyle, ROT_MAX, labelSideOf, isTabSide, tabShowsIcon, tabBadge, RAIL_CELL_MIN, RAIL_W, SIDE_RAIL_MIN, SIDE_RAIL_MAX, sideRailW, panelBox, isTabRow, isSideTabs, SIDE_TAB_W, syncTabPanels, foldOrphanPanels, drawnIds, isTabPanel, freshPanel, AUTO_HIDE_STEP, AUTO_CLOSE_DEF, RULE_ACTIONS, isRuleKind, fillColor, fillInk, TRANSPARENT, cardFillOf, type PartFlow, type PartLook, type PartStep, type MachineAt, NAV_ICON, NAV_INDICATOR, NAV_INDICATOR_R, NAV_LABEL_FONT, selectedAncestor, takesText, panelSlotFor, refillPanels, restorePanel, slotsOf, resizedChildren, needsTabPanels, tabIndexOf, tabPanelId, tabRenamePatch, tabPanelsPatch, tabStyleOf, TAB_PANEL_H, TAB_ROW_H, onToken, pageTintOf, PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type Kind, type ItemState, type PlacedItem, type Frame } from "./tokens";
 
 afterEach(() => setGlobalShape("rounded")); // restore the module default
 
@@ -539,6 +539,95 @@ describe("a part's own state machine", () => {
     expect(AUTO_CLOSE_DEF).toBeGreaterThan(0);
   });
 
+  /* A part can be turned about its own middle: the drawn part goes round, the layout does not. */
+  it("turns a part without moving where it stands", () => {
+    const b = { ...makeItem("box"), id: "b" };
+    expect(rotOf(b)).toBe(0);
+    expect(rotStyle(b)).toBeUndefined();
+    expect(rotOf({ ...b, rot: -12 })).toBe(-12);
+    expect(rotStyle({ ...b, rot: -12 })).toBe("rotate(-12deg)");
+    expect(rotOf({ ...b, rot: 90 })).toBe(90);
+    /* past half a turn it is the same picture again, so the value is brought into range */
+    expect(rotOf({ ...b, rot: 999 })).toBe(ROT_MAX);
+    expect(rotOf({ ...b, rot: -999 })).toBe(-ROT_MAX);
+    expect(rotOf({ ...b, rot: 12.6 })).toBe(13);
+    /* a turn is a drawn thing: the box the layout uses is the part's own size */
+    expect(sizeOf({ ...b, rot: 45 }, {})).toEqual(sizeOf(b, {}));
+  });
+
+  /* A destination takes the room its rail has: the plain pill on a rail at its own width, and the
+     inner width once the author stretches it — a longer label needs somewhere to be. */
+  it("widens a rail's destinations when the rail is stretched", () => {
+    /* the plain rail of a document drawn before the wide rail existed: no expansion fields */
+    const old = { ...makeItem("navRail"), id: "r", size2: 600, tabs: [{ icon: "home", label: "Home" }, { icon: "search", label: "A longer one" }] };
+    delete (old as { railExpanded?: boolean }).railExpanded;
+    const at = (w?: number) => railCell(w === undefined ? old : { ...old, size: w }, 2, 0);
+    const plain = at();
+    const stretched = at(260);
+    const squeezed = at(40);
+    /* at its own width each destination is the familiar 56dp pill */
+    expect(plain.width).toBe(RAIL_W - 12);
+    /* stretched, they take the room the rail has: a longer label needs somewhere to be */
+    expect(stretched.width).toBe(260 - 12);
+    expect(stretched.left).toBeGreaterThanOrEqual(0);
+    /* squeezed, they shrink with the rail rather than running past its edge */
+    expect(squeezed.width).toBeLessThan(plain.width);
+    expect(squeezed.width).toBeGreaterThanOrEqual(RAIL_CELL_MIN);
+  });
+
+  /* What a destination says about itself: an icon it can put away, and a badge it can take off. */
+  it("hides a destination's icon and its badge without losing either", () => {
+    const plain = { icon: "home", label: "Home" };
+    expect(tabShowsIcon(plain)).toBe(true);
+    expect(tabShowsIcon({ ...plain, hideIcon: true })).toBe(false);
+    /* no icon at all is not the same as one put away: nothing is drawn either way */
+    expect(tabShowsIcon({ icon: "", label: "Home" })).toBe(false);
+    expect(tabBadge(plain)).toBeNull();
+    expect(tabBadge({ ...plain, badge: "  3 " })).toBe("3");
+    expect(tabBadge({ ...plain, badge: "NEW" })).toBe("NEW");
+    expect(tabBadge({ ...plain, badge: "3", hideBadge: true })).toBeNull();
+    /* a badge of spaces is no badge */
+    expect(tabBadge({ ...plain, badge: "  " })).toBeNull();
+  });
+
+  /* Where a row keeps its labels decides where its page goes, and each kind has its own default. */
+  it("puts a tab row's page on the side its labels are not", () => {
+    const strip = { ...makeItem("tabs"), id: "t", size: 360, size2: 300 };
+    const side = { ...makeItem("sideTabs"), id: "s", size: 360, size2: 300 };
+    /* the defaults: the strip on top, the labels on the left */
+    expect(labelSideOf(strip)).toBe("top");
+    expect(labelSideOf(side)).toBe("left");
+    expect(panelBox(strip, 360, 300)).toEqual({ x: 0, y: TAB_ROW_H, size: 360, size2: 300 - TAB_ROW_H });
+    expect(panelBox(side, 360, 300)).toEqual({ x: sideRailW(side), y: 0, size: 360 - sideRailW(side), size2: 300 });
+    /* labels at the foot: the page takes the top */
+    const low = { ...strip, tabSide: "bottom" as const };
+    expect(labelSideOf(low)).toBe("bottom");
+    expect(panelBox(low, 360, 300)).toEqual({ x: 0, y: 0, size: 360, size2: 300 - TAB_ROW_H });
+    /* labels on the right: the page takes the left */
+    const right = { ...side, tabSide: "right" as const };
+    expect(labelSideOf(right)).toBe("right");
+    expect(panelBox(right, 360, 300)).toEqual({ x: 0, y: 0, size: 360 - sideRailW(right), size2: 300 });
+    /* A side row splits its width between the labels and the page, and the share is the author's:
+       a quarter of the box, or two fifths, and the page takes whatever is left. */
+    const quarter = { ...side, sideRail: 25 };
+    expect(sideRailW(quarter)).toBe(Math.round(360 * 0.25));
+    expect(panelBox(quarter, 360, 300)).toEqual({ x: 90, y: 0, size: 270, size2: 300 });
+    const wide = { ...side, sideRail: 40 };
+    expect(sideRailW(wide)).toBe(Math.round(360 * 0.4));
+    expect(panelBox(wide, 360, 300).size).toBe(360 - Math.round(360 * 0.4));
+    /* a share outside the range the editor offers is brought back into it */
+    expect(sideRailW({ ...side, sideRail: 90 })).toBe(Math.round(360 * SIDE_RAIL_MAX / 100));
+    expect(sideRailW({ ...side, sideRail: 0 })).toBe(Math.max(48, Math.round(360 * SIDE_RAIL_MIN / 100)));
+    /* and a change of share moves the page, the way a change of side does */
+    expect(resizedChildren({ ...side, children: [freshPanel("甲", 300, 200)] }, { sideRail: 25 }, {})?.[0]).toMatchObject({ x: Math.round(360 * 0.25) });
+
+    /* a side the kind does not use reads as its own default, so an old document never changes look */
+    expect(labelSideOf({ ...strip, tabSide: "left" })).toBe("top");
+    expect(labelSideOf({ ...side, tabSide: "top" })).toBe("left");
+    expect(isTabSide("bottom")).toBe(true);
+    expect(isTabSide("middle")).toBe(false);
+  });
+
   /* Two ways to put an overlay away, and they are easy to confuse: the top one, or the whole stack. */
   it("offers closing the overlay the part is in and closing every one", () => {
     expect(RULE_ACTIONS.map((a) => a.key)).toEqual(["goto", "back", "close", "closeAll", "look"]);
@@ -548,6 +637,106 @@ describe("a part's own state machine", () => {
     const it = makeItem("button");
     expect(AUTO_HIDE_STEP.do).toEqual([{ kind: "look", hidden: true }]);
     expect(it.kind).toBe("button");
+  });
+
+  /* A tab row's panels are structure, one per tab: they come back when they are deleted, so a panel
+     with no name of its own would read as a container the author cannot remove. */
+  it("names the panels a tab row needs, and never renames one the author named", () => {
+    const row = { ...makeItem("tabs"), id: "t", label: "", tabs: [{ icon: "a", label: "果实" }, { icon: "b", label: "" }] };
+    const patch = tabPanelsPatch(row);
+    expect(patch?.children).toHaveLength(2);
+    const names = (patch?.children ?? []).map((c) => c.name);
+    expect(names[0]).toBe(`${t("tabPanel")} · 果实`);
+    expect(names[1]).toBe(`${t("tabPanel")} 2`);
+    /* adding a tab brings its panel: a tab without one is a label with nothing under it */
+    const grown = tabCountPatch({ ...row, children: patch?.children }, 4, [{ icon: "x", label: "道具" }]);
+    expect(grown.tabs).toHaveLength(4);
+    expect(grown.children).toHaveLength(4);
+    expect(grown.children?.[2].name).toBe(`${t("tabPanel")} · 道具`);
+    expect(grown.children?.[3].name).toBe(`${t("tabPanel")} · 道具`);
+    /* and the box grows to hold them, without shrinking a row that was already tall enough */
+    expect(grown.size2).toBeGreaterThanOrEqual(TAB_ROW_H + TAB_PANEL_H);
+    const tall = tabCountPatch({ ...row, size2: 900, children: patch?.children }, 3, [{ icon: "x", label: "道具" }]);
+    expect(tall.size2).toBe(900);
+    /* a slot a panel left is filled by a fresh one, under the same name */
+    const refilled = keepPanelSlots({ ...row, children: patch?.children }, [0]);
+    expect(refilled).toHaveLength(3);
+    expect(refilled[0].name).toBe(`${t("tabPanel")} · 果实`);
+    /* and a panel an older build drew with no name at all gets one as the document loads */
+    const old = namePanels([{ id: "g", x: 0, y: 0, axis: "y", items: [{ ...row, children: [{ ...freshPanel("果实", 300, 200), name: undefined }, { ...freshPanel("", 300, 200, 1), name: undefined }] as PlacedItem[] }] }]);
+    const kids = (old[0].items[0].children ?? []).map((c) => c.name);
+    expect(kids).toEqual([`${t("tabPanel")} · 果实`, `${t("tabPanel")} 2`]);
+    /* The canvas draws the panel of the tab in front, and only that one: a drop has to land where
+       the author can see it, so the panels behind are not places at all. */
+    const rowDrawn = { ...row, selected: 1, children: [patch?.children?.[0], patch?.children?.[1]] as PlacedItem[] };
+    const drawn = drawnIds([rowDrawn]);
+    expect(drawn.has("t")).toBe(true);
+    expect(drawn.has(rowDrawn.children[1].id)).toBe(true);
+    expect(drawn.has(rowDrawn.children[0].id)).toBe(false);
+    /* a child below its container is not drawn either, and neither is anything it holds */
+    const deep = { ...makeItem("box"), id: "low", z: 1, children: [{ ...makeItem("button"), id: "deeper", z: 1 }] as PlacedItem[] };
+    const over = { ...makeItem("box"), id: "high", z: 9, children: [deep] as PlacedItem[] };
+    const set = drawnIds([over]);
+    expect(set.has("high")).toBe(true);
+    expect(set.has("low")).toBe(false);
+    expect(set.has("deeper")).toBe(false);
+
+    /* A panel left behind by a removed tab can never be shown — the row draws the panel of the tab in
+       front — so its work moves into that panel instead of sitting in a shell the author can drop
+       things into and never see again. */
+    const widowed = {
+      ...row,
+      tabs: [{ icon: "a", label: "果实" }],
+      children: [
+        { ...freshPanel("果实", 300, 200), id: "front" },
+        { ...freshPanel("道具", 300, 200, 1), id: "orphan", children: [{ ...makeItem("image"), id: "img", x: 10, y: 10 }] as PlacedItem[] },
+      ] as PlacedItem[],
+    };
+    const folded = foldOrphanPanels(widowed);
+    expect((folded.children ?? []).map((c) => c.id)).toEqual(["front"]);
+    expect((folded.children ?? [])[0].children?.map((c) => c.id)).toEqual(["img"]);
+    /* an empty orphan goes without a trace, and a row with nothing to fold is handed back as it is */
+    expect((foldOrphanPanels({ ...widowed, children: [widowed.children![0], { ...widowed.children![1], children: [] }] }).children ?? []).map((c) => c.id)).toEqual(["front"]);
+    expect(foldOrphanPanels({ ...row, selected: 1, children: patch?.children })).toEqual({ ...row, selected: 1, children: patch?.children });
+    /* and the pass a document goes through as it opens folds, fills in and names in one go */
+    const synced = syncTabPanels([{ id: "g", x: 0, y: 0, axis: "y", items: [{ ...widowed, children: [{ ...widowed.children![0], name: undefined }, widowed.children![1]] as PlacedItem[] }] }]);
+    const rowSynced = synced[0].items[0];
+    expect(rowSynced.children).toHaveLength(1);
+    expect(rowSynced.children?.[0].name).toBe(`${t("tabPanel")} · 果实`);
+    expect(rowSynced.children?.[0].children?.map((c) => c.id)).toEqual(["img"]);
+
+    /* A panel's box is its row's: the room under the strip, the row's own width. A panel an older
+       build left wrapping the whole tab row takes the tabs away from the author and hides every drop
+       inside it, so the box is fitted again as the document opens. */
+    const mangled = {
+      ...row,
+      size: 360,
+      size2: 300,
+      children: [{ ...freshPanel("果实", 300, 200), id: "p", x: -20, y: -10, size: 999, size2: 999 }] as PlacedItem[],
+    };
+    const fitted = syncTabPanels([{ id: "g", x: 0, y: 0, axis: "y", items: [mangled] }])[0].items[0];
+    expect(fitted.children?.[0]).toMatchObject({ id: "p", x: 0, y: TAB_ROW_H, size: 360, size2: 300 - TAB_ROW_H, panel: true });
+    /* A panel left below its own row is not drawn at all, so a row the author raised carries its
+       panels (and everything in them) up with it — the way a board carries its cells. */
+    const raised = { ...row, z: 30, size: 360, size2: 300, children: [{ ...freshPanel("果实", 300, 200), id: "p2", z: 10, children: [{ ...makeItem("image"), id: "pic", z: 10 }] as PlacedItem[] }] as PlacedItem[] };
+    const up = syncTabPanels([{ id: "g", x: 0, y: 0, axis: "y", items: [raised] }])[0].items[0];
+    expect(up.children?.[0].z).toBeGreaterThanOrEqual(30);
+    expect(up.children?.[0].children?.[0].z).toBeGreaterThanOrEqual(30);
+    /* and the same when the author lifts the row by hand: the panels come with it */
+    const lifted = resizedChildren(raised, { z: 40 }, {});
+    expect(lifted?.[0].z).toBeGreaterThanOrEqual(40);
+
+    /* every brick of scaffolding says what it is, so nothing offers to drag or size it */
+    expect(isTabPanel(fitted.children?.[0])).toBe(true);
+    expect(isTabPanel(freshPanel("x", 300, 200))).toBe(true);
+    expect(isTabPanel(makeItem("box"))).toBe(false);
+    /* and a document that never said so is marked as it opens */
+    const fromOld = syncTabPanels([{ id: "g", x: 0, y: 0, axis: "y", items: [{ ...row, children: [{ ...freshPanel("A", 300, 120), panel: undefined }] as PlacedItem[] }] }])[0].items[0];
+    expect(fromOld.children?.[0].panel).toBe(true);
+
+    /* a panel the author named keeps their words */
+    const mine = namePanels([{ id: "g", x: 0, y: 0, axis: "y", items: [{ ...row, children: [{ ...freshPanel("果实", 300, 200), name: "我的面板" }] as PlacedItem[] }] }]);
+    expect((mine[0].items[0].children ?? [])[0].name).toBe("我的面板");
   });
 
   it("reads the state rules of an older document back as a machine", () => {
@@ -825,8 +1014,28 @@ describe("a tab row and its panels", () => {
 
   it("follows the row when it is resized: the row keeps its height, the panels take the rest", () => {
     const panels = tabPanelsPatch(row())!.children!;
-    const fitted = fitTabPanels(panels, 320, 400);
+    const fitted = fitTabPanels(panels, row(), 320, 400);
     expect(fitted.every((p) => p.y === TAB_ROW_H && p.x === 0 && p.size === 320 && p.size2 === 400 - TAB_ROW_H)).toBe(true);
+  });
+
+  /* A side row is the same thing stood on its side: the labels take a column on the left and the page
+     of the tab in front is what is left of the box. */
+  it("puts a side row's page beside its labels", () => {
+    const side: Item = { ...row(), kind: "sideTabs", size: 360, size2: 300 };
+    const patch = tabPanelsPatch(side)!;
+    const box = panelBox(side, 360, 300);
+    expect(box).toEqual({ x: sideRailW(side), y: 0, size: 360 - sideRailW(side), size2: 300 });
+    expect(patch.children![0]).toMatchObject({ x: box.x, y: 0, size: box.size, size2: 300 });
+    expect(sideRailW(side)).toBeLessThan(360);
+    /* the row's own default height comes from the palette spec: the column of labels */
+    expect(KIND_SPEC.sideTabs.h).toBe(SIDE_TAB_W);
+    /* the panel of the tab in front is drawn, and the others are not: the same rule as a strip */
+    expect(childDrawn(side, patch.children![0], 0)).toBe(true);
+    expect(childDrawn(side, patch.children![1], 1)).toBe(false);
+    expect(isTabRow(side)).toBe(true);
+    expect(isSideTabs(side)).toBe(true);
+    expect(isTabRow(row())).toBe(true);
+    expect(isSideTabs(row())).toBe(false);
   });
 
   it("brings a new tab's panel along, and draws it when the row is refitted", () => {
@@ -984,17 +1193,20 @@ describe("panels follow the tabs they belong to", () => {
     expect(next.children!.map((c) => c.id)).toEqual(["a", "c"]);
   });
 
-  it("keeps a panel the author has filled in, and moves it past the last tab", () => {
+  /* A removed tab's panel cannot be shown at all — the row draws the panel of the tab in front, and a
+     panel with no tab behind it can never be that one — so the work inside it moves into the panel in
+     front rather than sitting in a shell the author can drop things into and never see again. */
+  it("moves the work of a removed tab's panel into the panel in front", () => {
     const next = removeTabPatch(row([panel("a"), panel("b", true), panel("c")]), 1);
-    expect(next.children!.map((c) => c.id)).toEqual(["a", "c", "b"]);
-    expect(next.children![2].children).toHaveLength(1);
+    expect(next.children!.map((c) => c.id)).toEqual(["a", "c"]);
+    expect(next.children![0].children!.map((c) => c.id)).toEqual(["b-kid"]);
   });
 
   it("does the same when the tab count is lowered", () => {
     const next = tabCountPatch(row([panel("a"), panel("b"), panel("c", true)]), 1, [{ icon: "", label: "N" }]);
     expect(next.tabs).toHaveLength(1);
-    /* the panel of the tab that stays, then the filled one that has no tab left */
-    expect(next.children!.map((c) => c.id)).toEqual(["a", "c"]);
+    expect(next.children!.map((c) => c.id)).toEqual(["a"]);
+    expect(next.children![0].children!.map((c) => c.id)).toEqual(["c-kid"]);
   });
 
   it("leaves every other kind of part's children alone", () => {

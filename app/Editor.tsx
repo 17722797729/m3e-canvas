@@ -81,10 +81,14 @@ import {
   resizedChildren,
   withGridCells,
   isGridCell,
+  isTabPanel,
+  isTabRow,
+  ruleTargets,
   readoutOf,
   readText,
   byLayer,
   copySubtree,
+  syncTabPanels,
   itemsOf,
   layerOf,
   parentOf,
@@ -125,6 +129,7 @@ import {
   LAYER_DEFAULT,
   childShown,
   childDrawn,
+  drawnIds,
   railMetrics,
   RAIL_TOP,
   migrateFlows,
@@ -144,7 +149,7 @@ import { LangMenu } from "@/components/Menus";
 import { AiActionKey, AiPanel, aiErrorText } from "@/components/AiPanel";
 import { Field } from "@/components/ui";
 import { AiSettings, DEFAULT_AI, hasKey, isSecureUrl, loadAiSettings, proposeBehavior, proposeDescription, pushHistory, saveAiSettings } from "@/lib/ai";
-import { barSlotOf, bodyRect, carryFrame, pullInto, tidyFrame } from "@/lib/tidy";
+import { barSlotOf, bodyRect, carryFrame, pullInto, sideFlip, spansSlot, tidyFrame } from "@/lib/tidy";
 import { constrainModalRails, modalRailOf, updateRail } from "@/lib/rail";
 import { isProject, readableGroups, readProject, saveProject } from "@/lib/project";
 import { audit, type AuditIssue } from "@/lib/audit";
@@ -303,7 +308,7 @@ function migrateGroups(groups: Group[], frames: Frame[]): Group[] {
     ...(it.kind === "sliderInput" ? { ...it, kind: "slider" as const, size2: Math.min(it.size2 ?? 44, 44) } : it),
     ...(it.children ? { children: it.children.map(retired) as PlacedItem[] } : {}),
   });
-  return withGridCells(groups.map((g) => ({ ...g, items: g.items.map(retired) }))).map((g) => {
+  return syncTabPanels(withGridCells(groups.map((g) => ({ ...g, items: g.items.map(retired) })))).map((g) => {
     if (g.items.length !== 1 || g.items[0].kind !== "bottomNav") return g;
     const f = frames.find((fr) => {
       const r = frameRect(fr);
@@ -1520,7 +1525,33 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
        * taller than the screen */
       const slot = targetFrame ? barSlotOf(groupsRef.current, targetFrame, framesRef.current, widthsRef.current) : null;
       const isBar = FULL_WIDTH.includes(item.kind);
-      const placedItem = targetFrame && slot ? (isBar ? carryItemSize(item, { w: PHONE_W, h: PHONE_H }, { w: slot.w, h: frameSizeOf(targetFrame).h }) : fitHeight(item, frameSizeOf(targetFrame).h)) : item;
+      /* A sideways drag of a screen-wide row can only spring back where it started, so it means
+       * what it looks like instead: the labels of a side tab row move to the side of the screen
+       * the drag was let go on (lib/tidy has the rule, and says why). */
+      const landing = ((): Item => {
+        const side = targetFrame ? sideFlip(item, targetFrame, rawX, widthsRef.current) : null;
+        if (!side) return item;
+        /* the pages of the row travel with the labels, exactly as the panel side control does it */
+        const kids = resizedChildren(item, { tabSide: side }, widthsRef.current);
+        return kids ? { ...item, tabSide: side, children: kids } : { ...item, tabSide: side };
+      })();
+      /* A bar the author sized keeps the width they gave it when it is moved: a bar made on one
+         screen is put on another one all the time, and stretching it back to the new screen's width
+         every time would take the width away again with every drag — the room the author left beside
+         it could never be closed. A bar that no longer fits the screen it lands on is pulled in, and
+         one arriving from the palette — which has no size of its own yet — spans that screen. */
+      const fitBar = (w: number, h: number): Item => {
+        const cur = sizeOf(landing, widthsRef.current).w;
+        return cur > w ? carryItemSize(landing, { w: cur, h: PHONE_H }, { w, h }) : landing;
+      };
+      const placedItem =
+        targetFrame && slot
+          ? isBar
+            ? d.fromPalette
+              ? carryItemSize(landing, { w: PHONE_W, h: PHONE_H }, { w: slot.w, h: frameSizeOf(targetFrame).h })
+              : fitBar(slot.w, frameSizeOf(targetFrame).h)
+            : fitHeight(landing, frameSizeOf(targetFrame).h)
+          : landing;
       /* off any guide, the part settles on the 4dp grid of the screen it lands on */
       const origin = targetFrame ?? { x: 0, y: 0 };
       /* Ctrl keeps the pixel the cursor chose; a guide holds its whole-pixel
@@ -1528,9 +1559,14 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
          A bar dropped on a screen keeps its own spanning rule. */
       const settle = (onGuide: boolean, pos: number, grid: number) =>
         loose || onGuide ? Math.round(pos) : onGrid(pos, grid);
+      /* A bar that spans its screen sits in the slot, beside any rail. One the author narrowed is
+       * a part they placed, not a bar any more: taking the slot's left edge would slide it back to
+       * the screen's edge every time, with the room it was meant to keep left over on the far side
+       * and no way to close it. A narrow one therefore lands where it was let go. */
+      const spans = !!slot && spansSlot(placedItem, slot, widthsRef.current);
       const dropped: Group = {
         id: uid(),
-        x: isBar && slot ? Math.round(slot.x) : settle(onGuide(d.guide, "x"), rawX, origin.x),
+        x: spans ? Math.round(slot.x) : settle(onGuide(d.guide, "x"), rawX, origin.x),
         y: settle(onGuide(d.guide, "y"), rawY, origin.y),
         axis: connectSpecOf(item)?.axis ?? "x",
         items: [placedItem],
@@ -2006,7 +2042,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const switchTab = useCallback(
     (itemId: string, index: number) => {
       const it = findItemIn(groupsRef.current.flatMap((g) => g.items), itemId);
-      if (!it || it.kind !== "tabs" || tabIndexOf(it) === index) return;
+      if (!it || !isTabRow(it) || tabIndexOf(it) === index) return;
       snapshotFor("tabsel:" + itemId);
       setGroups((gs) => gs.map((g) => ({ ...g, items: patchItemIn(g.items, itemId, { selected: index }) })));
     },
@@ -2016,10 +2052,18 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const showPanelOf = useCallback(
     (ids: string[]) => {
       for (const id of ids) {
-        const parent = parentOf(groupsRef.current, id);
-        if (parent?.kind !== "tabs") continue;
-        const index = (parent.children ?? []).findIndex((c) => c.id === id);
-        if (index >= 0) switchTab(parent.id, index);
+        /* The part may *be* a panel, or sit anywhere inside one: walking up from the part itself
+           finds the panel it is under — the ancestor whose own parent is the tab row — and brings
+           that tab to the front. Without it a part put inside a panel of a tab that is not in front
+           stays out of sight: the author drops it there, or selects it in the layers list, and the
+           canvas shows nothing, while its layer is perfectly right. */
+        for (let at = findItemIn(groupsRef.current.flatMap((g) => g.items), id); at; at = parentOf(groupsRef.current, at.id)) {
+          const row = parentOf(groupsRef.current, at.id);
+          if (!row || !isTabRow(row)) continue;
+          const index = (row.children ?? []).findIndex((c) => c.id === at.id);
+          if (index >= 0) switchTab(row.id, index);
+          break;
+        }
       }
     },
     [switchTab],
@@ -2031,13 +2075,16 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     (x: number, y: number, dragged: Item): string | null => {
       const skip = new Set(subtreeOf(dragged).map((it) => it.id));
       const items = groupsRef.current.flatMap((g) => g.items);
+      /* Only what the canvas draws: the panel of a tab that is not in front lies exactly under the
+         one on show, and taking a part into it would hide the part with no word said. */
+      const drawn = drawnIds(items);
       const hits: { r: { l: number; t: number; r: number; b: number }; it: Item }[] = [];
       for (const r of itemRects()) {
-        if (skip.has(r.id) || x < r.l || x > r.r || y < r.t || y > r.b) continue;
+        if (skip.has(r.id) || !drawn.has(r.id) || x < r.l || x > r.r || y < r.t || y > r.b) continue;
         const it = findItemIn(items, r.id);
         /* containers take anything; a part that writes text of its own takes a dragged text, so a
            caption can be dropped straight onto the button it belongs to */
-        const takes = it && (it.kind === "box" || it.kind === "tabs" || (dragged.kind === "text" && takesText(it)));
+        const takes = it && (it.kind === "box" || isTabRow(it) || (dragged.kind === "text" && takesText(it)));
         if (it && takes) hits.push({ r, it });
       }
       return hits.sort((a, b) => (a.r.r - a.r.l) * (a.r.b - a.r.t) - (b.r.r - b.r.l) * (b.r.b - b.r.t))[0]?.it.id ?? null;
@@ -2062,6 +2109,21 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       setSelectedIds([]);
       return;
     }
+    /* A tab's panel is the tab's own slot rather than a part the author added: a row's panels are
+       known by their place, so one that is taken away is put straight back. Deleting a panel the
+       author picked therefore clears what it holds and says why it stays — the tab itself is removed
+       from the row's own list of tabs, which takes its panel with it. */
+    const panels = selectedIds.filter((id) => isTabRow(parentOf(groupsRef.current, id)));
+    if (panels.length === selectedIds.length && panels.length > 0) {
+      const inside = panels.flatMap((id) => (groupsRef.current.flatMap((g) => findItemIn(g.items, id)?.children ?? []) as Item[]).flatMap(subtreeOf).map((it) => it.id));
+      showToast(t("panelKeeps", lang), 2600, "info");
+      if (inside.length === 0) {
+        setSelectedIds([]);
+        return;
+      }
+      ids.clear();
+      for (const id of inside) ids.add(id);
+    }
     snapshot();
     /* A deleted panel leaves the empty panel of its tab behind, like one taken out of the row: the
        row's panels are known by their place, so its neighbours would slide back a tab without it. */
@@ -2071,7 +2133,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     for (const id of ids) {
       const s = slots.get(id);
       /* a tab row deleted whole takes its panels with it: only its own children are put back */
-      if (s && s.parent.kind === "tabs" && !ids.has(s.parent.id)) lost.set(s.parent.id, [...(lost.get(s.parent.id) ?? []), s.at]);
+      if (s && isTabRow(s.parent) && !ids.has(s.parent.id)) lost.set(s.parent.id, [...(lost.get(s.parent.id) ?? []), s.at]);
     }
     setGroups((prev) =>
       prev
@@ -2495,7 +2557,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           const keep = it.children.filter((c) => !freeing.has(c.id));
           for (const [at, c] of it.children.entries()) if (freeing.has(c.id)) {
             freed.push({ child: c, owner: it });
-            if (it.kind === "tabs") lost.set(it.id, [...(lost.get(it.id) ?? []), at]);
+            if (isTabRow(it)) lost.set(it.id, [...(lost.get(it.id) ?? []), at]);
           }
           return { ...it, children: keep.length ? keep : undefined };
         });
@@ -2601,7 +2663,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       /* a tab row receives into the panel of the tab in front, and says so in the question */
       const row = itemsOf(groupsRef.current).find((x) => x.id === wants);
       const outside = !!row && !items.some((it) => subtreeOf(it).some((d) => d.id === row.id));
-      const isRow = row?.kind === "tabs" && outside;
+      const isRow = !!row && isTabRow(row) && outside;
       /* A row takes what is dropped on it; so does a part that writes text of its own, which a
          dragged text belongs inside. */
       const named = isRow ? row : (boxes.find((b) => b.id === wants) ?? (outside && row && items.every((it) => it.kind === "text") && takesText(row) ? row : undefined));
@@ -2616,7 +2678,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
         /* a box that goes back into the panel of its own tab is named after that tab, not after the
            one in front */
         containerName:
-          named.kind === "tabs"
+          isTabRow(named)
             ? named.tabs?.[(items.length === 1 ? panelSlotFor(named, items[0]) : null) ?? tabIndexOf(named)]?.label.trim() || named.label.trim() || t("tabs", lang)
             : named.label.trim() || KIND_TEXT[lang][named.kind]?.noun || t("container", lang),
       });
@@ -2652,7 +2714,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     const parts_ = parts;
     const target = groups.map((g) => findItemIn(g.items, containerId)).find(Boolean) as Item | null;
     if (!target) return null;
-    if (target.kind === "tabs") {
+    if (isTabRow(target)) {
       const patch = tabPanelsPatch(target);
       const row = patch ? { ...target, ...patch } : target;
       const out = patch ? groups.map((g) => (findItemIn(g.items, row.id) ? { ...g, items: patchItemIn(g.items, row.id, patch) } : g)) : groups;
@@ -2667,7 +2729,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
        the row's slot rather than inside the panel, which is what the author aimed at. */
     const dropped = parts_.length === 1 ? (parts_[0].item as PlacedItem) : null;
     const parentRow = dropped ? parentOf(groups, target.id) : null;
-    if (dropped && parentRow?.kind === "tabs") {
+    if (dropped && parentRow && isTabRow(parentRow)) {
       const panelAt = (parentRow.children ?? []).findIndex((c) => c.id === target.id);
       if (panelAt >= 0 && panelSlotFor(parentRow, dropped) === panelAt) {
         const back = restorePanel(parentRow, dropped, widthsRef.current);
@@ -2723,8 +2785,9 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       return putIn(out, moving as { item: Item; at: { l: number; t: number } }[], containerId) ?? out;
     });
     setSelectedIds(itemIds);
+    showPanelOf([containerId, ...itemIds]);
     setNestAsk(null);
-  }, [itemRects, putIn, snapshot]);
+  }, [itemRects, putIn, snapshot, showPanelOf]);
 
   /** Binds a dialog to a part. The dialog lives on the part's own page, hidden until the
    *  tap: the first press adds it there (making a page first when the part has none), and
@@ -3627,6 +3690,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
    */
   const toggleMagnify = useCallback(
     (id: string) => {
+      /* up close to a part inside a panel means the tab in front has to be its own */
+      showPanelOf([id]);
       if (magnified?.id === id) {
         setView(magnified.before);
         setMagnified(null);
@@ -3650,7 +3715,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       setMagnified({ id, before });
       setSelectedIds([id]);
     },
-    [itemRects, magnified],
+    [itemRects, magnified, showPanelOf],
   );
 
   const revealRect = useCallback((box: { l: number; t: number; r: number; b: number }, margin = 24) => {
@@ -3750,18 +3815,25 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   /** The other parts on the selected part's page: what a rule's look can be aimed at. A claim button
    *  that marks the gift beside it as claimed names a part, and only the parts of its own page are in
    *  reach, because a look is drawn while that screen is on show. */
+  /* Every part a step may be aimed at, across the whole document: a pickup on one page fills a slot in
+     the bag on another, and the prototype is one piece. The parts of the page in play come first, and
+     each one carries the page it lives on, since two pages can each hold a "Bag slot". */
   const lookTargets = useMemo(() => {
     if (!selected) return [];
     const owner = groups.find((g) => !!findItemIn(g.items, selected.id));
     const page = owner ? frameOfGroup(owner, frames, widths) : undefined;
-    const here = page ? groups.filter((g) => frameOfGroup(g, frames, widths)?.id === page.id) : groups;
     const named = (it: Item) => it.label.trim() || KIND_TEXT[lang][it.kind]?.noun || KIND_SPEC[it.kind].label;
-    /* The kind comes along, because the properties a step may change are the ones that part really
-       draws with, and so does its icon, which is what tells two parts of the same kind apart in the
-       list. A board's own cells are left out: they are the board's slots, not parts of the screen. */
-    return itemsOf(here)
-      .filter((it) => it.id !== selected.id && !isGridCell(it))
-      .map((it) => ({ id: it.id, name: named(it), kind: it.kind, icon: KIND_SPEC[it.kind].paletteIcon, item: it }));
+    return ruleTargets(
+      groups,
+      (groupId) => frameOfGroup(groups.find((g) => g.id === groupId) ?? groups[0], frames, widths)?.id ?? null,
+      (frameId) => {
+        const f = frames.find((x) => x.id === frameId);
+        return f?.name.trim() || (f && isOverlayFrame(f) ? overlayLevelText(overlayLevelOfFrame(f), lang) : "") || t("screen", lang);
+      },
+      page?.id ?? null,
+      new Set(subtreeOf(selected).map((it) => it.id)),
+      named,
+    ).map((r2) => ({ id: r2.id, name: r2.name, kind: r2.kind, where: r2.where, icon: KIND_SPEC[r2.kind].paletteIcon, item: r2.item }));
   }, [selected, groups, frames, widths, lang]);
 
   const doc: Doc = useMemo(
@@ -4025,6 +4097,32 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     /* A board's cell sits in its slot: there is nowhere to drag it to, so a press only picks it.
        Whatever is inside the cell drags as usual — that is how a part moves from one cell to another. */
     if (parent.kind === "invGrid" && isGridCell(child)) {
+      selectOne(child.id, e.shiftKey);
+      return;
+    }
+    /* A tab's panel is the room under its tab row, not a part the author places: dragging the panel
+       itself would slide it over its own tab strip — which is how a panel ends up wrapping the whole
+       row, with the tabs behind it and every drop landing in a panel nobody can see. But the panel is
+       also most of what the author sees, and therefore most of what they press to move the row: a
+       press on it takes the row, exactly as a press on the labels does, so the whole row is its own
+       handle. The panel is picked in the layers list when what it holds needs managing. */
+    if (isTabPanel(child)) {
+      const row = parentOf(groupsRef.current, child.id);
+      const owner = row ? groupsRef.current.find((x) => !!findItemIn(x.items, row.id)) : null;
+      if (row && owner) {
+        const above = parentOf(groupsRef.current, row.id);
+        if (above) dragChildFrom(e.clientX, e.clientY, e.shiftKey, owner, above, row as PlacedItem);
+        else
+          dragItemFrom(
+            e.clientX,
+            e.clientY,
+            e.shiftKey,
+            owner,
+            owner.items.findIndex((it) => it.id === row.id),
+            row as PlacedItem,
+          );
+        return;
+      }
       selectOne(child.id, e.shiftKey);
       return;
     }

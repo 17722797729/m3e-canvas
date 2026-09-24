@@ -1,4 +1,4 @@
-import { Doc, Group, KIND_ORDER, LEGACY_KINDS, Kind, VARIANTS, isCardAlign, isCardImagePos, isCustomColor, isOverlayLevel, isPlace, isRuleKind, isStateEffect, isValueOp, isTextToken, isPlatform, isTrackThickness, isVariant } from "./tokens";
+import { Doc, Group, KIND_ORDER, LEGACY_KINDS, Kind, VARIANTS, isCardAlign, isCardImagePos, isCustomColor, isOverlayLevel, isPlace, isRuleKind, isTabSide, isStateEffect, isValueOp, isTextToken, isPlatform, isTrackThickness, isVariant } from "./tokens";
 
 /* A project file is the Doc as JSON, nothing more. Reading one back only checks
  * the shape the editor relies on; the same migrations that run on a saved
@@ -10,7 +10,18 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 const KINDS = new Set<string>([...KIND_ORDER, ...LEGACY_KINDS]);
 
 const validTabs = (tabs: unknown) =>
-  tabs === undefined || (Array.isArray(tabs) && tabs.every((tab) => isRecord(tab) && typeof tab.label === "string" && (typeof tab.icon === "string" || tab.icon === null || tab.icon === undefined)));
+  tabs === undefined ||
+  (Array.isArray(tabs) &&
+    tabs.every(
+      (tab) =>
+        isRecord(tab) &&
+        typeof tab.label === "string" &&
+        (typeof tab.icon === "string" || tab.icon === null || tab.icon === undefined) &&
+        /* a destination may hide its icon, and may carry a badge it can hide in turn */
+        (tab.hideIcon === undefined || typeof tab.hideIcon === "boolean") &&
+        (tab.badge === undefined || typeof tab.badge === "string") &&
+        (tab.hideBadge === undefined || typeof tab.hideBadge === "boolean"),
+    ));
 
 const validCorners = (c: unknown) => c === undefined || (isRecord(c) && ["tl", "tr", "bl", "br"].every((k) => Number.isFinite(c[k])));
 
@@ -120,6 +131,14 @@ const validItem = (item: unknown): boolean =>
   (item.unit === undefined || typeof item.unit === "boolean") &&
   /* whether a reading text keeps its own words with the value dropped into them */
   (item.mix === undefined || typeof item.mix === "boolean") &&
+  /* the panel of a tab: a box whose box is its tab row's to decide */
+  (item.panel === undefined || typeof item.panel === "boolean") &&
+  /* where a tab row keeps its labels */
+  (item.tabSide === undefined || isTabSide(item.tabSide)) &&
+  /* the share of a side row the labels take */
+  (item.sideRail === undefined || (Number.isFinite(item.sideRail) && (item.sideRail as number) >= 1 && (item.sideRail as number) <= 90)) &&
+  /* how far a part is turned, in degrees */
+  (item.rot === undefined || (Number.isFinite(item.rot) && Math.abs(item.rot as number) <= 360)) &&
   /* seconds until a part puts itself away */
   (item.autoClose === undefined || (Number.isFinite(item.autoClose) && (item.autoClose as number) >= 1)) &&
   /* the top of a slider's or a stepper's range */

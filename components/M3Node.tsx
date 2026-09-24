@@ -69,6 +69,13 @@ import {
   cellRadius,
   panelRadius,
   unitOf,
+  sideRailW,
+  rotOf,
+  rotStyle,
+  labelSideOf,
+  tabShowsIcon,
+  tabBadge,
+  type NavTab,
   maxOf,
   clampValue,
 } from "@/lib/tokens";
@@ -627,6 +634,41 @@ const useValueControls = () => useContext(ValueContext);
 /** The value a slider, a slider field or a stepper stands at: what the author set, 0 when unset —
  *  clamped to the part's own range, so a slider that runs to ten thousand is read on its own scale. */
 const shownValue = (it: Item) => clampValue(it.value ?? 40, maxOf(it));
+
+/**
+ * The badge a destination carries, at its top trailing corner: a game's count of what waits behind a
+ * tab ("3"), or a word like "new". It rides over the label rather than taking room in it, so a
+ * destination with a badge and one without line up the same way.
+ */
+function NavBadge({ tab, p, size = 16, inset = 0 }: { tab: NavTab; p: Palette; size?: number; inset?: number }) {
+  const text = tabBadge(tab);
+  if (!text) return null;
+  return (
+    <span
+      data-nav-badge={text}
+      style={{
+        position: "absolute",
+        top: inset,
+        right: inset,
+        minWidth: size,
+        height: size,
+        padding: text.length > 2 ? `0 ${Math.round(size * 0.28)}px` : 0,
+        borderRadius: size / 2,
+        background: p.error,
+        color: p.onError,
+        fontSize: Math.round(size * 0.62),
+        fontWeight: 700,
+        lineHeight: `${size}px`,
+        textAlign: "center",
+        boxSizing: "border-box",
+        pointerEvents: "none",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {text}
+    </span>
+  );
+}
 
 /** The track, the thumb and the tick of a slider — drawn to the width the part is given, so the
  *  thumb lands under the finger whether it stands on a screen or inside a dialog panel. */
@@ -1243,7 +1285,8 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
                       transform: tab.grown ? "scale(1.15)" : undefined,
                     }}
                   >
-                    {tab.icon && <Icon name={tab.icon} size={NAV_ICON} fill={on} />}
+                    {tabShowsIcon(tab) && <Icon name={tab.icon} size={NAV_ICON} fill={on} />}
+                    <NavBadge tab={tab} p={p} size={16} inset={-2} />
                   </div>
                   {tab.label.trim() && !tight && (
                     <span
@@ -1300,7 +1343,8 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
                     transform: t.grown ? "scale(1.15)" : undefined,
                   }}
                 >
-                  {t.icon && <Icon name={t.icon} size={NAV_ICON} fill={on} />}
+                  {tabShowsIcon(t) && <Icon name={t.icon} size={NAV_ICON} fill={on} />}
+                  <NavBadge tab={t} p={p} size={16} inset={-2} />
                 </div>
                 {withLabel && (
                   <span
@@ -1377,7 +1421,8 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
                     transition: "background 160ms, color 160ms",
                   }}
                 >
-                  {t.icon && <Icon name={t.icon} size={NAV_ICON} fill={on} />}
+                  {tabShowsIcon(t) && <Icon name={t.icon} size={NAV_ICON} fill={on} />}
+                  <NavBadge tab={t} p={p} size={16} inset={-2} />
                 </div>
                 {withLabel && !folded && (
                   <span
@@ -1488,8 +1533,9 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
                 boxShadow: "0 1px 3px rgba(0,0,0,0.16)",
               }}
             >
-              {tab.icon && <Icon name={tab.icon} size={22} />}
+              {tabShowsIcon(tab) && <Icon name={tab.icon} size={22} />}
               <span style={ellipsis}>{tab.label}</span>
+              <NavBadge tab={tab} p={p} size={16} inset={2} />
             </span>
           ))}
           <span
@@ -1528,7 +1574,8 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
                 flex: "0 0 auto",
               }}
             >
-              {tab.icon && <Icon name={tab.icon} size={24} />}
+              {tabShowsIcon(tab) && <Icon name={tab.icon} size={24} />}
+              <NavBadge tab={tab} p={p} size={16} inset={-2} />
             </span>
           ))}
         </div>
@@ -1542,10 +1589,13 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
       const sel = tabIndexOf(item);
       /* Buttons, the way most games switch a page: the tab in front is a filled chip and the rest are
          outlined. The row is the same height either way, so the panels under it start in the same place. */
+      /* where the strip sits: the top edge, or the foot of the box with the page above it */
+      const atBottom = labelSideOf(item) === "bottom";
+      const strip: React.CSSProperties = { position: "absolute", left: 0, right: 0, height: TAB_ROW_H, ...(atBottom ? { bottom: 0 } : { top: 0 }) };
       if (tabStyleOf(item) === "buttons") {
         const outer = scaleR((TAB_ROW_H - 16) / 2);
         return (
-          <div style={{ display: "flex", alignItems: "center", height: TAB_ROW_H, padding: "0 8px", position: "relative", overflow: "hidden", boxSizing: "border-box" }}>
+          <div style={{ ...strip, display: "flex", alignItems: "center", padding: "0 8px", overflow: "hidden", boxSizing: "border-box" }}>
             {tabs.map((tab, i) => {
               const on = i === sel;
               /* The buttons sit flush against one another, the way a connected group does: only the
@@ -1573,17 +1623,18 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
                     border: on ? "none" : `1px solid ${p.outlineVariant}`,
                   }}
                 >
-                  {tab.icon && <Icon name={tab.icon} size={18} fill={on} />}
+                  {tabShowsIcon(tab) && <Icon name={tab.icon} size={18} fill={on} />}
                   <span style={{ fontSize: 14, fontWeight: on ? w(600, 700) : w(400, 500), maxWidth: "100%", ...ellipsis }}>{tab.label}</span>
+                  <NavBadge tab={tab} p={p} size={16} inset={4} />
                 </div>
               );
             })}
           </div>
         );
       }
-      /* the underline row sits at the top of the box: the rest of the box is the panel area */
+      /* the underline row keeps one edge of the box; the rest of the box is the page */
       return (
-        <div style={{ display: "flex", alignItems: "stretch", height: TAB_ROW_H, position: "relative", overflow: "hidden" }}>
+        <div style={{ ...strip, display: "flex", alignItems: "stretch", overflow: "hidden" }}>
           {tabs.map((tab, i) => {
             const on = i === sel;
             return (
@@ -1602,29 +1653,34 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
                   padding: "0 8px",
                 }}
               >
+                {/* the icon rides beside the words here — the strip is one line tall — and the badge
+                    sits at the corner of the destination, over both */}
                 <span
                   style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    justifyContent: "center",
                     fontSize: 14,
                     fontWeight: w(500, 700),
                     color: on ? p.primary : p.onSurfaceVariant,
                     padding: "0 4px 14px",
                     maxWidth: "100%",
-                    ...ellipsis,
                   }}
                 >
-                  {tab.label}
+                  {tabShowsIcon(tab) && <Icon name={tab.icon} size={18} fill={on} />}
+                  <span style={ellipsis}>{tab.label}</span>
                 </span>
+                <NavBadge tab={tab} p={p} size={16} inset={2} />
                 {on && (
                   <span
                     style={{
                       position: "absolute",
                       left: "50%",
-                      bottom: 0,
+                      ...(atBottom ? { top: 0, borderBottomLeftRadius: 3, borderBottomRightRadius: 3 } : { bottom: 0, borderTopLeftRadius: 3, borderTopRightRadius: 3 }),
                       transform: "translateX(-50%)",
                       width: `calc(100% - 24px)`,
                       height: 3,
-                      borderTopLeftRadius: 3,
-                      borderTopRightRadius: 3,
                       background: p.primary,
                     }}
                   />
@@ -1632,7 +1688,59 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
               </div>
             );
           })}
-          <span style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 1, background: p.outlineVariant }} />
+          <span style={{ position: "absolute", left: 0, right: 0, ...(atBottom ? { top: 0 } : { bottom: 0 }), height: 1, background: p.outlineVariant }} />
+        </div>
+      );
+    }
+
+    /**
+     * The same row of tabs stood on its side: the destinations run down the left in a column, each a
+     * label with its icon, and the page of the tab in front is what is left of the box — the panels
+     * are the row's children, laid out beside this column by `panelBox`.
+     */
+    case "sideTabs": {
+      const tabs = item.tabs ?? [];
+      const sel = tabIndexOf(item);
+      const rail = sideRailW(item);
+      const atRight = labelSideOf(item) === "right";
+      const buttons = tabStyleOf(item) === "buttons";
+      const outer = scaleR((TAB_ROW_H - 16) / 2);
+      return (
+        <div style={{ display: "flex", alignItems: "stretch", width: rail, height: "100%", marginLeft: atRight ? "auto" : undefined, flexDirection: "column", padding: "8px 0", boxSizing: "border-box", overflow: "hidden" }}>
+          {tabs.map((tab, i) => {
+            const on = i === sel;
+            /* Buttons, the way the horizontal row offers them: the destination in front is a filled
+               pill and the rest are outlined; the underline style marks the one in front with a bar
+               down its leading edge instead */
+            const c = buttons ? connectedButton(i, tabs.length, outer, scaleR(R_INNER)) : null;
+            return (
+              <div
+                key={i}
+                style={{
+                  height: TAB_ROW_H,
+                  flex: "0 0 auto",
+                  margin: buttons ? "2px 8px" : undefined,
+                  padding: buttons ? "0 12px" : "0 12px 0 16px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  position: "relative",
+                  minWidth: 0,
+                  boxSizing: "border-box",
+                  ...(c
+                    ? { borderRadius: `${c.radii.tl}px ${c.radii.tr}px ${c.radii.br}px ${c.radii.bl}px`, background: on ? p.secondaryContainer : "transparent", border: on ? "none" : `1px solid ${p.outlineVariant}`, color: on ? p.onSecondaryContainer : p.onSurfaceVariant }
+                    : {}),
+                }}
+              >
+                {tabShowsIcon(tab) && <Icon name={tab.icon} size={20} fill={on} color={buttons ? undefined : on ? p.primary : p.onSurfaceVariant} />}
+                <span style={{ fontSize: 14, fontWeight: on ? w(600, 700) : w(400, 500), maxWidth: "100%", ...ellipsis, color: buttons ? undefined : on ? p.primary : p.onSurfaceVariant }}>{tab.label}</span>
+                <NavBadge tab={tab} p={p} size={16} inset={4} />
+                {on && !buttons && (
+                  <span style={{ position: "absolute", [atRight ? "right" : "left"]: 0, top: 10, bottom: 10, width: 3, borderRadius: 3, background: p.primary } as React.CSSProperties} />
+                )}
+              </div>
+            );
+          })}
         </div>
       );
     }
@@ -1704,6 +1812,7 @@ function boxStyle(item: Item, p: Palette): React.CSSProperties {
         ? { background: p.primaryContainer, border: "none", color: p.onPrimaryContainer }
         : { background: p.surfaceContainer, border: "none", color: p.onSurfaceVariant };
     case "tabs":
+    case "sideTabs":
       return { background: p.surface, border: "none", color: p.onSurface };
     case "searchBar":
       return { background: p.surfaceContainerHigh, border: "none", color: p.onSurface };
@@ -1821,6 +1930,9 @@ export function M3Node({
         borderTopRightRadius: r.tr,
         borderBottomRightRadius: r.br,
         scale: pressed ? 0.97 : 1,
+        /* motion owns the transform: the turn is animated here rather than written into `style`, so a
+           part that is turned still presses and grows the way an upright one does */
+        rotate: rotOf(item),
       }}
       transition={{
         borderTopLeftRadius: radiusTransition,
@@ -1852,6 +1964,8 @@ export function M3Node({
         boxShadow: [item.kind === "badge" ? null : strokeOf(item, ep), shadowOf(item)].filter((v) => v && v !== "none").join(", ") || "none",
         outline: selected ? `2px solid ${palette.primary}` : "2px solid transparent",
         outlineOffset: 3,
+        /* a part turns about its own middle: the place it takes in the layout does not move */
+        transformOrigin: "center",
         /* a part that changes width with its screen eases the way the screen does */
         transition: measured ? "outline-color 120ms" : `outline-color 120ms, width ${SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1)`,
         flex: "0 0 auto",
@@ -1906,6 +2020,8 @@ export function M3Static({
         borderBottomLeftRadius: r.bl,
         borderBottomRightRadius: r.br,
         flex: "0 0 auto",
+        transformOrigin: "center",
+        transform: rotStyle(item),
         ...style,
       }}
     >

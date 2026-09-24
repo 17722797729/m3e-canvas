@@ -30,6 +30,10 @@ import {
   isWideRail,
   isOverlayFrame,
   overlayLevelOfFrame,
+  rotOf,
+  isTabRow,
+  isSideTabs,
+  labelSideOf,
   lookItem,
   START_LOOK,
   TRANSPARENT,
@@ -263,6 +267,10 @@ function itemJa(it: Item): string {
       const labels = (it.tabs ?? []).map((t) => q(t.label || "ラベルなし"));
       return `${labels.join("、")}の ${labels.length} つのタブ（${selectedText(it, "ja")}${isScrollableTabs(it) ? "、横にスクロールするタブ" : ""}）`;
     }
+    case "sideTabs": {
+      const labels = (it.tabs ?? []).map((t) => q(t.label || "ラベルなし"));
+      return `左側に ${labels.length} つのタブが縦に並ぶサイドタブ（${labels.join("、")}。${selectedText(it, "ja")}。タブの右側がそのタブのページ）`;
+    }
     case "radio":
       return `${q(it.label)}のラジオボタン（初期状態は${it.checked ? "選択" : "未選択"}）`;
     case "badge":
@@ -361,6 +369,10 @@ function itemEn(it: Item): string {
     case "tabs": {
       const labels = (it.tabs ?? []).map((t) => q(t.label || "unlabeled"));
       return `a ${isScrollableTabs(it) ? "horizontally scrolling " : ""}tab row with ${labels.length} tabs: ${labels.join(", ")}; ${selectedText(it, "en")}`;
+    }
+    case "sideTabs": {
+      const labels = (it.tabs ?? []).map((t) => q(t.label || "unlabeled"));
+      return `side tabs: ${labels.length} destinations stacked down the left (${labels.join(", ")}; ${selectedText(it, "en")}), with the page of the tab in front filling the box beside them`;
     }
     case "radio":
       return `a radio button ${q(it.label)} (initially ${it.checked ? "selected" : "unselected"})`;
@@ -461,6 +473,10 @@ function itemZh(it: Item): string {
       const labels = (it.tabs ?? []).map((t) => q(t.label || "无标签"));
       return `${labels.join("、")}这 ${labels.length} 个标签页（${selectedText(it, "zh")}${isScrollableTabs(it) ? "，可横向滚动" : ""}）`;
     }
+    case "sideTabs": {
+      const labels = (it.tabs ?? []).map((t) => q(t.label || "无标签"));
+      return `左侧竖排 ${labels.length} 个标签的侧边标签页（${labels.join("、")}；${selectedText(it, "zh")}；标签右侧就是当前标签的面板）`;
+    }
     case "radio":
       return `${q(it.label)}单选按钮（初始状态为${it.checked ? "选中" : "未选中"}）`;
     case "badge":
@@ -534,6 +550,10 @@ function itemKo(it: Item): string {
       const labels = (it.tabs ?? []).map((t) => q(t.label || "레이블 없음"));
       return `${labels.join(", ")}의 탭 ${labels.length}개(${selectedText(it, "ko")}${isScrollableTabs(it) ? ", 가로로 스크롤되는 탭" : ""})`;
     }
+    case "sideTabs": {
+      const labels = (it.tabs ?? []).map((t) => q(t.label || "레이블 없음"));
+      return `왼쪽에 ${labels.length}개의 탭이 세로로 놓인 사이드 탭(${labels.join(", ")}; ${selectedText(it, "ko")}), 탭 오른쪽이 앞에 있는 탭의 페이지`;
+    }
     case "radio": return `${q(it.label)} 라디오 버튼(초기 상태 ${it.checked ? "선택됨" : "선택 안 됨"})`;
     case "badge": return hasText(it.label) ? `${q(it.label)}을 표시하는 배지` : "작은 점 배지";
     default: return noun;
@@ -564,6 +584,32 @@ function boxCorners(it: Item, lang: Lang): string {
   return `corner radius ${t}dp top / ${b}dp bottom`;
 }
 
+/** A tab row whose labels are not on their usual edge says so wherever it is described: the page
+ *  changes sides with them, which an implementer has to know. */
+function sideNote(it: Item, lang: Lang): string {
+  if (isSideTabs(it) && it.sideRail !== undefined) {
+    const pct = Math.round((it.sideRail ?? 0));
+    return { ja: `（タブ列は横幅の ${pct}％、残りがページ）`, en: ` (the labels take ${pct}% of the width, the page the rest)`, zh: `（标签列占宽度 ${pct}%，其余是面板）`, ko: `(탭 열이 폭의 ${pct}%, 나머지가 페이지)` }[lang];
+  }
+  if (!isTabRow(it)) return "";
+  const side = labelSideOf(it);
+  const usual = isSideTabs(it) ? "left" : "top";
+  if (side === usual) return "";
+  return {
+    ja: `（タブは${side === "bottom" ? "下" : side === "right" ? "右" : side === "left" ? "左" : "上"}、ページは反対側）`,
+    en: ` (labels at the ${side}, the page on the other side)`,
+    zh: `（标签在${side === "bottom" ? "下" : side === "right" ? "右" : side === "left" ? "左" : "上"}方，面板在另一侧）`,
+    ko: `(탭은 ${side === "bottom" ? "아래" : side === "right" ? "오른쪽" : side === "left" ? "왼쪽" : "위"}, 페이지는 반대쪽)`,
+  }[lang];
+}
+
+/** A part the author turned says so wherever it is described: it is part of how the part is drawn. */
+function rotNote(it: Item, lang: Lang): string {
+  const deg = rotOf(it);
+  if (!deg) return "";
+  return { ja: `（${deg}° 回転）`, en: ` (turned ${deg}°)`, zh: `（旋转 ${deg}°）`, ko: `(${deg}° 회전)` }[lang];
+}
+
 /** A part that puts itself away after a while says so wherever it is described: it is a behaviour the
  *  implementer has to build, not a detail of how the part is drawn. */
 function autoNote(it: Item, lang: Lang): string {
@@ -578,7 +624,10 @@ function autoNote(it: Item, lang: Lang): string {
 }
 
 const itemText = (it: Item, lang: Lang) =>
-  (lang === "ja" ? itemJa(it) : lang === "zh" ? itemZh(it) : lang === "ko" ? itemKo(it) : itemEn(it)) + autoNote(it, lang);
+  (lang === "ja" ? itemJa(it) : lang === "zh" ? itemZh(it) : lang === "ko" ? itemKo(it) : itemEn(it)) +
+  sideNote(it, lang) +
+  rotNote(it, lang) +
+  autoNote(it, lang);
 
 /* ================= connected runs ================= */
 
@@ -679,7 +728,7 @@ function slotName(it: Item, slot: string, lang: Lang): string {
   return `the ${icon ?? ""} icon button on the ${slot === "icon2" ? "right" : "left"}`;
 }
 
-function notes(g: Group, frames: Frame[], lang: Lang): string[] {
+function notes(g: Group, frames: Frame[], lang: Lang, all: Group[] = [g]): string[] {
   const out: string[] = [];
   const q = quote(lang);
   for (const it of g.items) {
@@ -749,6 +798,8 @@ function notes(g: Group, frames: Frame[], lang: Lang): string[] {
            a prompt and a diagram that describe a step differently are two documents to maintain */
         const bits = lookClauses(lang, a);
         if (!bits.length) return null;
+        /* The aim may be a part on another page — a pickup here fills a slot in the bag over there —
+           so the name is looked up across the whole document, not only in this group. */
         let who: Item | null = null;
         const walk = (list: Item[]) => {
           for (const x of list) {
@@ -759,7 +810,7 @@ function notes(g: Group, frames: Frame[], lang: Lang): string[] {
             if (x.children) walk(x.children);
           }
         };
-        if (a.target) walk(g.items);
+        if (a.target) for (const gr of all) walk(gr.items);
         const label = who ? (who as Item).label.trim() || KIND_TEXT[lang][(who as Item).kind]?.noun || (who as Item).kind : "";
         const other = a.target ? (label ? { ja: `「${label}」の`, en: `${q(label)}'s `, zh: `「${label}」的`, ko: `"${label}"의 ` }[lang] : { ja: "別の部品の", en: "another part's ", zh: "另一个组件的", ko: "다른 부품의 " }[lang]) : "";
         return { ja: `${other}${bits.join("、")}`, en: `${other}${bits.join(", ")}`, zh: `${other}${bits.join("、")}`, ko: `${other}${bits.join(", ")}` }[lang];
@@ -964,7 +1015,7 @@ function describeChildren(lines: string[], parent: Item, lang: Lang, depth: numb
     }
     return;
   }
-  const isTabRow = parent.kind === "tabs" && (parent.tabs?.length ?? 0) > 0;
+  const isTabRow = (parent.kind === "tabs" || parent.kind === "sideTabs") && (parent.tabs?.length ?? 0) > 0;
   const lead = isTabRow
     ? {
         ja: "タブと同じ順に1つずつパネルを置きます（タブを切り替えるとそのパネルだけを表示し、他は隠す。位置はこの中での相対位置）:",
@@ -1726,7 +1777,7 @@ export function buildPrompt(doc: Doc, widths: Record<string, number>, onlyFrameI
     describeScreen(lines, groups, null, widths, lang);
   }
 
-  const behavior = [...groups.flatMap((g) => notes(g, allFrames, lang)), ...frames.flatMap((f) => swipeNotes(f, allFrames, lang))];
+  const behavior = [...groups.flatMap((g) => notes(g, allFrames, lang, groups)), ...frames.flatMap((f) => swipeNotes(f, allFrames, lang))];
   if (behavior.length) {
     lines.push("");
     lines.push(ph.hBehavior);

@@ -106,6 +106,8 @@ import {
   VALUE_TOKEN,
   hasValueToken,
   maxOf,
+  rotOf,
+  ROT_MAX,
   clampMax,
   AUTO_CLOSE_DEF,
   clampValue,
@@ -116,6 +118,13 @@ import {
   /* the cell board a slot grid draws */
   slotGrid,
   isGridCell,
+  isTabRow,
+  labelSideOf,
+  type TabSide,
+  isSideTabs,
+  sideRailW,
+  SIDE_RAIL_MIN,
+  SIDE_RAIL_MAX,
   gridCheckZ,
   CELL_MAX,
   CELL_MIN,
@@ -864,7 +873,7 @@ export function Inspector({
   /** measured widths, so a scrolling container's content measures the way the canvas measures it */
   widths?: Record<string, number>;
   /** the other parts on this page, so a rule can aim a look at one of them */
-  lookTargets?: { id: string; name: string; kind: Kind; icon?: string; item?: Item }[];
+  lookTargets?: { id: string; name: string; kind: Kind; icon?: string; item?: Item; where?: string }[];
   /** ticks every cell of the board in hand, or clears them all */
   onCellsChecked?: (checked: boolean) => void;
 }) {
@@ -1030,14 +1039,16 @@ export function Inspector({
     /* a tab row carries one panel per tab, so every change to the list of tabs syncs them:
      * a row that still has no panels gets its whole set here, and a new tab brings its
      * own panel along instead of leaving the row short of one */
-    const withPanels = item.kind === "tabs" ? tabPanelsPatch({ ...item, ...patch }) : null;
+    const withPanels = isTabRow(item) ? tabPanelsPatch({ ...item, ...patch }) : null;
     const merged = withPanels ? { ...patch, ...withPanels } : patch;
     /* a tab that has just been added comes forward, so the panel that arrived with it is
      * the one on the canvas rather than one the author has to go looking for */
     onChange(select === undefined ? merged : { ...merged, selected: select });
   };
   /** entries of a tab row have no icon; toolbar buttons have no label */
-  const tabIcons = item.kind !== "tabs" && item.kind !== "select";
+  /* Every destination may carry an icon — a tab row included: the icon a game puts beside a tab is
+     the same thing as the one a bar puts above a label. A select's options are plain text. */
+  const tabIcons = item.kind !== "select";
   const tabLabels = item.kind !== "toolbar";
   const mainSlots = slots.filter((s) => !s.key.startsWith("tab:"));
 
@@ -1046,8 +1057,8 @@ export function Inspector({
   /** bars, rails and tab rows show one destination as selected */
   const isSelect = item.kind === "select";
   /** options and tab rows grow one row at a time; bars, rails and menus keep the fixed counts M3 allows */
-  const growsFreely = isSelect || item.kind === "tabs";
-  const hasSelected = item.kind === "bottomNav" || item.kind === "navRail" || item.kind === "tabs" || isSelect;
+  const growsFreely = isSelect || isTabRow(item);
+  const hasSelected = item.kind === "bottomNav" || item.kind === "navRail" || isTabRow(item) || isSelect;
   /** drops one row; the selection and the per-tab tap targets follow their rows */
   const removeOption = (i: number) => onChange(removeTabPatch(item, i));
   /* a dropdown may start with nothing chosen; bars always show one destination */
@@ -1227,8 +1238,21 @@ export function Inspector({
       {spec.hasTabs && !editOn && (
         <Section id="tabs" icon={isSelect ? "list" : "view_column"} title={t(isSelect ? "options" : "tabs", lang)} p={p} onToggle={(open) => { if (!open && activeSlot?.key.startsWith("tab:")) setPickerOpen(false); }}>
           {/* how the row reads, and the panels it switches between */}
-          {item.kind === "tabs" && (
+          {isTabRow(item) && !isSelect && (
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+              {/* where the labels sit: the page takes the other side. A strip is at the top by
+                  default — plenty of game UIs want it at the foot, with the page above it — and a
+                  side row runs down the left by default */}
+              <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("tabSide", lang)}</div>
+              <Segmented<TabSide>
+                options={sidesFor(item).map((o) => ({ key: o, icon: sideIcon[o], title: t(sideLabel[o], lang) }))}
+                value={labelSideOf(item)}
+                onChange={(tabSide) => onChange({ tabSide })}
+                p={p}
+                height={36}
+              />
+              {/* every tab row reads the same two ways: an underline (or a bar down the leading
+                  edge of a side row), or buttons — which is how most games switch pages */}
               <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("tabStyle", lang)}</div>
               <Segmented<TabStyle>
                 options={TAB_STYLES.map((o) => ({ key: o.key, icon: o.icon, title: t(o.key === "buttons" ? "tabStyleButtons" : "tabStyleUnderline", lang) }))}
@@ -1237,10 +1261,29 @@ export function Inspector({
                 p={p}
                 height={36}
               />
+              {/* a side row splits its width between the labels and the page: the share is the
+                  author's, and the page takes the rest */}
+              {isSideTabs(item) && (
+                <>
+                  <Slider
+                    icon="view_sidebar"
+                    title={t("sideRail", lang)}
+                    value={Math.round(sideRailW(item) * 100 / Math.max(1, item.size ?? PHONE_W))}
+                    min={SIDE_RAIL_MIN}
+                    max={SIDE_RAIL_MAX}
+                    step={1}
+                    onChange={(sideRail) => onChange({ sideRail })}
+                    p={p}
+                    unit="%"
+                  />
+                  <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("sideRailHint", lang)}</div>
+                </>
+              )}
               {/* panels are made with the tabs themselves: there is nothing extra to press, so the
                   section only explains how the panels work — and, while a row is still short of
                   them, that adding a tab is what brings the missing ones in */}
               <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t(needsTabPanels(item) ? "tabPanelsAuto" : "tabPanelsHint", lang)}</div>
+              <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("tabSideHint", lang)}</div>
             </div>
           )}
           {!growsFreely && (item.kind === "bottomNav" || item.kind === "navRail") ? (
@@ -1264,11 +1307,26 @@ export function Inspector({
               height={36}
             />
           ) : null}
+          {/* One switch for the row: a game UI that wants words only turns every destination's icon
+              off at once, and the icons themselves are not lost — turn it back on and they return. */}
+          {isTabRow(item) && (
+            <div style={{ marginTop: 10 }}>
+              <Toggle
+                on={tabs.every((x) => !x.hideIcon)}
+                onChange={(on) => onChange({ tabs: tabs.map((x) => ({ ...x, hideIcon: on ? undefined : true })) })}
+                p={p}
+                icon="visibility"
+                label={t("showIcon", lang)}
+                grow
+              />
+            </div>
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
             {tabs.map((tab, i) => {
               const on = slotKey === `tab:${i}` && pickerOpen;
               return (
-                <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6, padding: "6px 8px", borderRadius: 12, background: p.surfaceContainerLow }}>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   {hasSelected && (
                     <IconBtn
                       icon={selectedTab === i ? "radio_button_checked" : "radio_button_unchecked"}
@@ -1305,20 +1363,58 @@ export function Inspector({
                     <Icon name={tab.icon || "add"} size={20} />
                   </button>
                   )}
-                  {tabLabels && <Field value={tab.label} onChange={(v) => setTabLabel(i, v)} placeholder={t("label", lang)} p={p} height={40} />}
+                  {/* the icon's own clear button stands right after the icon: it belongs to that
+                      button, not to the words beside it */}
                   {tabIcons && tab.icon && (
                     <IconBtn icon="close" p={p} size={40} onClick={() => onChange(setIconSlot(item, `tab:${i}`, null))} title={t("noIcon", lang)} />
                   )}
+                  {tabLabels && <Field value={tab.label} onChange={(v) => setTabLabel(i, v)} placeholder={t("label", lang)} p={p} height={40} />}
                   {growsFreely && tabs.length > 1 && (
                     <IconBtn icon="close" p={p} size={40} onClick={() => removeOption(i)} title={t(isSelect ? "removeOption" : "removeTab", lang)} />
                   )}
+                </div>
+                {/* What this destination says about itself: the badge a game puts at its top corner
+                    — a count of what waits behind it, or "new" — and a switch to take it off without
+                    losing the words. Kept short on purpose: the field is 3–4 characters wide. */}
+                {tabIcons && (
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    {/* the switch comes first and the badge itself after it: read left to right, it
+                        says "show a badge — this one" */}
+                    <Toggle
+                      on={!tab.hideBadge}
+                      onChange={(on) => onChange({ tabs: tabs.map((x, j) => (j === i ? { ...x, hideBadge: on ? undefined : true } : x)) })}
+                      p={p}
+                      icon="notifications"
+                      label={t("showBadge", lang)}
+                    />
+                    <div style={{ width: 76, flex: "0 0 auto" }}>
+                      <Field
+                        value={tab.badge ?? ""}
+                        onChange={(badge) => onChange({ tabs: tabs.map((x, j) => (j === i ? { ...x, badge: badge || undefined } : x)) })}
+                        placeholder={t("badge", lang)}
+                        p={p}
+                        height={36}
+                      />
+                    </div>
+                  </div>
+                )}
+                {/* The icon list opens right here, under the destination being edited: picking an
+                    icon for four tabs should not mean opening a menu four times. */}
+                {on && (
+                  <IconPicker
+                    value={tab.icon || null}
+                    onChange={(icon) => onChange(setIconSlot(item, `tab:${i}`, icon))}
+                    onClose={() => setPickerOpen(false)}
+                    palette={p}
+                  />
+                )}
                 </div>
               );
             })}
           </div>
           {growsFreely && (
             <button
-              onClick={() => setTabCount(tabs.length + 1, item.kind === "tabs" ? tabs.length : undefined)}
+              onClick={() => setTabCount(tabs.length + 1, isTabRow(item) ? tabs.length : undefined)}
               className="m3-press"
               style={{ marginTop: 8, height: 40, width: "100%", borderRadius: 20, border: `1px solid ${p.outline}`, background: "transparent", color: p.primary, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
             >
@@ -1444,7 +1540,7 @@ export function Inspector({
         </Section>
       )}
 
-      {pickerOpen && activeSlot && (
+      {pickerOpen && activeSlot && !activeSlot.key.startsWith("tab:") && (
         <div style={{ margin: "-4px 4px 12px" }}>
           <IconPicker
             value={activeSlot.value}
@@ -1713,6 +1809,39 @@ export function Inspector({
               p={p}
             />
             <div style={{ fontSize: 11, lineHeight: 1.4, color: p.outline }}>{t("layerHint", lang)}</div>
+            {/* A part can be turned about its own middle: the drawn part, its corners, its words and
+                whatever it holds go round together, while the place it takes in the layout stays put.
+                A tab's panel is the row's room, and a board's cell the board's slot, so neither is the
+                author's to turn. */}
+            {!item.panel && !isGridCell(item) && (
+              <>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, flex: 1, minWidth: 0 }}>{t("rotation", lang)}</span>
+                  {rotOf(item) !== 0 && (
+                    <button
+                      type="button"
+                      onClick={() => onChange({ rot: undefined })}
+                      className="m3-press"
+                      style={{ height: 24, padding: "0 10px", borderRadius: 12, border: "none", background: p.surfaceContainerHigh, color: p.onSurfaceVariant, fontSize: 11, fontWeight: 600, cursor: "pointer" }}
+                    >
+                      {t("rotationReset", lang)}
+                    </button>
+                  )}
+                </div>
+                <Slider
+                  icon="rotate_right"
+                  title={t("rotation", lang)}
+                  value={rotOf(item)}
+                  min={-ROT_MAX}
+                  max={ROT_MAX}
+                  step={1}
+                  onChange={(rot) => onChange({ rot: rot || undefined })}
+                  p={p}
+                  unit="°"
+                />
+                <div style={{ fontSize: 11, lineHeight: 1.4, color: p.outline }}>{t("rotationHint", lang)}</div>
+              </>
+            )}
           </div>
         </Section>
       )}
@@ -1922,6 +2051,7 @@ export function Inspector({
 
       {(spec.size || hasRadius) && !editOn && (
         <Section id="size" icon="straighten" title={t("size", lang)} p={p}>
+          {item.panel && <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("panelSizeHint", lang)}</div>}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {spec.hasWavy && (
               <Slider
@@ -1936,8 +2066,10 @@ export function Inspector({
               />
             )}
             {/* a board's cell is sized by the board: one control sets every cell, and a cell that
-                could be dragged to its own size would only be put back by the next layout */}
-            {spec.size && !isGridCell(item) && (
+                could be dragged to its own size would only be put back by the next layout. A tab's
+                panel is the same: its box is the room under its tab row, so the row's own size is
+                what sets it (see the hint above). */}
+            {spec.size && !isGridCell(item) && !item.panel && (
               <>
                 <Slider
                   icon={spec.size.icon}
@@ -2328,6 +2460,14 @@ const cardStyle = (p: Palette): React.CSSProperties => ({
   background: p.surfaceContainerLow,
 });
 
+/** Where a row's labels can sit, and how each side reads: a strip across the page uses top / bottom,
+ *  a row stood on its side uses left / right. */
+const sideOptions: TabSide[] = ["top", "bottom", "left", "right"];
+const sideIcon: Record<TabSide, string> = { top: "vertical_align_top", bottom: "vertical_align_bottom", left: "align_horizontal_left", right: "align_horizontal_right" };
+const sideLabel: Record<TabSide, UIKey> = { top: "posTop", bottom: "posBottom", left: "posLeft", right: "posRight" };
+/** The two choices a kind really offers: a strip goes up or down, a side row left or right. */
+const sidesFor = (it: Item): TabSide[] => (it.kind === "sideTabs" ? ["left", "right"] : ["top", "bottom"]);
+
 /** the actions that put an overlay away: the one the part stands in, and every one this screen has
  *  open. A step that both opens and closes wants them in this order. */
 const isClose = (a: RuleAction | undefined) => !!a && (a.kind === "close" || a.kind === "closeAll");
@@ -2509,7 +2649,7 @@ function ActionFields({
   /** the part the action belongs to: a look starts from what it shows now */
   item: Item;
   /** the other parts on the page, for a look aimed at one of them */
-  lookTargets?: { id: string; name: string; kind: Kind; icon?: string; item?: Item }[];
+  lookTargets?: { id: string; name: string; kind: Kind; icon?: string; item?: Item; where?: string }[];
   p: Palette;
 }) {
   const lang = useLang();
@@ -2541,7 +2681,11 @@ function ActionFields({
             <Pick
               options={[
                 { key: "", label: t("lookSelf", lang), icon: KIND_SPEC[item.kind].paletteIcon },
-                ...lookTargets.map((x) => ({ key: x.id, label: x.name, icon: x.icon })),
+                /* A long list of parts is filed under the page each one lives on: a pickup here fills
+                   a slot in the bag over there, so the aims reach across pages, and the page a part
+                   belongs to is how an author finds it. Typing a page's name in the search keeps only
+                   that page's parts. */
+                ...lookTargets.map((x) => ({ key: x.id, label: x.name, icon: x.icon, group: x.where || t("offScreens", lang), title: x.where || undefined })),
               ]}
               value={a.target ?? ""}
               onChange={(target) => onChange({ ...a, target: target || undefined })}
@@ -2549,6 +2693,8 @@ function ActionFields({
               title={t("lookTarget", lang)}
             />
           </div>
+          {/* a target on another page says so: a pickup here fills a slot in the bag over there */}
+          {found?.where && <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("lookAwayHint", lang).replace("{page}", found.where)}</div>}
           {/* One row per property the step changes, each with the control that property needs, and a
               picker for the properties that part has not been given yet. The list is the target's
               own properties, so it reads as "what can this component do" rather than a field dump. */}
@@ -2642,7 +2788,7 @@ function StepRow({
   onRemove: () => void;
   item: Item;
   frames: Frame[];
-  lookTargets: { id: string; name: string; kind: Kind; icon?: string; item?: Item }[];
+  lookTargets: { id: string; name: string; kind: Kind; icon?: string; item?: Item; where?: string }[];
   /** the action a new line of the list starts from, or null when there is nothing to seed it with */
   extra: RuleAction | null;
   p: Palette;
@@ -2769,7 +2915,7 @@ function FlowEditor({
   flow: PartFlow | undefined;
   onFlow: (flow: PartFlow | undefined) => void;
   frames: Frame[];
-  lookTargets?: { id: string; name: string; kind: Kind; icon?: string; item?: Item }[];
+  lookTargets?: { id: string; name: string; kind: Kind; icon?: string; item?: Item; where?: string }[];
   p: Palette;
 }) {
   const lang = useLang();
@@ -2936,7 +3082,7 @@ function StateRules({
   slot?: string;
   onSlot?: (key: string) => void;
   /** the other parts on the page, for a look that changes one of them */
-  lookTargets?: { id: string; name: string; kind: Kind; icon?: string; item?: Item }[];
+  lookTargets?: { id: string; name: string; kind: Kind; icon?: string; item?: Item; where?: string }[];
 }) {
   /* a bar's rules belong to one destination; a plain part keeps them on itself */
   const target = slots.length > 0 ? slot || slots[0].key : "";

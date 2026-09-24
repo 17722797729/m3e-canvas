@@ -6,6 +6,7 @@ import {
   groupsInFrame,
   isOverlayFrame,
   isOverlayItem,
+  isTabRow,
   overlayLevelOf,
   overlayLevelOfFrame,
   overlayRuleOf,
@@ -180,7 +181,7 @@ export function audit(doc: Doc, widths: Record<string, number>): AuditIssue[] {
       }
       /* A tab row switches between its panels by position, so a panel past the last tab has no tab
          that could ever bring it forward: it would simply never be drawn. */
-      if (it.kind === "tabs" && (it.children?.length ?? 0) > (it.tabs?.length ?? 0)) push("extraPanel", frameId, it.id);
+      if (isTabRow(it) && (it.children?.length ?? 0) > (it.tabs?.length ?? 0)) push("extraPanel", frameId, it.id);
     }
   }
 
