@@ -29,7 +29,7 @@ const SNAP = 6;
 /** the farthest two corner radii may be apart and still count as meant to match */
 const RADIUS_SNAP = 4;
 
-type Rect = { l: number; t: number; r: number; b: number };
+export type Rect = { l: number; t: number; r: number; b: number };
 
 /** vertical distance between stacked rows */
 const ROW_GAP = 16;
@@ -229,6 +229,33 @@ export function sideFlip(row: Item, frame: Frame, dropLeft: number, widths: Reco
   if (sizeOf(row, widths).w < fw) return null;
   const off = dropLeft + sizeOf(row, widths).w / 2 - (frame.x + fw / 2);
   return Math.abs(off) < SIDE_FLIP_MIN ? null : off < 0 ? "left" : "right";
+}
+
+/** How a part's own place answers a change of its size. A part the author lined up keeps what it
+ *  was lined up with — its centre on the frame's centre, or its far edge on the margin or the
+ *  screen's edge — and otherwise its near (left / top) edge stays put, as the sliders always did.
+ *
+ *  A part as long as its screen along an axis has its centre on the frame's centre and its far edge
+ *  on the screen's edge by construction rather than by the author's choice, so neither reading is
+ *  theirs: a bar as wide as the screen, read as "centred", would shrink from both ends and drift off
+ *  both edges with the same room left either side of it — it would look pinned to the middle, with
+ *  no way to have it against an edge. A part that fills the screen along an axis keeps the edge it
+ *  starts from instead, so the room it gives up is on one side, where the author can drag what is
+ *  left of it. */
+export function shiftForResize(before: Item, after: Item, at: { x: number; y: number }, frame: Rect, widths: Record<string, number>): { dx: number; dy: number } {
+  const a = sizeOf(before, widths);
+  const b = sizeOf(after, widths);
+  const fw = frame.r - frame.l;
+  const fh = frame.b - frame.t;
+  const shift = (pos: number, len: number, next: number, f0: number, fLen: number) => {
+    const d = next - len;
+    if (d === 0 || len >= fLen - 2) return 0;
+    const near = (v: number, target: number) => Math.abs(v - target) <= 1;
+    if (near(pos + len / 2, f0 + fLen / 2)) return -Math.round(d / 2);
+    if (near(pos + len, f0 + fLen - PHONE_MARGIN) || near(pos + len, f0 + fLen)) return -d;
+    return 0;
+  };
+  return { dx: shift(at.x, a.w, b.w, frame.l, fw), dy: shift(at.y, a.h, b.h, frame.t, fh) };
 }
 
 /** A screen changing size, and everything that follows from it: the screens to its

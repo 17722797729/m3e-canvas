@@ -1220,7 +1220,6 @@ export const TRANSITION_TEXT: Record<Lang, Record<string, string>> = {
     slideUp: "下からのスライド",
     slideDown: "上からのスライド",
     fade: "フェード",
-    expand: "拡大",
     none: "アニメーションなし",
   },
   en: {
@@ -1229,7 +1228,6 @@ export const TRANSITION_TEXT: Record<Lang, Record<string, string>> = {
     slideUp: "a slide up from the bottom",
     slideDown: "a slide down from the top",
     fade: "a fade",
-    expand: "an expand",
     none: "no animation",
   },
   zh: {
@@ -1238,7 +1236,6 @@ export const TRANSITION_TEXT: Record<Lang, Record<string, string>> = {
     slideUp: "从底部滑入",
     slideDown: "从顶部滑入",
     fade: "淡入",
-    expand: "放大",
     none: "无动画",
   },
   ko: {
@@ -1247,7 +1244,6 @@ export const TRANSITION_TEXT: Record<Lang, Record<string, string>> = {
     slideUp: "아래에서 슬라이드",
     slideDown: "위에서 슬라이드",
     fade: "페이드",
-    expand: "확대",
     none: "애니메이션 없음",
   },
 };

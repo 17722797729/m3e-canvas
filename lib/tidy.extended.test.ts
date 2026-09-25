@@ -17,12 +17,14 @@
  *  - carryFrame: a navRail placed on the right stays on the right
  *  - sideFlip: a screen-wide side tab row dragged past the middle changes side, a nudge does not
  *  - spansSlot: a bar that spans the body takes the slot; one the author narrowed keeps its place
+ *  - shiftForResize: a screen-wide bar keeps its leading edge; a part the author centred stays centred
  */
 import { describe, expect, it } from "vitest";
 import { frameOfGroup } from "./tokens";
 import {
   tidyFrame,
   pullInto,
+  shiftForResize,
   railSide,
   barSlotOf,
   sideFlip,
@@ -35,14 +37,17 @@ import {
   Frame,
   Group,
   Item,
+  Kind,
   PHONE_W,
   PHONE_H,
   DESKTOP_W,
   DESKTOP_H,
   NAV_BAR_H,
   PHONE_MARGIN,
+  frameRect,
   makeItem,
 } from "./tokens";
+import type { Rect } from "./tidy";
 
 const phoneFrame: Frame = { id: "f1", name: "Phone", x: 0, y: 0 };
 const widths: Record<string, number> = {};
@@ -96,6 +101,50 @@ describe("pullInto", () => {
     const g = group("g1", 100, 0, [topBar("t")]); // already starts before phoneFrame ends but x > 0
     const out = pullInto(g, phoneFrame, widths);
     expect(out.x).toBe(0);
+  });
+});
+
+describe("shiftForResize", () => {
+  const wide = { ...phoneFrame, w: 526, h: 892 };
+  const frame: Rect = frameRect(wide);
+  const bar = (w: number, kind: Kind = "sideTabs"): Item => ({ id: "b", kind, label: "", icon: null, variant: "filled", size: w, size2: 200 });
+  const box = (w: number): Item => ({ id: "x", kind: "box", label: "", icon: null, variant: "filled", size: w, size2: 200 });
+
+  it("a bar as wide as the screen keeps its left edge when made narrower", () => {
+    expect(shiftForResize(bar(526), bar(240), { x: 0, y: 100 }, frame, widths)).toEqual({ dx: 0, dy: 0 });
+  });
+
+  it("and a tabs row does the same", () => {
+    expect(shiftForResize(bar(526, "tabs"), bar(300, "tabs"), { x: 0, y: 100 }, frame, widths)).toEqual({ dx: 0, dy: 0 });
+  });
+
+  it("a part the author centred shrinks from both ends", () => {
+    /* 300 wide on a 526 screen, centred: (526 - 300) / 2 = 113 */
+    expect(shiftForResize(box(300), box(200), { x: 113, y: 100 }, frame, widths).dx).toBe(50);
+  });
+
+  it("a narrow bar the author centred keeps its centre too", () => {
+    expect(shiftForResize(bar(300), bar(200), { x: 113, y: 100 }, frame, widths).dx).toBe(50);
+  });
+
+  it("a part flush to the screen's far edge keeps that edge", () => {
+    /* 300 wide against the right edge: 526 - 300 = 226, so narrowing it by 100 moves it right */
+    expect(shiftForResize(box(300), box(200), { x: 226, y: 100 }, frame, widths).dx).toBe(100);
+  });
+
+  it("any other part keeps its near edge", () => {
+    expect(shiftForResize(box(300), box(200), { x: 40, y: 100 }, frame, widths)).toEqual({ dx: 0, dy: 0 });
+  });
+
+  it("a part as tall as the screen keeps its top edge", () => {
+    const tall = { ...box(300), size2: 892 };
+    expect(shiftForResize(tall, { ...tall, size2: 400 }, { x: 40, y: 0 }, frame, widths).dy).toBe(0);
+  });
+
+  it("a part the author centred vertically shrinks from both ends", () => {
+    /* 200 tall on an 892 screen, centred: (892 - 200) / 2 = 346 */
+    const mid = { ...box(300), size2: 200 };
+    expect(shiftForResize(mid, { ...mid, size2: 100 }, { x: 40, y: 346 }, frame, widths).dy).toBe(50);
   });
 });
 

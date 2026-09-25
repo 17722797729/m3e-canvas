@@ -149,7 +149,7 @@ import { LangMenu } from "@/components/Menus";
 import { AiActionKey, AiPanel, aiErrorText } from "@/components/AiPanel";
 import { Field } from "@/components/ui";
 import { AiSettings, DEFAULT_AI, hasKey, isSecureUrl, loadAiSettings, proposeBehavior, proposeDescription, pushHistory, saveAiSettings } from "@/lib/ai";
-import { barSlotOf, bodyRect, carryFrame, pullInto, sideFlip, spansSlot, tidyFrame } from "@/lib/tidy";
+import { barSlotOf, bodyRect, carryFrame, pullInto, shiftForResize, sideFlip, spansSlot, tidyFrame } from "@/lib/tidy";
 import { constrainModalRails, modalRailOf, updateRail } from "@/lib/rail";
 import { isProject, readableGroups, readProject, saveProject } from "@/lib/project";
 import { audit, type AuditIssue } from "@/lib/audit";
@@ -1538,8 +1538,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       /* A bar the author sized keeps the width they gave it when it is moved: a bar made on one
          screen is put on another one all the time, and stretching it back to the new screen's width
          every time would take the width away again with every drag — the room the author left beside
-         it could never be closed. A bar that no longer fits the screen it lands on is pulled in, and
-         one arriving from the palette — which has no size of its own yet — spans that screen. */
+         it could never be closed. Only a bar that no longer fits the screen at all is pulled in; one
+         arriving from the palette, which has no size of its own yet, spans that screen. */
       const fitBar = (w: number, h: number): Item => {
         const cur = sizeOf(landing, widthsRef.current).w;
         return cur > w ? carryItemSize(landing, { w: cur, h: PHONE_H }, { w, h }) : landing;
@@ -1549,7 +1549,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           ? isBar
             ? d.fromPalette
               ? carryItemSize(landing, { w: PHONE_W, h: PHONE_H }, { w: slot.w, h: frameSizeOf(targetFrame).h })
-              : fitBar(slot.w, frameSizeOf(targetFrame).h)
+              : fitBar(frameSizeOf(targetFrame).w, frameSizeOf(targetFrame).h)
             : fitHeight(landing, frameSizeOf(targetFrame).h)
           : landing;
       /* off any guide, the part settles on the 4dp grid of the screen it lands on */
@@ -1559,11 +1559,12 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
          A bar dropped on a screen keeps its own spanning rule. */
       const settle = (onGuide: boolean, pos: number, grid: number) =>
         loose || onGuide ? Math.round(pos) : onGrid(pos, grid);
-      /* A bar that spans its screen sits in the slot, beside any rail. One the author narrowed is
-       * a part they placed, not a bar any more: taking the slot's left edge would slide it back to
-       * the screen's edge every time, with the room it was meant to keep left over on the far side
-       * and no way to close it. A narrow one therefore lands where it was let go. */
-      const spans = !!slot && spansSlot(placedItem, slot, widthsRef.current);
+      /* A bar arriving from the palette has no place of its own yet, so one that spans the body
+       * takes the screen's slot, beside any rail. A bar the author is moving keeps the place they
+       * chose: taking the slot's edge would slide it back there on every drop as soon as it grew to
+       * the body's width, which the author reads — rightly — as the part springing back rather than
+       * being placed. Anything still hanging over the screen is brought inside by pullInto below. */
+      const spans = d.fromPalette && !!slot && spansSlot(placedItem, slot, widthsRef.current);
       const dropped: Group = {
         id: uid(),
         x: spans ? Math.round(slot.x) : settle(onGuide(d.guide, "x"), rawX, origin.x),
@@ -1904,29 +1905,14 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     if (!selected && sheet === "edit") setSheet(null);
   }, [selected, sheet]);
 
-  /** Resizing a lone part keeps whatever it was lined up with on the frame:
-   *  its centre on the centre line, or its far edge on the margin or screen edge.
-   *  Otherwise the near (left / top) edge stays put, as the sliders always did. */
+  /** Resizing a lone part keeps whatever it was lined up with on the frame — or, for a bar that
+   *  spans the screen, the edge it starts from (lib/tidy's shiftForResize says why). */
   const resizeShift = (g: Group, before: Item, after: Item) => {
     const none = { dx: 0, dy: 0 };
     if (g.items.length !== 1 || frameRef.current !== "phone") return none;
     const f = frameOfGroup(g, framesRef.current, widthsRef.current);
     if (!f) return none;
-    const { w: frameW, h: frameH } = frameSizeOf(f);
-    const a = sizeOf(before, widthsRef.current);
-    const b = sizeOf(after, widthsRef.current);
-    const shift = (pos: number, len: number, next: number, f0: number, fLen: number) => {
-      const d = next - len;
-      if (d === 0) return 0;
-      const near = (v: number, target: number) => Math.abs(v - target) <= 1;
-      if (near(pos + len / 2, f0 + fLen / 2)) return -Math.round(d / 2);
-      if (near(pos + len, f0 + fLen - FRAME_MARGIN) || near(pos + len, f0 + fLen)) return -d;
-      return 0;
-    };
-    return {
-      dx: shift(g.x, a.w, b.w, f.x, frameW),
-      dy: shift(g.y, a.h, b.h, f.y, frameH),
-    };
+    return shiftForResize(before, after, { x: g.x, y: g.y }, frameRect(f), widthsRef.current);
   };
 
   const patchSelected = (patch: Partial<Item>) => {
@@ -3145,7 +3131,9 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       setGroups((gs) =>
         gs.map((g) => {
           const it = findItemIn(g.items, bindTo);
-          return it ? { ...g, items: patchItemIn(g.items, bindTo, actionPatchFor(it, target ?? null, { to: f.id, transition: "expand", dialog: true })) } : g;
+          /* a dialog comes up from the bottom unless the author says otherwise: "expand" was
+             retired, and a dialog bound with it would open with no entrance at all */
+          return it ? { ...g, items: patchItemIn(g.items, bindTo, actionPatchFor(it, target ?? null, { to: f.id, transition: "slideUp", dialog: true })) } : g;
         }),
       );
     }
@@ -3796,7 +3784,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       setGroups((gs) =>
         gs.map((g) => {
           const it = findItemIn(g.items, itemId);
-          return it ? { ...g, items: patchItemIn(g.items, itemId, actionPatchFor(it, target, { to: choice.id, transition: "expand", dialog: true })) } : g;
+          return it ? { ...g, items: patchItemIn(g.items, itemId, actionPatchFor(it, target, { to: choice.id, transition: "slideUp", dialog: true })) } : g;
         }),
       );
     },

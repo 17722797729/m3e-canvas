@@ -19,6 +19,7 @@ import {
   PHONE_W,
   Palette,
   SLIDE_SPEC,
+  layerEntryOffset,
   STATUS_BAR_H,
   SWIPE_DIRS,
   SwipeDir,
@@ -148,26 +149,33 @@ function poses(c: Anim): { initial: Pose; animate: Pose; exit: Pose } {
       exit: { x: 0, y: 0, opacity: 0, scale: 1, zIndex: 1, transition: tr },
     };
   }
-  if (c.t === "expand") {
-    const tr = c.spring ? { ...SPRING, ...zi } : { duration: 0.36, ease: EASE, ...zi };
-    return c.back
-      ? {
-          initial: { x: 0, y: 0, scale: 0.92, opacity: 0, zIndex: 1 },
-          animate: { x: 0, y: 0, scale: 1, opacity: 1, zIndex: 1, transition: tr },
-          exit: { x: 0, y: 0, scale: 1.06, opacity: 0, zIndex: 2, transition: tr },
-        }
-      : {
-          initial: { x: 0, y: 0, scale: 0.92, opacity: 0, zIndex: 2 },
-          animate: { x: 0, y: 0, scale: 1, opacity: 1, zIndex: 2, transition: tr },
-          exit: { x: 0, y: 0, scale: 1.06, opacity: 0, zIndex: 1, transition: tr },
-        };
-  }
   const tr = { duration: 0, ...zi };
   return {
     initial: { x: 0, y: 0, opacity: 1, scale: 1, zIndex: 2 },
     animate: { x: 0, y: 0, opacity: 1, scale: 1, zIndex: 2, transition: tr },
     exit: { x: 0, y: 0, opacity: 1, scale: 1, zIndex: 1, transition: tr },
   };
+}
+
+/** How an overlay's page comes in. A screen is the whole stage, so a share of it is a share of the
+ *  screen; a dialog is its own small box, and the same share of that would only nudge it — a page
+ *  set to slide up from the bottom would move barely at all while the dim behind it appeared, which
+ *  reads as the dialog standing still and the background moving. The page's offsets are therefore
+ *  measured from the screen's own edge, wherever the page itself sits on it. */
+function layerEntry(t: Transition, w: number, h: number, stageW: number, stageH: number, spring: boolean, still: boolean) {
+  const spec = SLIDE_SPEC[t];
+  const zi = { zIndex: { duration: 0 } };
+  if (spec) {
+    const from = layerEntryOffset(t, w, h, stageW, stageH);
+    const tr = still ? { duration: 0, ...zi } : spring ? { ...SPRING, ...zi } : { duration: SLIDE_MS, ease: EASE, ...zi };
+    return { initial: { ...from, opacity: 1, scale: 1 }, animate: { x: 0, y: 0, opacity: 1, scale: 1, transition: tr } };
+  }
+  if (t === "fade") {
+    const tr = { duration: still ? 0 : 0.3, ease: EASE, ...zi };
+    return { initial: { x: 0, y: 0, opacity: 0, scale: 1 }, animate: { x: 0, y: 0, opacity: 1, scale: 1, transition: tr } };
+  }
+  const tr = { duration: 0, ...zi };
+  return { initial: { x: 0, y: 0, opacity: 1, scale: 1 }, animate: { x: 0, y: 0, opacity: 1, scale: 1, transition: tr } };
 }
 
 const screenVariants: Variants = {
@@ -205,9 +213,11 @@ type StateRuntime = {
   /** the look a step latched onto a part, by part: a change the machine makes once, on the way past */
   pinned: Record<string, RulePatch>;
   now: number;
-  /** Takes the step a tap calls for; false leaves the tap to the plain action and the rules below.
-   *  `owner` is the part an untargeted look action changes. */
-  onStep: (key: string, flow: PartFlow | undefined, owner: string | null) => boolean;
+  /** Takes the step a tap calls for. "none" leaves the tap to the plain action; "look" changed how
+   *  the part is drawn and the tap still does whatever else it was meant to; "moved" landed the
+   *  visitor somewhere, and one tap must not do that twice. `owner` is the part an untargeted look
+   *  action changes. */
+  onStep: (key: string, flow: PartFlow | undefined, owner: string | null) => "none" | "look" | "moved";
   /** Takes one step, whoever asked for it: a tap, or its wait coming round. */
   take: (key: string, owner: string | null, step: PartStep) => void;
   /** the button the visitor touched last: it stays a size up and highlighted */
@@ -679,10 +689,14 @@ function Tappable({
                 swallowScrollTap.current = false;
                 return;
               }
-              /* the part's own machine goes first, then whatever the tap was meant to do */
-              states?.onStep(view.id, view.flow, view.id);
+              /* The part's own machine goes first. A step that only changes how the part is drawn
+                 still leaves the tap its own effect — grey out and go, as both cards promise — but a
+                 step that lands the visitor somewhere is the whole of the tap: running the plain
+                 action as well pushed a page and opened a dialog from one tap, which is how a screen
+                 came to slide while the dialog it was meant to open only appeared. */
+              const took = states?.onStep(view.id, view.flow, view.id) ?? "none";
               if (SHAPED.includes(view.kind)) states?.onActivate(view.id);
-              onTap?.();
+              if (took !== "moved") onTap?.();
             }
       }
       style={{
@@ -981,7 +995,7 @@ function Screen({
     }
     /* a destination's own machine: the tab that changes what it says when tapped */
     const flow = it.slotFlows?.[slot];
-    if (flow && runtime.onStep(`${it.id}:${slot}`, flow, null)) return;
+    if (flow && runtime.onStep(`${it.id}:${slot}`, flow, null) !== "none") return;
     if (isNavKind(it) && slot.startsWith("tab:")) {
       const key = navKeyOf(it);
       onValue(key, a ? -1 : Number(slot.slice(4)));
@@ -1418,6 +1432,8 @@ export function Preview({
   /* the in-page overlay each screen has open, keyed by the screen that owns it: two screens can
      each hold a dialog of their own, and stepping away and back finds each one as it was left */
   const [dialogs, setDialogs] = useState<Record<string, string | null>>({});
+  /** whether the rule action just run landed the visitor somewhere: one tap must not land twice */
+  const landedRef = useRef(false);
   /* the overlays each screen has open, keyed the same way: a dialog belongs to the screen that
      popped it, so it is still open when the visitor comes back to that screen */
   const [trail, setTrail] = useState<LayerTrail>({});
@@ -1673,14 +1689,17 @@ export function Preview({
   const runRuleAction = useCallback(
     (a: RuleAction, latched = false, owner: string | null = null) => {
       if (a.kind === "goto") {
+        landedRef.current = true;
         go({ to: a.to, transition: a.transition });
         return;
       }
       if (a.kind === "back") {
+        landedRef.current = true;
         back();
         return;
       }
       if (a.kind === "close") {
+        landedRef.current = true;
         if (layerRef.current.length) closeLayer();
         else {
           const here = stackRef.current[stackRef.current.length - 1]?.id;
@@ -1691,6 +1710,7 @@ export function Preview({
       /* every overlay this screen has open goes at once — the in-page one too, and whatever the
          visitor had stacked: a "finish" button that puts the whole flow of dialogs away */
       if (a.kind === "closeAll") {
+        landedRef.current = true;
         setLayers([]);
         const here = stackRef.current[stackRef.current.length - 1]?.id;
         if (here) setDialogs((m) => ({ ...m, [here]: null }));
@@ -1733,11 +1753,12 @@ export function Preview({
   );
   /** Takes the step a tap calls for, when the machine has one for the look the part is in. */
   const stepOnTap = useCallback(
-    (key: string, flow: PartFlow | undefined, owner: string | null) => {
+    (key: string, flow: PartFlow | undefined, owner: string | null): "none" | "look" | "moved" => {
       const step = firstTapStep(flow, lookAt(at, key));
-      if (!step) return false;
+      if (!step) return "none";
+      landedRef.current = false;
       take(key, owner, step);
-      return true;
+      return landedRef.current ? "moved" : "look";
     },
     [at, take],
   );
@@ -2068,6 +2089,10 @@ export function Preview({
                 const isTop = i === layers.length - 1;
                 /* closing a layer also drops anything opened on top of it */
                 const close = () => setLayers((ls) => ls.slice(0, i));
+                /* The page itself enters the way the author asked for: every layer used to fade
+                   whatever its rule said, so "slide up from the bottom" on a dialog did nothing.
+                   The dim stays a fade of its own, and no animation means no animation. */
+                const entry = layerEntry(l.t, w, h, frameW, frameH, spring, !!still);
                 return (
                   <motion.div
                     key={l.frameId}
@@ -2076,7 +2101,7 @@ export function Preview({
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    transition={{ duration: still ? 0 : 0.18, ease: EASE }}
+                    transition={{ duration: still || l.t === "none" ? 0 : 0.18, ease: EASE }}
                     style={{ position: "absolute", inset: 0, zIndex: 10 + i }}
                   >
                     {(rule.scrim > 0 || rule.dismissOnOutside) && (
@@ -2096,13 +2121,15 @@ export function Preview({
                         }}
                       />
                     )}
-                    <div
+                    <motion.div
                       ref={isTop && rule.focusTrap ? layerFocus : undefined}
                       tabIndex={isTop && rule.focusTrap ? -1 : undefined}
                       inert={!isTop || undefined}
                       role={rule.inertBehind ? "dialog" : undefined}
                       aria-modal={rule.inertBehind || undefined}
                       aria-label={lf.name || t("roleOverlay", lang)}
+                      initial={entry.initial}
+                      animate={entry.animate}
                       style={{
                         position: "absolute",
                         left: (frameW - w) / 2,
@@ -2133,7 +2160,7 @@ export function Preview({
                       )}
                       {/* a floating layer shows the screen behind it: its page paints nothing */}
                       <Screen frame={lf} groups={groupsFor(lf)} {...screenPropsFor(lf)} active={isTop} bare={rule.float} />
-                    </div>
+                    </motion.div>
                   </motion.div>
                 );
               })}

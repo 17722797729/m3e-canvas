@@ -477,7 +477,7 @@ function ActionEditor({
       <FrameChips
         frames={frames}
         value={action?.to ?? null}
-        onChange={(to) => onChange(to ? { to, transition: action?.transition ?? "slide" } : undefined)}
+        onChange={(to) => onChange(to ? { to, transition: action?.transition ?? "none" } : undefined)}
         p={p}
         back
       />
@@ -2940,7 +2940,7 @@ function FlowEditor({
   const link = (from: string, to?: string) => put(looks, [...steps, { id: uid(), from, ...(to ? { to } : {}), trigger: { kind: "tap" } }]);
   /* the action a new line of a step's list starts from: a jump when there are pages to jump to,
      and no button at all when the document has none */
-  const extra: RuleAction | null = frames.length ? { kind: "goto", to: frames[0].id, transition: "slide" } : null;
+  const extra: RuleAction | null = frames.length ? { kind: "goto", to: frames[0].id, transition: "none" } : null;
   const nodes: { id: string; look?: PartLook }[] = [{ id: START_LOOK }, ...looks.map((l) => ({ id: l.id, look: l }))];
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -3133,7 +3133,7 @@ function StateRules({
           <FrameSelect
             frames={frames}
             value={action?.to ?? null}
-            onChange={(to) => writeAction(to ? { to, transition: action?.transition ?? "slide" } : undefined)}
+            onChange={(to) => writeAction(to ? { to, transition: action?.transition ?? "none" } : undefined)}
             p={p}
           />
           {action && action.to !== BACK_TARGET && (

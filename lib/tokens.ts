@@ -1944,7 +1944,13 @@ export function migrateFlows(groups: Group[]): Group[] {
       const kept = acts
         .filter((a) => a.kind === "goto" || a.kind === "back" || a.kind === "close" || a.kind === "closeAll" || a.kind === "look")
         /* a look was once able to restyle the part it aims at: that choice is gone */
-        .map((a) => (a.kind === "look" && a.variant !== undefined ? { kind: "look" as const, target: a.target, icon: a.icon, label: a.label, color: a.color } : a));
+        .map((a) => (a.kind === "look" && a.variant !== undefined ? { kind: "look" as const, target: a.target, icon: a.icon, label: a.label, color: a.color } : a))
+        /* and a transition the picker no longer offers reads back as no animation */
+        .map((a) => {
+          if (a.kind !== "goto") return a;
+          const t = retiredTransition(a.transition);
+          return t === a.transition ? a : { ...a, transition: t };
+        });
       /* Nothing to drop: the very same step goes back, so an untouched machine keeps its identity. */
       if (legacy.when === undefined && kept.length === acts.length && kept.every((a, i) => a === acts[i])) return st;
       changed = true;
@@ -1970,6 +1976,23 @@ export function migrateFlows(groups: Group[]): Group[] {
           return acc;
         }, {})
       : undefined;
+    /* A jump the plain action asks for carries a transition too — the same retired value comes back
+       as no animation, so a document reads the same whichever way its tap was written. */
+    const keptAction = it.action
+      ? (() => {
+          const t = retiredTransition(it.action!.transition, !!it.action!.dialog);
+          return t === it.action.transition ? it.action : { ...it.action, transition: t };
+        })()
+      : undefined;
+    const keptActions = it.actions
+      ? Object.entries(it.actions).reduce<NonNullable<Item["actions"]>>((acc, [key, a]) => {
+          if (!a) return acc;
+          const t = retiredTransition(a.transition, !!a.dialog);
+          acc[key] = t === a.transition ? a : { ...a, transition: t };
+          return acc;
+        }, {})
+      : undefined;
+    const actionsChanged = !!it.actions && !!keptActions && Object.entries(it.actions).some(([k, a]) => keptActions[k] !== a);
     const flow = tidy(madeFlow ?? it.flow);
     const slotFlows = Object.entries(madeSlots ?? it.slotFlows ?? {}).reduce<Record<string, PartFlow>>((acc, [key, machine]) => {
       const kept = tidy(machine);
@@ -1977,7 +2000,7 @@ export function migrateFlows(groups: Group[]): Group[] {
       return acc;
     }, {});
     const hadSlots = Object.keys(it.slotFlows ?? {}).length > 0;
-    const blank = _rules === undefined && states === undefined && slotStates === undefined && flow === it.flow && !hadSlots && nested === it.children;
+    const blank = _rules === undefined && states === undefined && slotStates === undefined && flow === it.flow && !hadSlots && nested === it.children && keptAction === it.action && !actionsChanged;
     /* nothing to read back: the part itself, untouched, so an untouched document keeps its identity */
     if (blank) return it;
     return {
@@ -1985,6 +2008,8 @@ export function migrateFlows(groups: Group[]): Group[] {
       ...(nested ? { children: nested } : {}),
       ...(flow ? { flow } : {}),
       ...(Object.keys(slotFlows).length ? { slotFlows } : {}),
+      ...(keptAction !== it.action ? { action: keptAction } : {}),
+      ...(actionsChanged ? { actions: keptActions } : {}),
     } as T;
   };
   return groups.map((g) => {
@@ -2167,7 +2192,28 @@ export const SLIDE_SPEC: Partial<Record<Transition, { axis: "x" | "y"; enter: nu
   slideDown: { axis: "y", enter: -1, exit: 0.3 },
 };
 
+/** `expand` is retired: documents written while it was offered are read back as "none" (see
+ *  `retiredTransition`), so no picker shows it and no new rule can ask for it. */
 export type Transition = "slide" | "slideLeft" | "slideUp" | "slideDown" | "fade" | "expand" | "none";
+
+/** How far from its own place an overlay's page starts when it comes in: the offset is measured from
+ *  the screen's edge, not from the page's own box. A screen is the whole stage, so a share of it is a
+ *  share of the screen; a dialog is a small box of its own, and the same share of that would only
+ *  nudge it — a page set to slide up from the bottom would move barely at all while the dim behind it
+ *  appeared, which reads as the dialog standing still and the background moving. */
+export function layerEntryOffset(t: Transition, w: number, h: number, stageW: number, stageH: number): { x: number; y: number } {
+  const spec = SLIDE_SPEC[t];
+  if (!spec) return { x: 0, y: 0 };
+  const far = (spec.axis === "y" ? stageH + h : stageW + w) / 2;
+  const sign = spec.enter > 0 ? 1 : -1;
+  return spec.axis === "y" ? { x: 0, y: sign * far } : { x: sign * far, y: 0 };
+}
+/** What a retired transition comes back as. A dialog is the one case that keeps a movement: taught
+ *  to zoom — the dialog cards' own old default — it would otherwise open with no entrance at all, a
+ *  tap that moves nothing while the screen behind it does. A page reads back as no animation, which
+ *  is the quiet default the picker now starts from. */
+export const retiredTransition = (t: Transition, dialog = false): Transition =>
+  t === "expand" ? (dialog ? "slideUp" : "none") : t;
 export type Action = {
   to: string;
   transition: Transition;
@@ -2181,7 +2227,6 @@ export const TRANSITIONS: { key: Transition; label: string; icon: string }[] = [
   { key: "slideUp", label: "Slide from bottom", icon: "arrow_upward" },
   { key: "slideDown", label: "Slide from top", icon: "arrow_downward" },
   { key: "fade", label: "Fade", icon: "blur_on" },
-  { key: "expand", label: "Expand", icon: "open_in_full" },
   { key: "none", label: "None", icon: "block" },
 ];
 
