@@ -4232,7 +4232,28 @@ export function ruleTargets(
 export const READOUT_KINDS: Kind[] = ["slider", "stepper", "progressBar", "linearProgress", "circularProgress", "select", "tabs", "sideTabs"];
 
 /** Whether a part has a value worth showing beside it. */
-export const hasReadout = (it: Item) => READOUT_KINDS.includes(it.kind) || !!it.switch;
+export const hasReadout = (it: Item) => READOUT_KINDS.includes(it.kind) || !!it.switch || !!it.autoClose;
+
+/** How many seconds a part's timer has left, from the count it was given and how long it has run.
+ *  `undefined` when the part carries no timer at all. */
+export function countdownLeft(autoClose: number | undefined, elapsed: number | undefined): number | undefined {
+  if (!autoClose || autoClose <= 0) return undefined;
+  return Math.max(0, Math.ceil(autoClose - Math.max(0, elapsed ?? 0)));
+}
+
+/** Whether a part a text reads is counting down rather than carrying a number. */
+export const readsTimer = (it: Item | undefined | null) => !!it?.autoClose;
+
+/** A count of seconds as a clock: 5 minutes reads as 05:00 and counts down, an hour keeps its hour.
+ *  A text bound to a part with a timer shows this, so a screen can say how long the visitor has. */
+export function clockText(totalSeconds: number): string {
+  const all = Math.max(0, Math.round(totalSeconds));
+  const h = Math.floor(all / 3600);
+  const m = Math.floor((all % 3600) / 60);
+  const s = all % 60;
+  const two = (n: number) => String(n).padStart(2, "0");
+  return h > 0 ? `${two(h)}:${two(m)}:${two(s)}` : `${two(m)}:${two(s)}`;
+}
 
 /** Whether a part's own number carries its percent sign: unset is yes, `false` is the author saying
  *  the number stands on its own. */
@@ -4255,6 +4276,10 @@ export function readoutOf(it: Item, live?: number, lang?: Lang, unit = true): st
     return tabs[tabIndexOf(it)]?.label.trim() || "—";
   }
   if (it.switch) return pick(it.checked ? words.on : words.off);
+  /* A part counting its own timer down reads as a clock: the canvas has no running clock, so it
+     shows the whole time the part was given — 05:00 for the container that closes in five minutes —
+     and the preview counts it down from there. */
+  if (it.autoClose) return clockText(it.autoClose);
   const v = clampValue(live ?? it.value ?? 0, maxOf(it));
   return unit && unitOf(it) ? `${v}%` : `${v}`;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { COLOR_TOKENS, CardLayout, ColorToken, Palette, R_INNER, TEXT_TOKENS, TextToken, clamp, TRANSPARENT, type FillToken } from "@/lib/tokens";
 import { AnimatePresence, motion } from "motion/react";
 import { COLOR_TOKEN_TEXT, TEXT_TOKEN_TEXT, t, useLang } from "@/lib/i18n";
@@ -1185,7 +1185,9 @@ export function Pick<K extends string>({
             </div>
           )}
           {shown.map((o, i) => (
-            <>
+            /* the pair of elements one entry is made of needs a key of its own, or React files the
+               whole list under one anonymous child */
+            <Fragment key={o.key}>
             {/* a group's name stands over its entries, once, the way a long list is filed */}
             {o.group && o.group !== shown[i - 1]?.group && (
               <div key={`g-${o.group}`} style={{ padding: "6px 8px 2px", fontSize: 10, fontWeight: 700, letterSpacing: 0.3, color: p.outline, textTransform: "uppercase" }}>
@@ -1193,7 +1195,6 @@ export function Pick<K extends string>({
               </div>
             )}
             <button
-              key={o.key}
               type="button"
               onClick={() => {
                 onChange(o.key);
@@ -1220,7 +1221,7 @@ export function Pick<K extends string>({
               {o.icon && <Icon name={o.icon} size={16} />}
               <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.label}</span>
             </button>
-            </>
+            </Fragment>
           ))}
           {shown.length === 0 && <div style={{ padding: "8px", fontSize: 12, color: p.outline, textAlign: "center" }}>{t("searchOff", lang)}</div>}
         </div>

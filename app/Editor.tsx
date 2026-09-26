@@ -12,129 +12,7 @@ import { AnimatePresence, motion, useReducedMotion, useSpring } from "motion/rea
 import { toPng } from "html-to-image";
 import { buildPrompt, effectivePrompt } from "@/lib/prompt";
 import { alignTo, linesX, linesY, type AlignGuide, type AlignLine } from "@/lib/guides";
-import {
-  Action,
-  actionPatchFor,
-  actionsOf,
-  Axis,
-  BACK_TARGET,
-  baseRadii,
-  explodeGroup,
-  freeRadii,
-  radiiOfRuns,
-  BEZEL,
-  canJoin,
-  clamp,
-  connectSpecOf,
-  Doc,
-  isPlatform,
-  Platform,
-  Frame,
-  Place,
-  AlignKind,
-  FramePreset,
-  FRAME_GAP,
-  FRAME_LABEL_H,
-  FrameMode,
-  frameOfGroup,
-  framePresetPatch,
-  framePresetOf,
-  frameRadius,
-  frameRect,
-  childAt,
-  childDragFree,
-  pruneParts,
-  childDragRoom,
-  findItemIn,
-  foldMargins,
-  selectedAncestor,
-  foldPlace,
-  keepPanelSlots,
-  needsTabPanels,
-  panelSlotFor,
-  refillPanels,
-  restorePanel,
-  slotsOf,
-  tabIndexOf,
-  tabPanelId,
-  takesText,
-  tabPanelsPatch,
-  liftAbove,
-  frameSizeOf,
-  DEFAULT_OVERLAY_LEVEL,
-  isOverlayFrame,
-  isOverlayItem,
-  overlayLevelOf,
-  overlayLevelOfFrame,
-  carryItemSize,
-  defaultPlatformOf,
-  GAP,
-  Group,
-  groupBounds,
-  Item,
-  Kind,
-  KIND_ORDER,
-  KIND_SPEC,
-  PlacedItem,
-  CustomPart,
-  compositeInstance,
-  resizedChildren,
-  withGridCells,
-  isGridCell,
-  isTabPanel,
-  isTabRow,
-  ruleTargets,
-  readoutOf,
-  readText,
-  byLayer,
-  copySubtree,
-  syncTabPanels,
-  itemsOf,
-  layerOf,
-  parentOf,
-  subtreeOf,
-  collapseFree,
-  layoutOf,
-  lerp,
-  makeItem,
-  DEFAULT_THEME,
-  Theme,
-  CONTENT_W,
-  fontFamilyOf,
-  uiFontFamily,
-  normalizeTheme,
-  setGlobalShape,
-  MEASURED,
-  NAV_BAR_H,
-  Palette,
-  paletteOf,
-  pageTintOf,
-  PHONE_H,
-  PHONE_MARGIN,
-  PHONE_W,
-  PULL_EXP,
-  Radii,
-  SETTLE_MS,
-  sizeOf,
-  SNAP_CROSS,
-  SNAP_MAIN,
-  Transition,
-  TRANSITIONS,
-  uid,
-  uniformRadii,
-  FULL_WIDTH,
-  fitHeight,
-  railExpansionSide,
-  isWideRail,
-  LAYER_DEFAULT,
-  childShown,
-  childDrawn,
-  drawnIds,
-  railMetrics,
-  RAIL_TOP,
-  migrateFlows,
-  fillColor,
-} from "@/lib/tokens";
+import { clockText, countdownLeft, Action, actionPatchFor, actionsOf, Axis, BACK_TARGET, baseRadii, explodeGroup, freeRadii, radiiOfRuns, BEZEL, canJoin, clamp, connectSpecOf, Doc, isPlatform, Platform, Frame, Place, AlignKind, FramePreset, FRAME_GAP, FRAME_LABEL_H, FrameMode, frameOfGroup, framePresetPatch, framePresetOf, frameRadius, frameRect, childAt, childDragFree, pruneParts, childDragRoom, findItemIn, foldMargins, selectedAncestor, foldPlace, keepPanelSlots, needsTabPanels, panelSlotFor, refillPanels, restorePanel, slotsOf, tabIndexOf, tabPanelId, takesText, tabPanelsPatch, liftAbove, frameSizeOf, DEFAULT_OVERLAY_LEVEL, isOverlayFrame, isOverlayItem, overlayLevelOf, overlayLevelOfFrame, carryItemSize, defaultPlatformOf, GAP, Group, groupBounds, Item, Kind, KIND_ORDER, KIND_SPEC, PlacedItem, CustomPart, compositeInstance, resizedChildren, withGridCells, isGridCell, isTabPanel, isTabRow, ruleTargets, readoutOf, readText, byLayer, copySubtree, syncTabPanels, itemsOf, layerOf, parentOf, subtreeOf, collapseFree, layoutOf, lerp, makeItem, DEFAULT_THEME, Theme, CONTENT_W, fontFamilyOf, uiFontFamily, normalizeTheme, setGlobalShape, MEASURED, NAV_BAR_H, Palette, paletteOf, pageTintOf, PHONE_H, PHONE_MARGIN, PHONE_W, PULL_EXP, Radii, SETTLE_MS, sizeOf, SNAP_CROSS, SNAP_MAIN, Transition, TRANSITIONS, uid, uniformRadii, FULL_WIDTH, fitHeight, railExpansionSide, isWideRail, LAYER_DEFAULT, childShown, childDrawn, drawnIds, railMetrics, RAIL_TOP, migrateFlows, fillColor, } from "@/lib/tokens";
 import { GridCellMarks, Icon, M3Node, M3Static, MeasuredContent } from "@/components/M3Node";
 import { LayersPanel } from "@/components/Layers";
 import { AuditPanel } from "@/components/Audit";
@@ -142,7 +20,6 @@ import { FrameInspector, FrameSizePicker, Inspector, type DialogChoice } from "@
 import { Preview } from "@/components/Preview";
 import { Logo } from "@/components/Logo";
 import { PartsPalette } from "@/components/PartsPalette";
-import { CompositeDialog } from "@/components/CompositeDialog";
 import { PromptPanel } from "@/components/PromptPanel";
 import { Mode, Toolbar } from "@/components/Toolbar";
 import { LangMenu } from "@/components/Menus";
@@ -155,6 +32,7 @@ import { isProject, readableGroups, readProject, saveProject } from "@/lib/proje
 import { audit, type AuditIssue } from "@/lib/audit";
 import { magnifyView, revealPadding, revealView, type CanvasView } from "@/lib/view";
 import { existingDialogs, holdersOf } from "@/lib/pages";
+import { layerName } from "@/lib/search";
 import { hasShareHash, readShareHash } from "@/lib/share";
 import { LoadingIndicator } from "@/components/Loading";
 import { draftDesign } from "@/lib/ai";
@@ -507,10 +385,9 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   /** the author's own composite parts, offered by the palette beside the kinds */
   const [customParts, setCustomParts] = useState<CustomPart[]>([]);
   /** the values the prototype carries between taps: coins, stamina, what has been claimed */
-  /** the dialog that composes a new composite part */
-  const [composeOpen, setComposeOpen] = useState(false);
-  /** the saved composite the dialog is changing, if any */
-  const [composeEditing, setComposeEditing] = useState<CustomPart | null>(null);
+  /** the saved composite being renamed, if any: a saved set is only ever renamed — its parts are
+   *  kept exactly as they were saved, so a rename can never restyle it. */
+  const [renameAsk, setRenameAsk] = useState<{ id: string; name: string } | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
   const [selectedLinkId, setSelectedLinkId] = useState<string | null>(null);
@@ -1148,6 +1025,26 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const sx = useSpring(0, CARRY);
   const sy = useSpring(0, CARRY);
 
+  /** Seconds since the canvas started drawing a timer, so a countdown text counts on the board the
+   *  way the author will see it run. */
+  const [timerTick, setTimerTick] = useState(0);
+  const anyTimer = useMemo(() => {
+    let found = false;
+    const walk = (items: Item[]) => {
+      for (const it of items) {
+        if (it.autoClose) found = true;
+        if (it.children) walk(it.children);
+      }
+    };
+    for (const g of groups) walk(g.items);
+    return found;
+  }, [groups]);
+  useEffect(() => {
+    if (!anyTimer) return;
+    const id = window.setInterval(() => setTimerTick((n) => (n + 1) % 86400), 1000);
+    return () => window.clearInterval(id);
+  }, [anyTimer]);
+
   /** A text bound to another part reads it: on the canvas and in an export that is the value the
    *  author set, which is where a visitor's drag starts from. Nothing else about the tree changes, so
    *  the canvas keeps editing the document itself and only draws this reading of it. */
@@ -1160,11 +1057,18 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       /* the canvas and an export read the same words the preview shows — the bare number, or the
          author's own line with the number dropped into it — so what they line up is what the
          visitor will read there */
+      if (target?.autoClose) {
+        /* A part counting its timer down keeps counting on the canvas too, where there is no visitor
+           to run it: it starts at the time the author gave and starts over when it runs out, so the
+           countdown can be watched while the screen is being drawn. */
+        const span = Math.max(1, Math.round(target.autoClose));
+        return { ...next, label: readText(next, clockText(countdownLeft(span, timerTick % (span + 1))!)) };
+      }
       return target ? { ...next, label: readText(next, readoutOf(target, undefined, lang, false)) } : next;
     };
     const same = groups.every((g) => g.items.every((it) => !it.shows && !(it.children ?? []).some((c) => c.shows)));
     return same ? groups : groups.map((g) => ({ ...g, items: g.items.map(bind) }));
-  }, [groups, lang]);
+  }, [groups, lang, timerTick]);
 
   /** Every part on the canvas with its rect in canvas coordinates. A container's children sit
    *  inside it, so they follow it: marquee selection, overlap tests and the alignment guides all
@@ -3810,7 +3714,19 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     if (!selected) return [];
     const owner = groups.find((g) => !!findItemIn(g.items, selected.id));
     const page = owner ? frameOfGroup(owner, frames, widths) : undefined;
-    const named = (it: Item) => it.label.trim() || KIND_TEXT[lang][it.kind]?.noun || KIND_SPEC[it.kind].label;
+    /* What each part is called, and where it sits: the name the layers panel shows it under, and its
+       container path — with a page full of containers, "剩余时间" alone says nothing, while
+       "限时礼包 › 剩余时间" is the part the author is looking at. */
+    const pathOf = new Map<string, string>();
+    const walkPath = (items: Item[], above: string[]) => {
+      for (const it of items) {
+        const here = [...above, layerName(it, lang)];
+        pathOf.set(it.id, here.join(" › "));
+        if (it.children) walkPath(it.children, here);
+      }
+    };
+    for (const g of groups) walkPath(g.items, []);
+    const named = (it: Item) => layerName(it, lang);
     return ruleTargets(
       groups,
       (groupId) => frameOfGroup(groups.find((g) => g.id === groupId) ?? groups[0], frames, widths)?.id ?? null,
@@ -3821,7 +3737,16 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       page?.id ?? null,
       new Set(subtreeOf(selected).map((it) => it.id)),
       named,
-    ).map((r2) => ({ id: r2.id, name: r2.name, kind: r2.kind, where: r2.where, icon: KIND_SPEC[r2.kind].paletteIcon, item: r2.item }));
+    ).map((r2) => ({
+      id: r2.id,
+      name: r2.name,
+      /* the path is what a picker shows: the part under the containers that hold it */
+      path: pathOf.get(r2.id) ?? r2.name,
+      kind: r2.kind,
+      where: r2.where,
+      icon: KIND_SPEC[r2.kind].paletteIcon,
+      item: r2.item,
+    }));
   }, [selected, groups, frames, widths, lang]);
 
   const doc: Doc = useMemo(
@@ -4637,14 +4562,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                     onPartPointerDown={onPartPointerDown}
                     customParts={customParts}
                     onCompositePointerDown={onCompositePointerDown}
-                    onNewComposite={() => {
-                      setComposeEditing(null);
-                      setComposeOpen(true);
-                    }}
-                    onEditComposite={(part) => {
-                      setComposeEditing(part);
-                      setComposeOpen(true);
-                    }}
+                    onEditComposite={(part) => setRenameAsk({ id: part.id, name: part.name })}
                     onDeleteComposite={(part) => {
                       setCustomParts((cur) => cur.filter((x) => x.id !== part.id));
                       showToast(t("deleteComposite", lang), 1400, "delete");
@@ -5447,31 +5365,57 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           }}
         />
 
-        {/* composing a set of parts to keep in the palette, or changing a saved one */}
-        {composeOpen && (
-          <CompositeDialog
-            p={p}
-            editing={composeEditing}
-            initial={
-              /* what the author already selected is offered as the starting point */
-              selected?.children?.length
-                ? selected.children.map((c) => ({ ...c }))
-                : selected
-                  ? [{ ...selected, x: 24, y: 24 } as PlacedItem]
-                  : null
-            }
-            onCancel={() => {
-              setComposeOpen(false);
-              setComposeEditing(null);
+        {/* renaming a saved composite, and nothing else: the set keeps its parts, its size and its
+            look, because a rename writes the name over the same entry */}
+        {renameAsk && (
+          <div
+            role="dialog"
+            aria-label={t("renameComposite", lang)}
+            style={{ position: "fixed", inset: 0, zIndex: 80, display: "grid", placeItems: "center", background: "rgba(0,0,0,0.38)" }}
+            onPointerDown={(e) => {
+              if (e.target === e.currentTarget) setRenameAsk(null);
             }}
-            onDone={(part) => {
-              /* the palette keeps it; it is part of the document, so sharing a link carries it too */
-              setCustomParts((cur) => (composeEditing ? cur.map((x) => (x.id === composeEditing.id ? { ...part, id: x.id } : x)) : [...cur, { ...part, id: uid() }]));
-              setComposeOpen(false);
-              setComposeEditing(null);
-              showToast(t(composeEditing ? "editComposite" : "composite", lang), 1400, "widgets");
-            }}
-          />
+          >
+            <div style={{ width: "min(420px, 92vw)", display: "flex", flexDirection: "column", gap: 12, padding: 18, borderRadius: 28, background: p.surfaceContainerHigh, color: p.onSurface, boxShadow: "0 8px 30px rgba(0,0,0,0.30)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <Icon name="edit" size={22} />
+                <span style={{ fontSize: 15, fontWeight: 700 }}>{t("renameComposite", lang)}</span>
+              </div>
+              <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant }}>{t("compositeNameHint", lang)}</div>
+              {/* the field wears a border of its own, so it reads as something to fill in */}
+              <div style={{ border: `1px solid ${p.outline}`, borderRadius: 14, padding: 2 }}>
+                <Field
+                  value={renameAsk.name}
+                  onChange={(name) => setRenameAsk({ ...renameAsk, name })}
+                  placeholder={t("compositeNameHint", lang)}
+                  p={p}
+                  icon="label"
+                  height={44}
+                />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <button onClick={() => setRenameAsk(null)} className="m3-press" style={{ height: 40, padding: "0 18px", borderRadius: 20, border: `1px solid ${p.outline}`, background: "transparent", color: p.primary, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+                  {t("cancel", lang)}
+                </button>
+                <button
+                  onClick={() => {
+                    const name = renameAsk.name.trim();
+                    if (!name) return;
+                    /* only the name is written: the width, the height and the parts of the set stay
+                       untouched, so renaming it cannot change how it looks when it is dropped */
+                    setCustomParts((cur) => cur.map((x) => (x.id === renameAsk.id ? { ...x, name } : x)));
+                    setRenameAsk(null);
+                    showToast(t("renameComposite", lang), 1400, "edit");
+                  }}
+                  disabled={!renameAsk.name.trim()}
+                  className="m3-press"
+                  style={{ height: 40, padding: "0 18px", borderRadius: 20, border: "none", background: renameAsk.name.trim() ? p.primary : p.surfaceContainerHighest, color: renameAsk.name.trim() ? p.onPrimary : p.outline, fontSize: 14, fontWeight: 600, cursor: renameAsk.name.trim() ? "pointer" : "default" }}
+                >
+                  {t("ok", lang)}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         <ShareDialog

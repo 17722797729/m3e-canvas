@@ -19,7 +19,6 @@ export function PartsPalette({
   onToggleFavorite,
   onPartPointerDown,
   onCompositePointerDown,
-  onNewComposite,
   onEditComposite,
   onDeleteComposite,
 }: {
@@ -32,7 +31,6 @@ export function PartsPalette({
   /** starts dragging one saved composite onto the canvas */
   onCompositePointerDown?: (e: React.PointerEvent, part: CustomPart) => void;
   /** opens the dialog that composes a new one */
-  onNewComposite?: () => void;
   /** opens the dialog on a saved composite, to change it */
   onEditComposite?: (part: CustomPart) => void;
   /** drops a saved composite from the palette */
@@ -84,19 +82,12 @@ export function PartsPalette({
             <div style={grid}>{favorites.filter((k) => KIND_SPEC[k]).map(tile)}</div>
           </Section>
         )}
-        {!q && (
-          /* the author's own sets of parts: compose one, then drop it as often as you like */
+        {!q && customParts.length > 0 && (
+          /* the author's own sets of parts — a container saved whole from the canvas — ready to drop
+             as often as they like. Nothing is composed from scratch here: a set is made by saving
+             what is on the page. */
           <Section id="composite" icon="widgets" title={t("composites", lang)} p={p}>
             <div style={grid}>
-              {onNewComposite && (
-                <Tile
-                  key="__new"
-                  icon="add_box"
-                  label={t("composeNew", lang)}
-                  p={p}
-                  onClick={onNewComposite}
-                />
-              )}
               {customParts.map((part) => (
                 /* a saved composite: drag the body to use it, the corner buttons change it */
                 <div key={part.id} style={{ position: "relative" }}>
@@ -110,8 +101,8 @@ export function PartsPalette({
                     {onEditComposite && (
                       <button
                         onClick={() => onEditComposite(part)}
-                        title={t("editComposite", lang)}
-                        aria-label={t("editComposite", lang)}
+                        title={t("renameComposite", lang)}
+                        aria-label={t("renameComposite", lang)}
                         className="m3-press"
                         style={{ width: 22, height: 22, borderRadius: 11, border: "none", padding: 0, background: p.surfaceContainerHighest, color: p.onSurfaceVariant, cursor: "pointer", display: "grid", placeItems: "center" }}
                       >

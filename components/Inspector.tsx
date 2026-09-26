@@ -496,6 +496,58 @@ function ActionEditor({
   );
 }
 
+/**
+ * A number of seconds, typed freely. The box keeps what is being typed — an empty box included,
+ * while the author is clearing it — and commits only when they leave it or press Enter. Writing
+ * every keystroke straight onto the part switched the timer off the moment the field was emptied,
+ * which is not what deleting a digit means: the field vanished under the finger.
+ */
+function SecondsField({
+  value,
+  onChange,
+  placeholder,
+  p,
+}: {
+  value: number | undefined;
+  onChange: (n: number | undefined) => void;
+  placeholder: string;
+  p: Palette;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    const n = Number(draft.replace(/[^0-9]/g, ""));
+    setDraft(null);
+    onChange(n > 0 ? n : undefined);
+  };
+  return (
+    <span style={{ position: "relative", display: "inline-flex", alignItems: "center", width: "100%" }}>
+      <span style={{ position: "absolute", left: 12, display: "inline-flex", color: p.onSurfaceVariant, pointerEvents: "none" }}>
+        <Icon name="schedule" size={18} />
+      </span>
+      <input
+        type="text"
+        inputMode="numeric"
+        aria-label={placeholder}
+        value={draft ?? (value !== undefined ? String(value) : "")}
+        placeholder={placeholder}
+        onFocus={() => setDraft(String(value ?? ""))}
+        onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ""))}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") {
+            setDraft(null);
+            e.currentTarget.blur();
+          }
+        }}
+        className="m3-number"
+        style={{ ...inputBox(p, 12), width: "100%", height: 40, paddingLeft: 36, fontSize: 14, fontWeight: 600, color: p.onSurface, outline: "none", boxSizing: "border-box" }}
+      />
+    </span>
+  );
+}
+
 /** what a field's AI button needs from the page; `reason` explains a disabled button */
 export type AiHooks = { ready: boolean; reason?: string; busy: boolean; onRun: () => void; onCancel: () => void };
 
@@ -645,17 +697,7 @@ export function FrameInspector({
               <Toggle on={frame.autoClose !== undefined} onChange={(on) => onChange({ autoClose: on ? AUTO_CLOSE_DEF : undefined })} p={p} icon="timer" label={t("autoClose", lang)} grow />
               {frame.autoClose !== undefined && (
                 <>
-                  <Field
-                    value={String(frame.autoClose)}
-                    onChange={(v) => {
-                      const n = Number(v.replace(/[^0-9]/g, ""));
-                      onChange({ autoClose: n > 0 ? n : undefined });
-                    }}
-                    placeholder={String(AUTO_CLOSE_DEF)}
-                    p={p}
-                    icon="schedule"
-                    height={40}
-                  />
+                  <SecondsField value={frame.autoClose} onChange={(autoClose) => onChange({ autoClose })} placeholder={String(AUTO_CLOSE_DEF)} p={p} />
                   <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("autoClosePageHint", lang)}</div>
                 </>
               )}
@@ -881,7 +923,7 @@ export function Inspector({
   /** measured widths, so a scrolling container's content measures the way the canvas measures it */
   widths?: Record<string, number>;
   /** the other parts on this page, so a rule can aim a look at one of them */
-  lookTargets?: { id: string; name: string; kind: Kind; icon?: string; item?: Item; where?: string }[];
+  lookTargets?: { id: string; name: string; path?: string; kind: Kind; icon?: string; item?: Item; where?: string }[];
   /** ticks every cell of the board in hand, or clears them all */
   onCellsChecked?: (checked: boolean) => void;
 }) {
@@ -1136,7 +1178,10 @@ export function Inspector({
             <Pick
               options={[
                 { key: "", label: t("showsNothing", lang), icon: "block" },
-                ...readable.map((x) => ({ key: x.id, label: x.name, icon: x.icon })),
+                /* Filed under the page each part lives on, and named by its layer path: a page full
+                   of containers makes a bare part name impossible to place. Typing a page's name in
+                   the search keeps that page's parts. */
+                ...readable.map((x) => ({ key: x.id, label: x.path ?? x.name, icon: x.icon, group: x.where || t("offScreens", lang) })),
               ]}
               value={item.shows ?? ""}
               onChange={(shows) => onChange({ shows: shows || undefined })}
@@ -2367,17 +2412,7 @@ export function Inspector({
             <Toggle on={item.autoClose !== undefined} onChange={(on) => onChange({ autoClose: on ? AUTO_CLOSE_DEF : undefined })} p={p} icon="timer" label={t("autoClose", lang)} grow />
             {item.autoClose !== undefined && (
               <>
-                <Field
-                  value={String(item.autoClose)}
-                  onChange={(v) => {
-                    const n = Number(v.replace(/[^0-9]/g, ""));
-                    onChange({ autoClose: n > 0 ? n : undefined });
-                  }}
-                  placeholder={String(AUTO_CLOSE_DEF)}
-                  p={p}
-                  icon="schedule"
-                  height={40}
-                />
+                <SecondsField value={item.autoClose} onChange={(autoClose) => onChange({ autoClose })} placeholder={String(AUTO_CLOSE_DEF)} p={p} />
                 <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("autoCloseHint", lang)}</div>
                 <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{isOverlayItem(item) ? t("autoCloseBubbleHint", lang) : t("autoCloseSpeedHint", lang)}</div>
               </>
@@ -2741,7 +2776,7 @@ function ActionFields({
   /** the part the action belongs to: a look starts from what it shows now */
   item: Item;
   /** the other parts on the page, for a look aimed at one of them */
-  lookTargets?: { id: string; name: string; kind: Kind; icon?: string; item?: Item; where?: string }[];
+  lookTargets?: { id: string; name: string; path?: string; kind: Kind; icon?: string; item?: Item; where?: string }[];
   p: Palette;
 }) {
   const lang = useLang();
@@ -2777,7 +2812,7 @@ function ActionFields({
                    a slot in the bag over there, so the aims reach across pages, and the page a part
                    belongs to is how an author finds it. Typing a page's name in the search keeps only
                    that page's parts. */
-                ...lookTargets.map((x) => ({ key: x.id, label: x.name, icon: x.icon, group: x.where || t("offScreens", lang), title: x.where || undefined })),
+                ...lookTargets.map((x) => ({ key: x.id, label: x.path ?? x.name, icon: x.icon, group: x.where || t("offScreens", lang), title: x.where || undefined })),
               ]}
               value={a.target ?? ""}
               onChange={(target) => onChange({ ...a, target: target || undefined })}
@@ -2880,7 +2915,7 @@ function StepRow({
   onRemove: () => void;
   item: Item;
   frames: Frame[];
-  lookTargets: { id: string; name: string; kind: Kind; icon?: string; item?: Item; where?: string }[];
+  lookTargets: { id: string; name: string; path?: string; kind: Kind; icon?: string; item?: Item; where?: string }[];
   /** the action a new line of the list starts from, or null when there is nothing to seed it with */
   extra: RuleAction | null;
   p: Palette;
@@ -3007,7 +3042,7 @@ function FlowEditor({
   flow: PartFlow | undefined;
   onFlow: (flow: PartFlow | undefined) => void;
   frames: Frame[];
-  lookTargets?: { id: string; name: string; kind: Kind; icon?: string; item?: Item; where?: string }[];
+  lookTargets?: { id: string; name: string; path?: string; kind: Kind; icon?: string; item?: Item; where?: string }[];
   p: Palette;
 }) {
   const lang = useLang();
@@ -3174,7 +3209,7 @@ function StateRules({
   slot?: string;
   onSlot?: (key: string) => void;
   /** the other parts on the page, for a look that changes one of them */
-  lookTargets?: { id: string; name: string; kind: Kind; icon?: string; item?: Item; where?: string }[];
+  lookTargets?: { id: string; name: string; path?: string; kind: Kind; icon?: string; item?: Item; where?: string }[];
 }) {
   /* a bar's rules belong to one destination; a plain part keeps them on itself */
   const target = slots.length > 0 ? slot || slots[0].key : "";

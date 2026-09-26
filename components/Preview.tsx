@@ -5,6 +5,9 @@ import type { Item } from "@/lib/tokens";
 import { AnimatePresence, animate, motion, useMotionValue, useTransform, useReducedMotion, useIsPresent } from "motion/react";
 import type { TargetAndTransition, Variants } from "motion/react";
 import {
+  clockText,
+  readsTimer,
+  countdownLeft,
   manyOf,
   slotWin,
   prizeLabel,
@@ -963,6 +966,7 @@ function Screen({
   wheelOf,
   reelsOf,
   onSpin,
+  targetOf,
   onDraw,
   onSignIn,
   scrollRt,
@@ -989,6 +993,8 @@ function Screen({
   /** what a prize wheel is showing while it spins, and how a draw is started */
   wheelOf?: (id: string) => WheelRun | undefined;
   onSpin?: (it: Item) => void;
+  /** a part by id anywhere in the document, for a text bound across screens */
+  targetOf?: (id: string) => Item | null;
   /** starts a draw of one or of ten, from whichever button was tapped */
   onDraw?: (it: Item, many: boolean) => void;
   /** the three symbols a slot machine shows */
@@ -1014,13 +1020,24 @@ function Screen({
   /* What a part's value is right now: where the visitor moved it to, else what the author set. A step
      that adds one starts from this, which is what makes a plus button a stepper. */
   const valueNow = (id: string): number => values[id] ?? itemsOf(shownGroups).find((x) => x.id === id)?.value ?? PROGRESS_DEFAULT;
+  /* The part a text reads: this screen's own first, then anywhere in the document — the canvas
+     resolves a binding across screens, and a text that freezes in the preview is a text whose part
+     was on another page. */
+  const readerTarget = (id: string) => itemsOf(shownGroups).find((x) => x.id === id) ?? targetOf?.(id) ?? null;
   /* A text bound to another part reads it through this: the live value where the visitor has moved
      it, the part's own where they have not. It reads the bare number — the percent sign belongs to
      the slider's own display, and the words around the number are the author's — and a text that
      asked for both keeps its own words with the number dropped into them. */
+  /* A part counting its own timer down is read as a clock, and it is the visitor's clock that is
+     read: the same reading the screen does for its own text, so a text inside a container ticks
+     with the container exactly as one standing beside it does. Reading a timer through the static
+     `readoutOf` is what freezes a countdown at its whole span — 05:00, and 05:00 forever. */
   const readBound = (reader: Item): string | null => {
-    const target = itemsOf(shownGroups).find((x) => x.id === reader.shows);
-    return target ? readText(reader, readoutOf(target, values[target.id], lang, false)) : null;
+    const target = reader.shows ? readerTarget(reader.shows) : null;
+    if (!target) return null;
+    if (readsTimer(target))
+      return readText(reader, clockText(countdownLeft(target.autoClose, (runtime.now - (autoSince.current[target.id] ?? shownAt.current)) / 1000) ?? 0));
+    return readText(reader, readoutOf(target, values[target.id], lang, false));
   };
   /* A container is not a different world: a part the visitor can move, flip or choose answers the
      same way in a dialog panel as it does standing on the screen. This is the one place the
@@ -1333,6 +1350,8 @@ function Screen({
             /* what the visitor has made of this part — dragged, flipped, switched, read: the same
                function a container hands its own children, so a part inside a dialog panel answers
                exactly like the same part standing on the screen */
+            /* every text reads through the one binding, screen or container: the number beside the
+               slider, the clock of the part that is counting down */
             let shown = sample(it);
             const navKind = isNavKind(it);
             /* a destination's own rules: fired by its tap, read back as its look */
@@ -1423,10 +1442,18 @@ function Screen({
                 liveValue={(it) => values[it.id]}
                 setValue={onValue}
                         readout={{
-                  find: (id) => itemsOf(shownGroups).find((x) => x.id === id) ?? null,
+                  find: (id) => readerTarget(id),
                   live: (id) => values[id],
                   /* a text reading a part gets the bare number: the % is the slider's own switch */
-                  text: (target, live, reader) => (reader ? readText(reader, readoutOf(target, live, lang, false)) : readoutOf(target, live, lang, false)),
+                  text: (target, live, reader) => {
+                    /* A part counting its own timer down is read as a clock, so a text bound to the
+                       container that closes in five minutes says 05:00 and counts down with it. */
+                    if (readsTimer(target)) {
+                      const left = countdownLeft(target.autoClose, (runtime.now - (autoSince.current[target.id] ?? shownAt.current)) / 1000) ?? 0;
+                      return reader ? readText(reader, clockText(left)) : clockText(left);
+                    }
+                    return reader ? readText(reader, readoutOf(target, live, lang, false)) : readoutOf(target, live, lang, false);
+                  },
                 }}
               />
             );
@@ -2087,6 +2114,8 @@ export function Preview({
   /* A screen's own state, so the current screen and every overlay page each get their own
      in-page overlay slot instead of sharing one. */
   const screenPropsFor = (f: Frame) => ({
+    /* a text bound to a part on another screen still counts: the timer belongs to the part */
+    targetOf: (id: string) => itemsOf(doc.groups).find((x) => x.id === id) ?? null,
     widths,
     p,
     onAction: go,
