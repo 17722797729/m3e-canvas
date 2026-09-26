@@ -4,7 +4,7 @@ import { contrastRatio } from "./color";
 import { itemNameOf } from "./flow";
 import { getLang, KIND_TEXT, t } from "./i18n";
 
-import { JOYSTICK_TRAVEL, CELL_DEF, CELL_MAX, CELL_MIN, COLS_MAX, ROWS_MAX, cellGap, cellOf, scrollContent, slotGrid, gridCells, cellBox, gridCheckZ, rulePatch, ruleFieldsFor, readoutOf, hasReadout, unitOf, mixText, readText, VALUE_TOKEN, hasValueToken, valueAfter, maxOf, clampMax, MAX_DEF, MAX_MAX, isValueOp, withGridCells, BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill, childShown, connectedButton, DIALOG_COLOR, childDrawn, badgeSurface, buttonScale, findItemIn, foldMargins, radiiOfRuns, roundByNature, runPartRadii, ROUND_SHAPES, foldPlace, foldShift, layoutOf, NO_FOLD, fitTabPanels, keepPanelSlots, liftAbove, isStateEffect, STATE_EFFECTS, START_LOOK, firstTapStep, firstDueStep, waitLeft, lookItem, lookAt, statesAsFlow, migrateFlows, hasTimedSteps, hasAutoClose, namePanels, rotOf, rotStyle, ROT_MAX, labelSideOf, isTabSide, tabShowsIcon, tabBadge, RAIL_CELL_MIN, RAIL_W, SIDE_RAIL_MIN, SIDE_RAIL_MAX, sideRailW, retiredTransition, TRANSITIONS, layerEntryOffset, panelBox, prizeChances, pickPrize, wheelSlice, wheelStopAngle, wheelIndexAt, gridRing, gridRingCells, joystickAngle, joystickKnob, isTabRow, isSideTabs, SIDE_TAB_W, syncTabPanels, foldOrphanPanels, drawnIds, isTabPanel, freshPanel, AUTO_HIDE_STEP, AUTO_CLOSE_DEF, RULE_ACTIONS, isRuleKind, fillColor, fillInk, TRANSPARENT, cardFillOf, type PartFlow, type PartLook, type PartStep, type MachineAt, NAV_ICON, NAV_INDICATOR, NAV_INDICATOR_R, NAV_LABEL_FONT, selectedAncestor, takesText, panelSlotFor, refillPanels, restorePanel, slotsOf, resizedChildren, needsTabPanels, tabIndexOf, tabPanelId, tabRenamePatch, tabPanelsPatch, tabStyleOf, TAB_PANEL_H, TAB_ROW_H, onToken, pageTintOf, PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type Kind, type ItemState, type PlacedItem, type Frame } from "./tokens";
+import { slotWin, secondLabel, manyOf,KIND_ORDER,CALENDAR_DAYS,calendarRows,calendarCell,defaultPrizes, JOYSTICK_TRAVEL, CELL_DEF, CELL_MAX, CELL_MIN, COLS_MAX, ROWS_MAX, cellGap, cellOf, scrollContent, slotGrid, gridCells, cellBox, gridCheckZ, rulePatch, ruleFieldsFor, readoutOf, hasReadout, unitOf, mixText, readText, VALUE_TOKEN, hasValueToken, valueAfter, maxOf, clampMax, MAX_DEF, MAX_MAX, isValueOp, withGridCells, BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill, childShown, connectedButton, DIALOG_COLOR, childDrawn, badgeSurface, buttonScale, findItemIn, foldMargins, radiiOfRuns, roundByNature, runPartRadii, ROUND_SHAPES, foldPlace, foldShift, layoutOf, NO_FOLD, fitTabPanels, keepPanelSlots, liftAbove, isStateEffect, STATE_EFFECTS, START_LOOK, firstTapStep, firstDueStep, waitLeft, lookItem, lookAt, statesAsFlow, migrateFlows, hasTimedSteps, hasAutoClose, namePanels, rotOf, rotStyle, ROT_MAX, labelSideOf, isTabSide, tabShowsIcon, tabBadge, RAIL_CELL_MIN, RAIL_W, SIDE_RAIL_MIN, SIDE_RAIL_MAX, sideRailW, retiredTransition, TRANSITIONS, layerEntryOffset, panelBox, prizeChances, pickPrize, wheelSlice, wheelStopAngle, wheelIndexAt, gridRing, gridRingCells, joystickAngle, joystickKnob, isTabRow, isSideTabs, SIDE_TAB_W, syncTabPanels, foldOrphanPanels, drawnIds, isTabPanel, freshPanel, AUTO_HIDE_STEP, AUTO_CLOSE_DEF, RULE_ACTIONS, isRuleKind, fillColor, fillInk, TRANSPARENT, cardFillOf, type PartFlow, type PartLook, type PartStep, type MachineAt, NAV_ICON, NAV_INDICATOR, NAV_INDICATOR_R, NAV_LABEL_FONT, selectedAncestor, takesText, panelSlotFor, refillPanels, restorePanel, slotsOf, resizedChildren, needsTabPanels, tabIndexOf, tabPanelId, tabRenamePatch, tabPanelsPatch, tabStyleOf, TAB_PANEL_H, TAB_ROW_H, onToken, pageTintOf, PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type Kind, type ItemState, type PlacedItem, type Frame } from "./tokens";
 
 afterEach(() => setGlobalShape("rounded")); // restore the module default
 
@@ -1810,5 +1810,55 @@ describe("the direction wheel", () => {
     expect(joystickKnob(0, r)).toEqual({ dx: 0, dy: -travel });
     expect(joystickKnob(90, r)).toEqual({ dx: travel, dy: 0 });
     expect(joystickKnob(0, r, false)).toEqual({ dx: 0, dy: 0 });
+  });
+});
+
+
+describe("the check-in calendar", () => {
+  it("lays the days out seven to a row", () => {
+    expect(calendarCell(1)).toEqual({ row: 0, col: 0 });
+    expect(calendarCell(7)).toEqual({ row: 0, col: 6 });
+    expect(calendarCell(8)).toEqual({ row: 1, col: 0 });
+    expect(calendarRows(CALENDAR_DAYS)).toBe(Math.ceil(CALENDAR_DAYS / 7));
+  });
+});
+
+describe("the added features", () => {
+  it("offers a capsule machine, a slot machine and a calendar under 功能", () => {
+    for (const kind of ["gacha", "slot", "calendar", "moneyTree", "eggSmash"] as const) {
+      expect(KIND_ORDER).toContain(kind);
+      expect(KIND_SPEC[kind].category).toBe("features");
+    }
+  });
+
+  it("gives a fresh machine the nine-prize pool", () => {
+    expect(defaultPrizes()).toHaveLength(9);
+    expect(makeItem("slot").prizes).toHaveLength(9);
+    expect(makeItem("gacha").prizes).toHaveLength(9);
+    expect(makeItem("moneyTree").prizes).toHaveLength(9);
+    expect(makeItem("eggSmash").prizes).toHaveLength(9);
+    /* the second button draws ten times until the author says otherwise */
+    expect(manyOf({})).toBe(10);
+    expect(manyOf({ many: 3 })).toBe(3);
+    expect(secondLabel({ kind: "gacha", many: 3 })).toContain("3");
+  });
+});
+
+
+describe("the slot machine's win", () => {
+  it("pays on three of a kind, and on two", () => {
+    expect(slotWin([2, 2, 2])).toBe(2);
+    expect(slotWin([1, 1, 4])).toBe(1);
+    expect(slotWin([3, 5, 3])).toBe(3);
+    expect(slotWin([4, 5, 4])).toBe(4);
+    expect(slotWin([0, 1, 2])).toBe(-1);
+  });
+});
+
+describe("the capsule machine's second button", () => {
+  it("says ten at once until the author writes something else", () => {
+    const it = makeItem("gacha");
+    expect(secondLabel(it).length).toBeGreaterThan(0);
+    expect(secondLabel({ ...it, label2: "再来十个" })).toBe("再来十个");
   });
 });

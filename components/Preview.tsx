@@ -5,6 +5,10 @@ import type { Item } from "@/lib/tokens";
 import { AnimatePresence, animate, motion, useMotionValue, useTransform, useReducedMotion, useIsPresent } from "motion/react";
 import type { TargetAndTransition, Variants } from "motion/react";
 import {
+  manyOf,
+  slotWin,
+  prizeLabel,
+  CALENDAR_DAYS,
   JOYSTICK_TRAVEL,
   joystickAngle,
   defaultPrizes,
@@ -203,14 +207,19 @@ const navKeyOf = (it: Item) => `nav:${it.kind}:${(it.tabs ?? []).map((t) => t.la
 /** The kinds whose value a visitor changes: a slider to scrub, a stepper to walk, a slider field to
  *  do both. One list, because a part of one of these kinds has to answer the same way wherever it
  *  stands — on the screen, inside a container, or inside a dialog panel. */
-const VALUE_KINDS: Kind[] = ["slider", "stepper", "progressBar", "linearProgress", "circularProgress", "joystick"];
+const VALUE_KINDS: Kind[] = ["slider", "stepper", "progressBar", "linearProgress", "circularProgress", "joystick", "calendar"];
 const SCRUBS: Kind[] = ["slider"];
 const STEPS: Kind[] = ["stepper"];
 /** the pad, whose knob is dragged anywhere inside it, and the two draws, which are tapped */
 const PADS: Kind[] = ["joystick"];
-const DRAWS: Kind[] = ["wheel", "gridWheel"];
+const DRAWS: Kind[] = ["wheel", "gridWheel", "gacha", "slot", "moneyTree", "eggSmash"];
+/** the two parts whose second button draws ten at once */
+const TENS: Kind[] = ["gacha", "moneyTree"];
+/** the check-in calendar, whose tap signs the next day in */
+const SIGNS: Kind[] = ["calendar"];
 /** How long a draw takes, and how many whole turns the round wheel makes on the way. */
 const SPIN_MS = 2600;
+/** how many days a check-in calendar holds */
 const SPIN_TURNS = 5;
 /** The highlight steps round the pool about this often at the start, slowing towards the end. */
 const SPIN_STEPS = 26;
@@ -306,6 +315,7 @@ function Tappable({
   checkOf,
   liveValue,
   wheelOf,
+  reelsOf,
   onSpin,
   onSet,
   setValue,
@@ -326,6 +336,8 @@ function Tappable({
   liveValue?: (it: Item) => number | undefined;
   /** what a prize wheel is showing while it spins */
   wheelOf?: (id: string) => WheelRun | undefined;
+  /** the three symbols a slot machine shows */
+  reelsOf?: (id: string) => number[] | undefined;
   /** starts a prize wheel's draw */
   onSpin?: (it: Item) => void;
   /** A control inside the part asking for a value of its own: the box and the buttons of a stepper */
@@ -347,7 +359,7 @@ function Tappable({
   childMenu?: (id: string, open: boolean) => void;
   /** which part's dropdown menu is the open one: a menu inside a container opens like any other */
   menuOpenId?: string | null;
-  onTap?: () => void;
+  onTap?: (e?: React.MouseEvent) => void;
   /** passed down so a part inside a container can open a screen of its own */
   onAction?: (a: Action) => void;
   /** and flip itself like any other toggle */
@@ -733,7 +745,7 @@ function Tappable({
                  came to slide while the dialog it was meant to open only appeared. */
               const took = states?.onStep(view.id, view.flow, view.id) ?? "none";
               if (SHAPED.includes(view.kind)) states?.onActivate(view.id);
-              if (took !== "moved") onTap?.();
+              if (took !== "moved") onTap?.(e);
             }
       }
       style={{
@@ -754,7 +766,7 @@ function Tappable({
     >
       {/* the controls inside a part — a stepper's buttons, a slider field's number — reach the value
           through this, so a part works the same on a screen and inside a dialog panel */}
-      <ValueContext.Provider value={{ onSet, wheel: wheelOf }}>
+      <ValueContext.Provider value={{ onSet, wheel: wheelOf, reels: reelsOf }}>
       <M3Node
         item={view}
         palette={p}
@@ -949,7 +961,10 @@ function Screen({
   runtime,
   dialog,
   wheelOf,
+  reelsOf,
   onSpin,
+  onDraw,
+  onSignIn,
   scrollRt,
   onRule,
 }: {
@@ -974,6 +989,12 @@ function Screen({
   /** what a prize wheel is showing while it spins, and how a draw is started */
   wheelOf?: (id: string) => WheelRun | undefined;
   onSpin?: (it: Item) => void;
+  /** starts a draw of one or of ten, from whichever button was tapped */
+  onDraw?: (it: Item, many: boolean) => void;
+  /** the three symbols a slot machine shows */
+  reelsOf?: (id: string) => number[] | undefined;
+  /** signs the next day of a check-in calendar */
+  onSignIn?: (it: Item) => void;
   /** the live scroll of the containers on this screen */
   scrollRt?: ScrollRuntime;
   /** runs one rule action: what a timed rule does when its wait is over */
@@ -1324,8 +1345,18 @@ function Screen({
             };
             if (it.slotFlows && it.tabs?.length) shown = { ...shown, tabs: it.tabs.map(tabLook) };
             const tap =
-              DRAWS.includes(it.kind)
+              TENS.includes(it.kind)
+                ? (e?: React.MouseEvent) => {
+                    /* the two buttons sit along the foot of the machine: the right-hand one draws ten */
+                    const el = e?.currentTarget as HTMLElement | undefined;
+                    const r = el?.getBoundingClientRect();
+                    const many = !!r && !!e && e.clientY - r.top > r.height * 0.6 && e.clientX - r.left > r.width / 2;
+                    onDraw?.(it, many);
+                  }
+                : DRAWS.includes(it.kind)
                 ? () => onSpin?.(it)
+                : SIGNS.includes(it.kind)
+                ? () => onSignIn?.(it)
                 : act || flips(it) || it.flow
                 ? () => {
                     if (flips(it)) onFlip(it.id);
@@ -1360,7 +1391,7 @@ function Screen({
                 childSlot={pickSlot}
                 childMenu={(id, open) => setMenuId(open ? id : null)}
                 menuOpenId={menuId}
-                onValue={VALUE_KINDS.includes(it.kind) ? (v) => onValue(it.id, v) : undefined}
+                onValue={SCRUBS.includes(it.kind) || PADS.includes(it.kind) ? (v) => onValue(it.id, v) : undefined}
                 wheelOf={wheelOf}
                 onSpin={onSpin}
                 onSet={STEPS.includes(it.kind) ? (v) => onValue(it.id, v) : undefined}
@@ -1480,16 +1511,32 @@ export function Preview({
   const [dialogs, setDialogs] = useState<Record<string, string | null>>({});
   /** what each prize wheel is showing while a draw runs, and the prize a finished draw won */
   const [runs, setRuns] = useState<Record<string, WheelRun>>({});
-  const [won, setWon] = useState<{ id: string; label: string; icon?: string | null } | null>(null);
+  const [won, setWon] = useState<{ id: string; label: string; icon?: string | null; list?: { label: string; icon?: string | null }[] } | null>(null);
+  /** the three symbols a slot machine is showing, while a draw runs */
+  const [reels, setReels] = useState<Record<string, number[]>>({});
   const runRef = useRef<Record<string, number>>({});
   /** Spins a wheel: the disc turns to the winning wedge, the highlight runs round the pool, and the
    *  prize is named when it stops. Which prize comes up is drawn on the weights the author set. */
+  const signIn = useCallback((it: Item) => {
+    const day = Math.min(CALENDAR_DAYS, (values[it.id] ?? it.value ?? 0) + 1);
+    setValues((v) => ({ ...v, [it.id]: day }));
+    setWon({ id: it.id, label: String(day), icon: "calendar_month" });
+  }, [values]);
+
   const spin = useCallback((it: Item) => {
     const prizes = it.prizes && it.prizes.length ? it.prizes : defaultPrizes();
     if (runRef.current[it.id] !== undefined) return;
-    const index = pickPrize(prizes, Math.random());
     const n = prizes.length;
-    const angle = it.kind === "wheel" ? wheelStopAngle(index, n, SPIN_TURNS) : 0;
+    /* A slot machine rolls each of its three reels on its own and pays out when two or three agree;
+       everything else draws a single prize. A capsule machine's second button draws ten at once. */
+    const rolls = it.kind === "slot" ? [pickPrize(prizes, Math.random()), pickPrize(prizes, Math.random()), pickPrize(prizes, Math.random())] : [];
+    const many = TENS.includes(it.kind) && ten.current.has(it.id);
+    const drawn = many ? Array.from({ length: manyOf(it) }, () => pickPrize(prizes, Math.random())) : [];
+    const wonIndex = it.kind === "slot" ? slotWin(rolls) : many ? -1 : pickPrize(prizes, Math.random());
+    const blank = -1;
+    const index = it.kind === "slot" ? (wonIndex >= 0 ? wonIndex : blank) : many ? blank : wonIndex;
+    const angle = it.kind === "wheel" ? wheelStopAngle(pickPrize(prizes, Math.random()), n, SPIN_TURNS) : it.kind === "eggSmash" ? 62 : 0;
+    if (it.kind === "slot") setReels((r) => ({ ...r, [it.id]: rolls }));
     setRuns((r) => ({ ...r, [it.id]: { angle: 0, lit: index, ms: 0 } }));
     const started = performance.now();
     /* the first frame lays the wheel down where it starts, the next one sends it on its way, so the
@@ -1506,7 +1553,30 @@ export function Preview({
           return;
         }
         delete runRef.current[it.id];
+        ten.current.delete(it.id);
         setRuns((r) => ({ ...r, [it.id]: { angle, lit: index, ms: SPIN_MS } }));
+        if (it.kind === "slot") {
+          /* the three symbols stay on the reels, and the dialog names what they paid out */
+          setReels((r) => ({ ...r, [it.id]: rolls }));
+          const win = wonIndex >= 0 ? prizes[wonIndex] : undefined;
+          setWon({ id: it.id, label: prizeLabel(win), icon: win?.icon ?? "sentiment_dissatisfied" });
+          return;
+        }
+        if (it.kind === "eggSmash") {
+          setValues((v) => ({ ...v, [it.id]: Math.min(n, (v[it.id] ?? it.value ?? 0) + 1) }));
+        }
+        if (many) {
+          /* ten draws of the same prize are one line with a count: "first prize ×2" */
+          const folded: { label: string; icon?: string | null; n: number }[] = [];
+          for (const at of drawn) {
+            const label = prizeLabel(prizes[at]);
+            const seen = folded.find((f) => f.label === label);
+            if (seen) seen.n += 1;
+            else folded.push({ label, icon: prizes[at]?.icon ?? null, n: 1 });
+          }
+          setWon({ id: it.id, label: "", icon: "toys", list: folded.map((f) => ({ label: f.n > 1 ? `${f.label} ×${f.n}` : f.label, icon: f.icon })) });
+          return;
+        }
         setWon({ id: it.id, label: prizes[index]?.label ?? "", icon: prizes[index]?.icon ?? null });
       };
       runRef.current[it.id] = requestAnimationFrame(tick);
@@ -1840,6 +1910,17 @@ export function Preview({
     [runRuleAction],
   );
   /** Takes the step a tap calls for, when the machine has one for the look the part is in. */
+  /** the parts whose next draw is the ten-at-once one, and the two buttons that start one */
+  const ten = useRef(new Set<string>());
+  const draw = useCallback(
+    (it: Item, many: boolean) => {
+      if (many) ten.current.add(it.id);
+      else ten.current.delete(it.id);
+      spin(it);
+    },
+    [spin],
+  );
+
   const stepOnTap = useCallback(
     (key: string, flow: PartFlow | undefined, owner: string | null): "none" | "look" | "moved" => {
       const step = firstTapStep(flow, lookAt(at, key));
@@ -2015,7 +2096,10 @@ export function Preview({
     onValue: writeValue,
     runtime: { at, pinned, now, onStep: stepOnTap, take, activeId, onActivate: setActiveId },
     wheelOf: (id: string) => runs[id],
+    reelsOf: (id: string) => reels[id],
     onSpin: spin,
+    onDraw: draw,
+    onSignIn: signIn,
     onRule: runRuleAction,
     /* a container's scroll is a runtime value like a slider's position: what the visitor moved it
        to is remembered per part, and the screen's own swipe gives way to a drag a container claims */
@@ -2168,9 +2252,9 @@ export function Preview({
                     left: "50%",
                     top: "50%",
                     transform: "translate(-50%, -50%)",
-                    minWidth: 220,
-                    maxWidth: "80%",
-                    padding: "22px 20px 14px",
+                    minWidth: 260,
+                    maxWidth: "94%",
+                    padding: "22px 18px 14px",
                     borderRadius: 28,
                     background: p.surfaceContainerHigh,
                     color: p.onSurface,
@@ -2185,9 +2269,20 @@ export function Preview({
                 >
                   <span style={{ fontSize: 13, fontWeight: 600, color: p.onSurfaceVariant }}>{t("wonPrize", lang)}</span>
                   {won.icon && <Icon name={won.icon} size={40} color={p.primary} />}
-                  <span data-won-label={won.label} style={{ fontSize: 20, fontWeight: 700, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {won.label}
-                  </span>
+                  {won.list ? (
+                    <div data-won-list={won.list.length} style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 6, width: "100%" }}>
+                      {won.list.map((pr, i) => (
+                        <span key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", gap: 3, padding: "6px 4px", borderRadius: 12, background: p.surfaceContainerHighest, fontSize: 11, fontWeight: 600, minWidth: 0, lineHeight: 1.15, wordBreak: "break-word" }}>
+                          {pr.icon && <Icon name={pr.icon} size={20} />}
+                          <span style={{ maxWidth: "100%", whiteSpace: "normal", textAlign: "center" }}>{pr.label}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span data-won-label={won.label} style={{ fontSize: 20, fontWeight: 700, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {won.label}
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={() => setWon(null)}

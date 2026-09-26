@@ -64,6 +64,13 @@ import {
   wheelSlice,
   gridRingCells,
   gridEdgeCells,
+  GACHA_W,
+  GACHA_H,
+  CALENDAR_DAYS,
+  CALENDAR_W,
+  CALENDAR_COLS,
+  calendarRows,
+  secondLabel,
   gridRing,
   defaultPrizes,
   prizeLabel,
@@ -642,6 +649,8 @@ export function GridCellMarks({
 export type WheelRun = { angle: number; lit: number; ms: number };
 export const ValueContext = createContext<{
   onSet?: (v: number) => void;
+  /** the three symbols a slot machine is showing */
+  reels?: (id: string) => number[] | undefined;
   /** what a prize wheel is doing right now: how far its disc has turned, which prize is lit, and how
    *  long the turn takes. Absent on the canvas, where a wheel is drawn at rest. */
   wheel?: (id: string) => WheelRun | undefined;
@@ -649,6 +658,7 @@ export const ValueContext = createContext<{
 const useValueControls = () => useContext(ValueContext);
 /** What a prize wheel is doing, if it is spinning at all. */
 const useWheelRun = () => useContext(ValueContext).wheel;
+const useReels = () => useContext(ValueContext).reels;
 
 /** The value a slider, a slider field or a stepper stands at: what the author set, 0 when unset —
  *  clamped to the part's own range, so a slider that runs to ten thousand is read on its own scale. */
@@ -1977,6 +1987,328 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
               {item.label.trim() || "抽奖"}
             </div>
           )}
+        </div>
+      );
+    }
+
+    case "gacha": {
+      // eslint-disable-next-line react-hooks/rules-of-hooks
+      const wheelOf = useWheelRun();
+      /* A capsule machine: a glass dome of capsules, a knob that turns, and the prize named when it
+         stops. The knob's turn is the run the preview sends, and the lit capsule is the prize it is
+         passing. */
+      const prizes = item.prizes && item.prizes.length ? item.prizes : defaultPrizes();
+      const run = wheelOf?.(item.id);
+      const lit = run?.lit ?? -1;
+      const w = item.size ?? GACHA_W;
+      const h = item.size2 ?? GACHA_H;
+      const dome = Math.round(Math.min(w * 0.74, h * 0.5));
+      return (
+        <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", padding: 8, boxSizing: "border-box", gap: 6 }}>
+          <div
+            style={{
+              position: "relative",
+              width: dome,
+              height: dome,
+              borderRadius: "50%",
+              background: p.surfaceContainerLow,
+              border: `3px solid ${p.outlineVariant}`,
+              overflow: "hidden",
+            }}
+          >
+            {Array.from({ length: Math.min(12, Math.max(6, prizes.length * 2)) }, (_, i) => {
+              const on = i % Math.max(1, prizes.length) === lit;
+              const a = (i / 12) * Math.PI * 2 + (run ? Math.sin((run.lit + i) * 1.7) * 0.9 : 0);
+              const rad = dome / 2;
+              return (
+                <span
+                  key={i}
+                  style={{
+                    position: "absolute",
+                    left: `calc(50% + ${Math.round(Math.cos(a) * rad * (run ? 0.36 + (i % 3) * 0.06 : 0.45))}px)`,
+                    top: `calc(50% + ${Math.round(Math.sin(a) * rad * (run ? 0.36 + (i % 3) * 0.06 : 0.45))}px)`,
+                    width: Math.max(10, Math.round(dome * 0.16)),
+                    height: Math.max(10, Math.round(dome * 0.16)),
+                    marginLeft: -Math.round(Math.max(10, dome * 0.16) / 2),
+                    marginTop: -Math.round(Math.max(10, dome * 0.16) / 2),
+                    borderRadius: "50%",
+                    background: on ? p.primaryContainer : i % 2 ? p.tertiaryContainer : p.secondaryContainer,
+                  }}
+                />
+              );
+            })}
+          </div>
+          <div style={{ width: "100%", flex: 1, minHeight: 0, borderRadius: 12, background: p.surfaceContainerHigh, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: 6, boxSizing: "border-box", position: "relative", overflow: "hidden" }}>
+            <span
+              data-gacha-knob=""
+              style={{
+                width: Math.max(28, Math.round(w * 0.22)),
+                height: Math.max(28, Math.round(w * 0.22)),
+                borderRadius: "50%",
+                background: p.primary,
+                color: p.onPrimary,
+                display: "grid",
+                placeItems: "center",
+                transform: `rotate(${run ? (run.lit + 1) * 40 : 0}deg)`,
+                transition: run ? "transform 120ms linear" : undefined,
+              }}
+            >
+              <Icon name="rotate_right" size={Math.max(16, Math.round(w * 0.1))} />
+            </span>
+            <div style={{ display: "flex", gap: 6, width: "100%" }}>
+              {[{ text: item.label.trim(), many: false }, { text: secondLabel(item), many: true }].map((b, i) => (
+                <span
+                  key={i}
+                  data-gacha-button={b.many ? "ten" : "one"}
+                  style={{ flex: 1, minWidth: 0, height: Math.max(24, Math.round(h * 0.14)), borderRadius: 12, background: i === 0 ? p.primary : p.secondaryContainer, color: i === 0 ? p.onPrimary : p.onSecondaryContainer, display: "grid", placeItems: "center", fontSize: 11, fontWeight: 700, overflow: "hidden", whiteSpace: "nowrap" }}
+                >
+                  {b.text}
+                </span>
+              ))}
+            </div>
+            {lit >= 0 && prizes[lit] && (
+              <span data-gacha-prize={prizes[lit].label} style={{ position: "absolute", right: 8, bottom: 6, fontSize: 11, fontWeight: 700, color: p.primary }}>{prizeLabel(prizes[lit])}</span>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    case "eggSmash": {
+      // eslint-disable-next-line react-hooks/rules-of-hooks
+      const wheelOf = useWheelRun();
+      /* A row of golden eggs under a hammer: a tap swings the hammer down, the egg it lands on
+         cracks, and the prize it held comes up in the dialog. The cracked eggs are the part's own
+         value, so the canvas shows what the author left and the preview adds to it. */
+      const prizes = item.prizes && item.prizes.length ? item.prizes : defaultPrizes();
+      const run = wheelOf?.(item.id);
+      const n = Math.min(6, Math.max(3, prizes.length));
+      const smashed = clampValue(item.value ?? 0, n);
+      const w = item.size ?? 260;
+      const h = item.size2 ?? 200;
+      return (
+        <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", padding: 8, boxSizing: "border-box", gap: 6 }}>
+          <span
+            data-egg-hammer=""
+            style={{
+              position: "absolute",
+              left: "50%",
+              top: 4,
+              marginLeft: -Math.round(w * 0.06),
+              width: Math.round(w * 0.12),
+              height: Math.round(h * 0.42),
+              transformOrigin: "50% 90%",
+              transform: `rotate(${run ? 62 : 0}deg)`,
+              transition: run ? "transform 900ms cubic-bezier(0.4, 0, 0.2, 1)" : undefined,
+              display: "grid",
+              placeItems: "center",
+              color: p.onSurfaceVariant,
+            }}
+          >
+            <Icon name="hardware" size={Math.max(18, Math.round(w * 0.09))} />
+          </span>
+          <div style={{ display: "flex", gap: 6, alignItems: "flex-end", justifyContent: "center" }}>
+            {Array.from({ length: n }, (_, i) => {
+              const broken = i < smashed;
+              return (
+                <span
+                  key={i}
+                  data-egg={i}
+                  data-egg-broken={broken ? "" : undefined}
+                  style={{
+                    position: "relative",
+                    width: Math.round(w / n) - 8,
+                    height: Math.round(h * 0.4),
+                    borderRadius: "50% 50% 45% 45% / 60% 60% 40% 40%",
+                    background: broken ? p.surfaceContainerHigh : "#ffd54f",
+                    border: `2px solid ${p.outlineVariant}`,
+                    display: "grid",
+                    placeItems: "center",
+                    color: "#7a5c00",
+                    fontSize: Math.max(10, Math.round(w / n * 0.22)),
+                    fontWeight: 700,
+                    overflow: "hidden",
+                  }}
+                >
+                  {broken ? (
+                    <span style={{ display: "grid", placeItems: "center", color: p.outline }}>
+                      <Icon name="egg_alt" size={Math.round(w / n * 0.4)} />
+                    </span>
+                  ) : (
+                    "?"
+                  )}
+                </span>
+              );
+            })}
+          </div>
+          <div style={{ textAlign: "center", fontSize: 12, fontWeight: 700, color: p.onSurfaceVariant, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label.trim()}</div>
+        </div>
+      );
+    }
+
+    case "moneyTree": {
+      // eslint-disable-next-line react-hooks/rules-of-hooks
+      const wheelOf = useWheelRun();
+      /* A tree of coins: it shakes while a draw runs — every coin shifted by the run the preview
+         sends — and the two buttons along its foot draw one or ten. */
+      const prizes = item.prizes && item.prizes.length ? item.prizes : defaultPrizes();
+      const run = wheelOf?.(item.id);
+      const lit = run?.lit ?? -1;
+      const w = item.size ?? 190;
+      const h = item.size2 ?? 220;
+      const coins = Math.min(14, Math.max(6, prizes.length + 3));
+      return (
+        <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", flexDirection: "column", padding: 8, boxSizing: "border-box", gap: 6 }}>
+          <div
+            data-tree-canopy=""
+            style={{
+              position: "relative",
+              flex: 1,
+              minHeight: 0,
+              /* shaken, not turned: the whole crown swings while a draw runs */
+              transform: run ? `translateX(${(Math.sin(run.lit * 2.4) * w * 0.035).toFixed(1)}px) rotate(${(Math.sin(run.lit * 2.4) * 1.6).toFixed(1)}deg)` : undefined,
+              transition: run ? "transform 90ms linear" : undefined,
+              transformOrigin: "50% 90%",
+            }}
+          >
+            <span style={{ position: "absolute", left: "50%", bottom: 0, width: Math.max(10, Math.round(w * 0.1)), height: "38%", marginLeft: -Math.round(Math.max(10, w * 0.1) / 2), borderRadius: 6, background: "#8d6e63" }} />
+            {Array.from({ length: coins }, (_, i) => {
+              const a = (i / coins) * Math.PI * 2;
+              const jiggle = run ? Math.sin((run.lit + i) * 1.9) * 0.08 : 0;
+              const r = 0.3 + jiggle + (i % 3) * 0.07;
+              const s = Math.max(12, Math.round(Math.min(w, h) * 0.13));
+              return (
+                <span
+                  key={i}
+                  data-tree-coin={i}
+                  style={{
+                    position: "absolute",
+                    left: `calc(50% + ${Math.round(Math.cos(a) * w * r * 0.5)}px)`,
+                    top: `calc(38% + ${Math.round(Math.sin(a) * w * r * 0.5)}px)`,
+                    width: s,
+                    height: s,
+                    marginLeft: -Math.round(s / 2),
+                    marginTop: -Math.round(s / 2),
+                    borderRadius: "50%",
+                    background: i % Math.max(1, prizes.length) === lit ? p.primaryContainer : "#ffd54f",
+                    border: `2px solid ${p.outlineVariant}`,
+                    display: "grid",
+                    placeItems: "center",
+                    color: "#7a5c00",
+                    fontSize: Math.round(s * 0.5),
+                    fontWeight: 700,
+                  }}
+                >
+                  ¥
+                </span>
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[{ text: item.label.trim(), many: false }, { text: secondLabel(item), many: true }].map((b, i) => (
+              <span
+                key={i}
+                data-gacha-button={b.many ? "ten" : "one"}
+                style={{ flex: 1, minWidth: 0, height: Math.max(24, Math.round(h * 0.14)), borderRadius: 12, background: i === 0 ? p.primary : p.secondaryContainer, color: i === 0 ? p.onPrimary : p.onSecondaryContainer, display: "grid", placeItems: "center", fontSize: 11, fontWeight: 700, overflow: "hidden", whiteSpace: "nowrap" }}
+              >
+                {b.text}
+              </span>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    case "slot": {
+      // eslint-disable-next-line react-hooks/rules-of-hooks
+      const wheelOf = useWheelRun();
+      // eslint-disable-next-line react-hooks/rules-of-hooks
+      const reelsOf = useReels();
+      /* Three reels and a lever: the reels flick through the pool while the draw runs and stop on the
+         prize it landed on, all three showing it. */
+      const prizes = item.prizes && item.prizes.length ? item.prizes : defaultPrizes();
+      const run = wheelOf?.(item.id);
+      const win = run?.lit ?? -1;
+      const reels = reelsOf?.(item.id);
+      const shownAt = (i: number) => {
+        const at = reels ? reels[i] : run ? run.lit + i : 0;
+        return prizes[((at % prizes.length) + prizes.length) % prizes.length];
+      };
+      return (
+        <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", flexDirection: "column", gap: 6, padding: 8, boxSizing: "border-box" }}>
+          <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 6 }}>
+            {[0, 1, 2].map((i) => (
+              <div key={i} data-slot-reel={i} style={{ flex: 1, minWidth: 0, borderRadius: 10, background: p.surfaceContainerLow, border: `2px solid ${p.outlineVariant}`, display: "grid", placeItems: "center", color: p.onSurface, overflow: "hidden", fontSize: 20 }}>
+                {(() => {
+                  const pr = shownAt(i);
+                  return (
+                    <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 2, maxWidth: "100%", overflow: "hidden" }}>
+                      {pr?.icon && <Icon name={pr.icon} size={22} />}
+                      <span style={{ fontSize: 11, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>{prizeLabel(pr)}</span>
+                    </span>
+                  );
+                })()}
+              </div>
+            ))}
+          </div>
+          <div style={{ height: 24, borderRadius: 12, background: p.primary, color: p.onPrimary, display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, overflow: "hidden" }}>
+            {item.label.trim()}
+          </div>
+        </div>
+      );
+    }
+
+    case "calendar": {
+      /* A month of days with the ones already signed in the primary colour: the visitor's own count
+         is the part's value, so the canvas shows what the author left and the preview counts on. */
+      const days = CALENDAR_DAYS;
+      const signed = clampValue(item.value ?? 0, days);
+      const rows = calendarRows(days);
+      return (
+        <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", flexDirection: "column", gap: 6, padding: 8, boxSizing: "border-box" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12, fontWeight: 700, color: p.onSurface }}>
+            <span>{item.label.trim()}</span>
+            <span data-calendar-count={signed} style={{ color: p.primary }}>{`${signed}/${days}`}</span>
+          </div>
+          <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateRows: `repeat(${rows}, 1fr)`, gridTemplateColumns: `repeat(${CALENDAR_COLS}, 1fr)`, gap: 3 }}>
+            {Array.from({ length: rows * CALENDAR_COLS }, (_, i) => {
+              const day = i + 1;
+              /* the day's number scales with the calendar, so the tick on it can too */
+              const fontSize = Math.max(10, Math.round((item.size ?? CALENDAR_W) / 26));
+              const on = day <= signed;
+              const today = day === signed + 1 && signed < days;
+              return (
+                <div
+                  key={i}
+                  data-calendar-day={day <= days ? day : undefined}
+                  data-calendar-signed={on ? "" : undefined}
+                  style={{
+                    display: "grid",
+                    placeItems: "center",
+                    borderRadius: 8,
+                    fontSize,
+                    fontWeight: on || today ? 700 : 500,
+                    background: on ? p.primary : today ? p.primaryContainer : i % 2 ? p.surfaceContainerLow : p.surfaceContainerHigh,
+                    color: on ? p.onPrimary : today ? p.onPrimaryContainer : day <= days ? p.onSurfaceVariant : "transparent",
+                    outline: today ? `2px solid ${p.primary}` : undefined,
+                  }}
+                >
+                  {day <= days && (
+                    /* a signed day keeps its number and wears the tick across it, the way a wall
+                       calendar is crossed off */
+                    <span style={{ position: "relative", display: "grid", placeItems: "center", width: "100%", height: "100%" }}>
+                      <span style={{ opacity: on ? 0.45 : 1 }}>{day}</span>
+                      {on && (
+                        <span data-calendar-tick="" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: p.onPrimary }}>
+                          <Icon name="check" size={Math.max(14, Math.round(fontSize * 1.6))} />
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       );
     }

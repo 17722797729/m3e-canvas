@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  manyOf,
+  MANY_MIN,
+  MANY_MAX,
+  secondLabel,
   blankPrizeLabel,
   defaultPrizes,
   prizeChances,
@@ -1242,6 +1246,13 @@ export function Inspector({
         </Section>
       )}
 
+      {(item.kind === "gacha" || item.kind === "moneyTree") && !editOn && (
+        <Section id="gacha" icon="toys" title={t("gachaTen", lang)} p={p}>
+          <Field value={item.label2 ?? ""} onChange={(label2) => onChange({ label2 })} placeholder={secondLabel(item)} p={p} icon="label" height={40} />
+          <Slider icon="pin" title={t("manyCount", lang)} value={manyOf(item)} min={MANY_MIN} max={MANY_MAX} step={1} onChange={(many) => onChange({ many })} p={p} />
+        </Section>
+      )}
+
       {item.kind === "joystick" && !editOn && (
         <Section id="joystick" icon="gamepad" title={t("joystickReturn", lang)} p={p}>
           <Toggle on={item.joystickReturn !== false} onChange={(on) => onChange({ joystickReturn: on })} p={p} icon="center_focus_strong" label={t("joystickReturn", lang)} grow />
@@ -1262,10 +1273,15 @@ export function Inspector({
             <div style={{ fontSize: 12, lineHeight: 1.6, color: p.onSurfaceVariant, padding: "0 6px 10px" }}>{t("prizeHint", lang)}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {prizes.map((pr: Prize, i: number) => (
-                <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", padding: "6px 8px", borderRadius: 12, background: p.surfaceContainerLow }}>
+                /* One prize — its icon, its words, its weight and the odds those work out to — and the
+                   icon picker opens *under* the row, the way a tab's does, instead of being squeezed
+                   in beside the fields where it could not be reached. */
+                <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6, padding: "6px 8px", borderRadius: 12, background: p.surfaceContainerLow }}>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   <button
                     type="button"
-                    onClick={() => { setPrizeSlot(prizeSlot === i ? null : i); setPrizePicker(false); }}
+                    onClick={() => { setPrizeSlot(prizeSlot === i ? null : i); setPrizePicker(!(prizeSlot === i && prizePicker)); }}
+                    aria-expanded={prizeSlot === i && prizePicker}
                     title={t("changeIcon", lang)}
                     aria-label={t("changeIcon", lang)}
                     className="m3-press"
@@ -1285,14 +1301,15 @@ export function Inspector({
                   />
                   <span data-prize-chance={chances[i]} style={{ width: 44, flex: "0 0 auto", textAlign: "right", fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, fontVariantNumeric: "tabular-nums" }}>{`${chances[i]}%`}</span>
                   <IconBtn icon="delete" p={p} danger title={t("removePrize", lang)} size={30} onClick={() => put(prizes.filter((_, j) => j !== i))} />
-                  {prizeSlot === i && prizePicker && (
-                    <IconPicker
-                      value={pr.icon || null}
-                      onChange={(icon) => setPrize(i, { icon })}
-                      onClose={() => setPrizePicker(false)}
-                      palette={p}
-                    />
-                  )}
+                </div>
+                {prizeSlot === i && prizePicker && (
+                  <IconPicker
+                    value={pr.icon || null}
+                    onChange={(icon) => setPrize(i, { icon })}
+                    onClose={() => setPrizePicker(false)}
+                    palette={p}
+                  />
+                )}
                 </div>
               ))}
             </div>

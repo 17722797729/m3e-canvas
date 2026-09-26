@@ -637,6 +637,11 @@ export type Kind =
   | "joystick"
   | "wheel"
   | "gridWheel"
+  | "gacha"
+  | "slot"
+  | "calendar"
+  | "moneyTree"
+  | "eggSmash"
   | "radio"
   | "badge";
 
@@ -685,7 +690,7 @@ export const CATEGORIES: { key: Category; label: string; icon: string }[] = [
   { key: "inputs", label: "Inputs", icon: "toggle_on" },
   { key: "content", label: "Content", icon: "notes" },
   { key: "progress", label: "Progress", icon: "progress_activity" },
-  { key: "features", label: "Added features", icon: "auto_awesome" },
+  { key: "features", label: "Features", icon: "auto_awesome" },
 ];
 
 export type KindSpec = {
@@ -735,6 +740,16 @@ export const SLIDER_VALUE_H = 64;
 export const JOYSTICK_SIZE = 132;
 export const WHEEL_SIZE = 220;
 export const GRID_WHEEL_SIZE = 240;
+/** the capsule machine, the slot machine and the check-in calendar */
+export const GACHA_W = 170;
+export const GACHA_H = 210;
+export const SLOT_W = 280;
+export const SLOT_H = 150;
+export const CALENDAR_W = 300;
+export const CALENDAR_H = 280;
+/** how many days a check-in calendar shows, and how many fit on one row */
+export const CALENDAR_DAYS = 30;
+export const CALENDAR_COLS = 7;
 /** How far the knob of a direction wheel travels from the middle, at the pad's default size. It is
  *  a share of the pad, so a bigger pad has a bigger travel and the pad keeps its look. */
 export const JOYSTICK_TRAVEL = 0.32;
@@ -1557,6 +1572,102 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     defIcon: null,
     defSize: WHEEL_SIZE,
   },
+  gacha: {
+    label: "Capsule machine",
+    noun: "ガチャ",
+    category: "features",
+    paletteIcon: "toys",
+    w: GACHA_W,
+    h: GACHA_H,
+    radius: 18,
+    hasVariant: false,
+    hasLabel: true,
+    hasSupporting: false,
+    hasIcon: false,
+    hasPrizes: true,
+    size: { min: 100, max: 320, step: 4, icon: "width", presets: [140, 170, 210] },
+    size2: { min: 120, max: 400, step: 4, icon: "height", presets: [180, 210, 250] },
+    defLabel: "扭一个",
+    defIcon: null,
+    defSize: GACHA_W,
+  },
+  eggSmash: {
+    label: "Golden eggs",
+    noun: "金の卵",
+    category: "features",
+    paletteIcon: "egg_alt",
+    w: 260,
+    h: 200,
+    radius: 18,
+    hasVariant: false,
+    hasLabel: true,
+    hasSupporting: false,
+    hasIcon: false,
+    hasPrizes: true,
+    hasValue: true,
+    size: { min: 160, max: 420, step: 4, icon: "width", presets: [220, 260, 320] },
+    size2: { min: 120, max: 380, step: 4, icon: "height", presets: [170, 200, 250] },
+    defLabel: "砸金蛋",
+    defIcon: null,
+    defSize: 260,
+  },
+  moneyTree: {
+    label: "Money tree",
+    noun: "金のなる木",
+    category: "features",
+    paletteIcon: "park",
+    w: 190,
+    h: 220,
+    radius: 18,
+    hasVariant: false,
+    hasLabel: true,
+    hasSupporting: false,
+    hasIcon: false,
+    hasPrizes: true,
+    size: { min: 120, max: 360, step: 4, icon: "width", presets: [160, 190, 240] },
+    size2: { min: 140, max: 420, step: 4, icon: "height", presets: [190, 220, 260] },
+    defLabel: "摇一摇",
+    defIcon: null,
+    defSize: 190,
+  },
+  slot: {
+    label: "Slot machine",
+    noun: "スロット",
+    category: "features",
+    paletteIcon: "casino",
+    w: SLOT_W,
+    h: SLOT_H,
+    radius: 18,
+    hasVariant: false,
+    hasLabel: true,
+    hasSupporting: false,
+    hasIcon: false,
+    hasPrizes: true,
+    size: { min: 120, max: 420, step: 4, icon: "width", presets: [220, 280, 340] },
+    size2: { min: 80, max: 260, step: 4, icon: "height", presets: [120, 150, 190] },
+    defLabel: "拉一下",
+    defIcon: null,
+    defSize: SLOT_W,
+  },
+  calendar: {
+    label: "Check-in calendar",
+    noun: "カレンダー",
+    category: "features",
+    paletteIcon: "calendar_month",
+    w: CALENDAR_W,
+    h: CALENDAR_H,
+    radius: 20,
+    hasVariant: false,
+    hasLabel: true,
+    hasSupporting: false,
+    hasIcon: false,
+    hasValue: true,
+    size: { min: 180, max: 420, step: 4, icon: "width", presets: [260, 300, 340] },
+    size2: { min: 180, max: 460, step: 4, icon: "height", presets: [240, 280, 320] },
+    defLabel: "签到",
+    defIcon: null,
+    defSize: CALENDAR_W,
+  },
   gridWheel: {
     label: "Grid prize wheel",
     noun: "四角ルーレット",
@@ -1619,6 +1730,11 @@ export const KIND_ORDER: Kind[] = [
   "circularProgress",
   "wheel",
   "gridWheel",
+  "gacha",
+  "slot",
+  "calendar",
+  "moneyTree",
+  "eggSmash",
 ];
 
 /* ---------- screen data ---------- */
@@ -1674,6 +1790,11 @@ export type Item = {
   textColor?: TextToken;
   /** on/off state for switches, checkboxes and chips */
   checked?: boolean;
+  /** the words of a second button, where a part offers two ways to draw (ten at once) */
+  label2?: string;
+
+  /** how many times that second button draws */
+  many?: number;
   /** a switch whose handle stays plain when on, without the check icon */
   noCheck?: boolean;
   /** 0..100 for sliders and determinate progress; undefined = indeterminate */
@@ -2348,7 +2469,15 @@ export function actionsOf(it: Item): { slot: string; action: Action }[] {
 }
 
 /** kinds a user can tap in the preview */
-export const TAPPABLE: Kind[] = ["button", "iconButton", "fab", "extendedFab", "chip", "listItem", "card", "image", "text", "splitButton", "radio", "wheel", "gridWheel"];
+export const TAPPABLE: Kind[] = ["button", "iconButton", "fab", "extendedFab", "chip", "listItem", "card", "image", "text", "splitButton", "radio", "wheel", "gridWheel", "gacha", "slot", "calendar", "moneyTree", "eggSmash"];
+
+/** Where each day of a check-in calendar sits: seven to a row, the way a month is printed. */
+export function calendarCell(day: number): { row: number; col: number } {
+  const i = Math.max(0, day - 1);
+  return { row: Math.floor(i / CALENDAR_COLS), col: i % CALENDAR_COLS };
+}
+/** How many rows a calendar of that many days takes. */
+export const calendarRows = (days: number = CALENDAR_DAYS) => Math.ceil(Math.max(1, days) / CALENDAR_COLS);
 
 /* ---------- the wheels, and the pad beside them ---------- */
 
@@ -2356,6 +2485,27 @@ export const TAPPABLE: Kind[] = ["button", "iconButton", "fab", "extendedFab", "
  *  written as weights rather than percentages: the wheel works out a share of the whole, so an author
  *  adding a prize never has to go back and re-add the others to a hundred. */
 export type Prize = { label: string; icon?: string | null; weight?: number };
+
+/** What the second button of a capsule machine says — "ten at once" unless the author writes
+ *  something else. */
+export const MANY_DEF = 10;
+export const MANY_MIN = 2;
+export const MANY_MAX = 50;
+export const manyOf = (it: { many?: number }) => Math.max(MANY_MIN, Math.min(MANY_MAX, Math.round(it.many ?? MANY_DEF)));
+export const secondLabel = (it: { kind: Kind; label2?: string; many?: number }) =>
+  (it.label2?.trim() || KIND_TEXT[getLang()][it.kind]?.label2 || "").replace("{n}", String(manyOf(it)));
+
+/** Which prize three reels have won: three of a kind beats two, and a row with no pair has won
+ *  nothing. `reels` are indexes into the pool; the answer is an index, or -1 for no win. */
+export function slotWin(reels: number[]): number {
+  const [a, b, c] = reels;
+  if (a === undefined) return -1;
+  if (a === b && b === c) return a;
+  if (a === b) return a;
+  if (b === c) return b;
+  if (a === c) return a;
+  return -1;
+}
 
 /** What a prize that says nothing shows: the pool's own "thanks for playing" entry, so a cell left
  *  blank on a square wheel — or a prize whose words the author cleared — reads as what it is. */
@@ -3392,7 +3542,8 @@ export function makeItem(kind: Kind): Item {
   if (s.defSize !== undefined) it.size = s.defSize;
   if (s.hasChecked) it.checked = kind !== "chip";
   /* a fresh wheel comes with a pool to draw from, and a pad with a full turn to point at */
-  if (kind === "wheel" || kind === "gridWheel") it.prizes = defaultPrizes();
+  if (kind === "wheel" || kind === "gridWheel" || kind === "gacha" || kind === "slot" || kind === "moneyTree" || kind === "eggSmash") it.prizes = defaultPrizes();
+  if (kind === "gacha" || kind === "moneyTree") it.label2 = "";
   if (kind === "joystick") it.max = 360;
   if (kind === "box") {
     it.size2 = 220;
@@ -3498,6 +3649,11 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
     case "wheel":
       return { w: n, h: it.size2 ?? n };
     case "gridWheel":
+    case "gacha":
+    case "slot":
+    case "calendar":
+    case "moneyTree":
+    case "eggSmash":
       return { w: n, h: it.size2 ?? s.h };
     case "text":
       return { w: widths[it.id] ?? 120, h: Math.round(n * 1.3) };

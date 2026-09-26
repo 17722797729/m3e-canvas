@@ -172,6 +172,7 @@ const validItem = (item: unknown): boolean =>
   (item.selected === undefined || Number.isFinite(item.selected)) &&
   (item.note === undefined || typeof item.note === "string") &&
   (item.joystickReturn === undefined || typeof item.joystickReturn === "boolean") &&
+  (item.many === undefined || (Number.isFinite(item.many) && (item.many as number) >= 2)) &&
   validPrizes(item.prizes) &&
   validTabs(item.tabs);
 
