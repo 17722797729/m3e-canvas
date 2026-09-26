@@ -135,6 +135,10 @@ const validItem = (item: unknown): boolean =>
   (item.gridCols === undefined || (Number.isFinite(item.gridCols) && (item.gridCols as number) >= 1)) &&
   (item.gridRows === undefined || (Number.isFinite(item.gridRows) && (item.gridRows as number) >= 1)) &&
   (item.checkboxes === undefined || typeof item.checkboxes === "boolean") &&
+  /* a board that shows item names: the switch and the words it draws, checked like the rest so a
+     document cannot turn a name into a number */
+  (item.cellNames === undefined || typeof item.cellNames === "boolean") &&
+  (item.cellText === undefined || typeof item.cellText === "string") &&
   (item.cellCol === undefined || Number.isFinite(item.cellCol)) &&
   (item.cellRow === undefined || Number.isFinite(item.cellRow)) &&
   (item.shows === undefined || typeof item.shows === "string") &&

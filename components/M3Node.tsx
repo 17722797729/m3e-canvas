@@ -82,7 +82,9 @@ import {
   fillColor,
   fillInk,
   slotGrid,
+  cellSlot,
   CELL_DEF,
+  CELL_NAME_FONT,
   gridCheckZ,
   cellRadius,
   panelRadius,
@@ -550,20 +552,60 @@ function ScrollLayer({
  * than the frame fits slides whole, the child frame included, which is what the author drew.
  */
 function GridPanel({ item, p, widths }: { item: Item; p: Palette; widths: Record<string, number> }) {
+  const lang = useLang();
   const g = slotGrid(item, widths);
+  /* the item name under a cell that holds something: what the author typed, or the kind's own
+     placeholder while the field is still empty, so the switch shows something the moment it is on */
+  const name = item.cellText?.trim() || t("cellItemName", lang);
   return (
-    <div
-      data-grid="panel"
-      style={{
-        position: "absolute",
-        left: g.panel.x,
-        top: g.panel.y,
-        width: g.panel.w,
-        height: g.panel.h,
-        borderRadius: panelRadius(),
-        background: p.surfaceContainerHighest,
-      }}
-    />
+    <>
+      <div
+        data-grid="panel"
+        style={{
+          position: "absolute",
+          left: g.panel.x,
+          top: g.panel.y,
+          width: g.panel.w,
+          height: g.panel.h,
+          borderRadius: panelRadius(),
+          background: p.surfaceContainerHighest,
+        }}
+      />
+      {/* an empty slot stays bare: a name labels an item, and a slot with nothing in it has none.
+          The words sit in the room the row pitch already keeps for them, so they never touch the
+          row below. */}
+      {g.nameH > 0 &&
+        (item.children ?? []).map((c) => {
+          const slot = cellSlot(c);
+          if (!slot || !c.children?.length) return null;
+          const at = g.cellAt(slot.col, slot.row);
+          return (
+            <span
+              key={c.id}
+              data-cell-name={c.id}
+              style={{
+                position: "absolute",
+                left: at.x,
+                top: at.y + g.cell,
+                width: g.cell,
+                height: g.nameH,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: CELL_NAME_FONT,
+                lineHeight: 1,
+                color: p.onSurfaceVariant,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                pointerEvents: "none",
+              }}
+            >
+              {name}
+            </span>
+          );
+        })}
+    </>
   );
 }
 

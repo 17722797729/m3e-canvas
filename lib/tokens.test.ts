@@ -4,7 +4,7 @@ import { contrastRatio } from "./color";
 import { itemNameOf } from "./flow";
 import { getLang, KIND_TEXT, t } from "./i18n";
 
-import { slotWin, secondLabel, manyOf, clockText, countdownLeft, readsTimer,KIND_ORDER,CALENDAR_DAYS,calendarRows,calendarCell,defaultPrizes, JOYSTICK_TRAVEL, CELL_DEF, CELL_MAX, CELL_MIN, COLS_MAX, ROWS_MAX, cellGap, cellOf, scrollContent, slotGrid, gridCells, cellBox, gridCheckZ, rulePatch, ruleFieldsFor, readoutOf, hasReadout, unitOf, mixText, readText, VALUE_TOKEN, hasValueToken, valueAfter, maxOf, clampMax, MAX_DEF, MAX_MAX, isValueOp, withGridCells, BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill, childShown, connectedButton, DIALOG_COLOR, childDrawn, badgeSurface, buttonScale, findItemIn, foldMargins, radiiOfRuns, roundByNature, runPartRadii, ROUND_SHAPES, foldPlace, foldShift, layoutOf, NO_FOLD, fitTabPanels, keepPanelSlots, liftAbove, isStateEffect, STATE_EFFECTS, START_LOOK, firstTapStep, firstDueStep, waitLeft, lookItem, lookAt, statesAsFlow, migrateFlows, hasTimedSteps, hasAutoClose, namePanels, rotOf, rotStyle, ROT_MAX, labelSideOf, isTabSide, tabShowsIcon, tabBadge, RAIL_CELL_MIN, RAIL_W, SIDE_RAIL_MIN, SIDE_RAIL_MAX, sideRailW, retiredTransition, TRANSITIONS, layerEntryOffset, panelBox, prizeChances, pickPrize, wheelSlice, wheelStopAngle, wheelIndexAt, gridRing, gridRingCells, joystickAngle, joystickKnob, isTabRow, isSideTabs, SIDE_TAB_W, syncTabPanels, foldOrphanPanels, drawnIds, isTabPanel, freshPanel, AUTO_HIDE_STEP, AUTO_CLOSE_DEF, RULE_ACTIONS, isRuleKind, fillColor, fillInk, TRANSPARENT, cardFillOf, type PartFlow, type PartLook, type PartStep, type MachineAt, NAV_ICON, NAV_INDICATOR, NAV_INDICATOR_R, NAV_LABEL_FONT, selectedAncestor, takesText, panelSlotFor, refillPanels, restorePanel, slotsOf, resizedChildren, needsTabPanels, tabIndexOf, tabPanelId, tabRenamePatch, tabPanelsPatch, tabStyleOf, TAB_PANEL_H, TAB_ROW_H, onToken, pageTintOf, PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type Kind, type ItemState, type PlacedItem, type Frame } from "./tokens";
+import { slotWin, secondLabel, manyOf, clockText, countdownLeft, readsTimer,KIND_ORDER,CALENDAR_DAYS,calendarRows,calendarCell,defaultPrizes, JOYSTICK_TRAVEL, CELL_DEF, CELL_MAX, CELL_MIN, CELL_NAME_H, GRID_PAD, GRID_PANEL_PAD, COLS_MAX, ROWS_MAX, cellGap, cellOf, scrollContent, slotGrid, gridCells, cellBox, gridCheckZ, rulePatch, ruleFieldsFor, readoutOf, hasReadout, unitOf, mixText, readText, VALUE_TOKEN, hasValueToken, valueAfter, maxOf, clampMax, MAX_DEF, MAX_MAX, isValueOp, withGridCells, BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill, childShown, connectedButton, DIALOG_COLOR, childDrawn, badgeSurface, buttonScale, findItemIn, foldMargins, radiiOfRuns, roundByNature, runPartRadii, ROUND_SHAPES, foldPlace, foldShift, layoutOf, NO_FOLD, fitTabPanels, keepPanelSlots, liftAbove, isStateEffect, STATE_EFFECTS, START_LOOK, firstTapStep, firstDueStep, waitLeft, lookItem, lookAt, statesAsFlow, migrateFlows, hasTimedSteps, hasAutoClose, namePanels, rotOf, rotStyle, ROT_MAX, labelSideOf, isTabSide, tabShowsIcon, tabBadge, RAIL_CELL_MIN, RAIL_W, SIDE_RAIL_MIN, SIDE_RAIL_MAX, sideRailW, retiredTransition, TRANSITIONS, layerEntryOffset, panelBox, prizeChances, pickPrize, wheelSlice, wheelStopAngle, wheelIndexAt, gridRing, gridRingCells, joystickAngle, joystickKnob, isTabRow, isSideTabs, SIDE_TAB_W, syncTabPanels, foldOrphanPanels, drawnIds, isTabPanel, freshPanel, AUTO_HIDE_STEP, AUTO_CLOSE_DEF, RULE_ACTIONS, isRuleKind, fillColor, fillInk, TRANSPARENT, cardFillOf, type PartFlow, type PartLook, type PartStep, type MachineAt, NAV_ICON, NAV_INDICATOR, NAV_INDICATOR_R, NAV_LABEL_FONT, selectedAncestor, takesText, panelSlotFor, refillPanels, restorePanel, slotsOf, resizedChildren, needsTabPanels, tabIndexOf, tabPanelId, tabRenamePatch, tabPanelsPatch, tabStyleOf, TAB_PANEL_H, TAB_ROW_H, onToken, pageTintOf, PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type Kind, type ItemState, type PlacedItem, type Frame } from "./tokens";
 
 afterEach(() => setGlobalShape("rounded")); // restore the module default
 
@@ -1487,6 +1487,45 @@ describe("the board a slot grid draws", () => {
     expect(last.x + short.cell).toBeLessThanOrEqual(short.panel.x + short.panel.w + 1);
     expect(last.y + short.cell).toBeLessThanOrEqual(short.panel.y + short.panel.h + 1);
     expect(short.count).toBe(short.cols * short.rows);
+  });
+
+  it("makes room for the item name under a cell, and lays the rows out around it", () => {
+    const bare = slotGrid(grid(), {});
+    const named = slotGrid(grid({ cellNames: true, cellText: "物品名" }), {});
+    expect(bare.nameH).toBe(0);
+    expect(named.nameH).toBe(CELL_NAME_H);
+    /* the interval between two rows is the author's own cell gap plus the name's height, which is
+       what keeps the words of one row off the cells of the next */
+    expect(bare.cellAt(0, 1).y - bare.cellAt(0, 0).y).toBe(bare.cell + bare.gap);
+    expect(named.cellAt(0, 1).y - named.cellAt(0, 0).y).toBe(named.cell + named.gap + CELL_NAME_H);
+    /* the columns are untouched: a name belongs under its cell, not beside it */
+    expect(named.cellAt(1, 0).x - named.cellAt(0, 0).x).toBe(bare.cellAt(1, 0).x - bare.cellAt(0, 0).x);
+    /* the last row's name stays on the board it sits on */
+    const last = named.cellAt(named.cols - 1, named.rows - 1);
+    expect(last.y + named.cell + named.nameH).toBeLessThanOrEqual(named.panel.y + named.panel.h + 1);
+    /* a board whose rows are pinned is exactly its rows, its gaps and a name under each */
+    const pinned = slotGrid(grid({ cellNames: true, gridRows: 3 }), {});
+    expect(pinned.boardH).toBe(3 * pinned.cell + 2 * pinned.gap + 3 * CELL_NAME_H);
+    /* the names take room of their own, so a frame of the same height shows no more rows than before */
+    expect(named.rows).toBeLessThanOrEqual(bare.rows);
+    /* the cells are placed at the named pitch, so a row's words never land on the next row's cells */
+    const cells = gridCells(grid({ cellNames: true }), {});
+    const first = cells.find((c) => c.cellCol === 0 && c.cellRow === 0)!;
+    const next = cells.find((c) => c.cellCol === 0 && c.cellRow === 1)!;
+    expect(first.y + first.size2! + CELL_NAME_H).toBeLessThanOrEqual(next.y);
+  });
+
+  it("lays the cells out again when the names are switched on", () => {
+    const board = grid({ gridRows: 3, children: [cellBox(0, 0, CELL_DEF, { x: 0, y: 0 })] });
+    const row1 = (it: Item) => resizedChildren(it, { cellNames: it.cellNames ?? false }, {})!.find((c) => c.cellCol === 0 && c.cellRow === 1)!;
+    const before = row1(board);
+    /* a switch is a board change like a size: the cells of the next row move down by the name */
+    const after = row1({ ...board, cellNames: true });
+    expect(after.y - before.y).toBe(CELL_NAME_H);
+    /* and the board closes up again when it is switched off */
+    const off = resizedChildren({ ...board, cellNames: true }, { cellNames: false }, {})!.find((c) => c.cellCol === 0 && c.cellRow === 1)!;
+    expect(off.y).toBe(before.y);
+    expect(off.y).toBe(CELL_DEF + cellGap(CELL_DEF) + GRID_PAD + GRID_PANEL_PAD);
   });
 
   it("grows the child frame past the viewport when the author pins more rows than fit", () => {

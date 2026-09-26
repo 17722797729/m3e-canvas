@@ -1829,6 +1829,14 @@ export type Item = {
   gridRows?: number;
   /** Slot grids only: whether every cell shows a checkbox the visitor can tick */
   checkboxes?: boolean;
+  /** Slot grids only: the item name under the cells. It is drawn under a cell that holds something
+   *  and left off an empty slot — a name labels an item, and a bare slot has none. Turning it on
+   *  also widens the row pitch by the name's own height, so the words of one row never touch the
+   *  cells of the next. */
+  cellNames?: boolean;
+  /** Slot grids only: the words under a cell. Unset means the kind's own placeholder — 「物品名」 in
+   *  the author's language — so switching the names on shows something at once. */
+  cellText?: string;
   /** A slot grid's cell: which column of the board it sits in. Its place is its slot rather than
    *  its own x and y, so the frame can be resized without the cell losing what it holds. */
   cellCol?: number;
@@ -4152,7 +4160,7 @@ export function resizedChildren(before: Item, patch: Partial<Item>, widths: Reco
      out again for the size, the cell size and the counts the patch asks for. */
   if (before.kind === "invGrid") {
     /* a layer the author raised is a board change like any other: its cells have to come up with it */
-    const geometry = "size" in patch || "size2" in patch || "cell" in patch || "gridCols" in patch || "gridRows" in patch || "z" in patch;
+    const geometry = "size" in patch || "size2" in patch || "cell" in patch || "gridCols" in patch || "gridRows" in patch || "cellNames" in patch || "z" in patch;
     return geometry ? gridCells({ ...before, ...patch }, widths) : undefined;
   }
   /* A cell the author lifts carries what it holds, for the same reason a board does: a part left
@@ -4319,6 +4327,12 @@ export const GRID_PANEL_PAD = 8;
 export const CELL_DEF = 56;
 export const CELL_MIN = 24;
 export const CELL_MAX = 160;
+/** The room one cell's item name takes under it: a board that shows names adds this to the row
+ *  pitch, so the interval between two rows is the author's own cell gap — plus exactly this, which
+ *  is what keeps the words of one row off the cells of the next. */
+export const CELL_NAME_H = 14;
+/** What that name is set in: small enough to sit under a 56dp cell without crowding it. */
+export const CELL_NAME_FONT = 10;
 /** How many cells the author may ask for on each axis: more than this is not a game board. */
 export const COLS_MAX = 12;
 export const ROWS_MAX = 30;
@@ -4521,6 +4535,9 @@ export type SlotGrid = {
   /** the cell size and the room between cells */
   cell: number;
   gap: number;
+  /** the room a cell's own item name takes under it: the row pitch is this wider than the column
+   *  pitch, and zero when the board shows no names */
+  nameH: number;
   /** the child frame: the panel the cells sit on, in the part's own coordinates */
   panel: { x: number; y: number; w: number; h: number };
   /** where a cell's top-left corner sits, as an offset from the part's top-left corner */
@@ -4544,7 +4561,11 @@ export function slotGrid(it: Item, widths: Record<string, number>): SlotGrid {
   /* the child frame, and the room its cells have inside it */
   const view = { w: Math.max(cell, w - GRID_PAD * 2), h: Math.max(cell, h - GRID_PAD * 2) };
   const room = { w: Math.max(cell, view.w - GRID_PANEL_PAD * 2), h: Math.max(cell, view.h - GRID_PANEL_PAD * 2) };
+  /* the room one cell's name takes under it: the rows are laid out with it folded into their pitch,
+     so switching the names on moves the rows apart instead of drawing words over the next row */
+  const nameH = it.cellNames ? CELL_NAME_H : 0;
   const fits = (span: number) => Math.max(1, Math.floor((span + gap) / (cell + gap)));
+  const fitsRows = (span: number) => Math.max(1, Math.floor((span + gap) / (cell + gap + nameH)));
   const autoCols = it.gridCols === undefined;
   const autoRows = it.gridRows === undefined;
   /* the board reaches every cell that holds something, so a frame the author made smaller scrolls
@@ -4563,9 +4584,11 @@ export function slotGrid(it: Item, widths: Record<string, number>): SlotGrid {
      reach a column that is off the side, so the frame draws the ones that are on it */
   const wanted = autoCols ? fits(room.w) : Math.min(Math.round(it.gridCols!), fits(room.w));
   const cols = Math.max(1, Math.min(COLS_MAX, Math.max(wanted, usedCol + 1)));
-  const rows = Math.max(1, Math.min(ROWS_MAX, Math.max(autoRows ? fits(room.h) : Math.round(it.gridRows!), usedRow + 1)));
+  const rows = Math.max(1, Math.min(ROWS_MAX, Math.max(autoRows ? fitsRows(room.h) : Math.round(it.gridRows!), usedRow + 1)));
   const boardW = cols * cell + (cols - 1) * gap;
-  const boardH = rows * cell + (rows - 1) * gap;
+  /* the board is as tall as its rows and the names under them: the last row's name belongs to the
+     board too, or it would hang outside the panel it sits on */
+  const boardH = rows * cell + (rows - 1) * gap + rows * nameH;
   const panel = {
     x: GRID_PAD,
     y: GRID_PAD,
@@ -4579,8 +4602,9 @@ export function slotGrid(it: Item, widths: Record<string, number>): SlotGrid {
     rows,
     cell,
     gap,
+    nameH,
     panel,
-    cellAt: (col, row) => ({ x: left + col * (cell + gap), y: top + row * (cell + gap) }),
+    cellAt: (col, row) => ({ x: left + col * (cell + gap), y: top + row * (cell + gap + nameH) }),
     count: cols * rows,
     autoCols,
     autoRows,

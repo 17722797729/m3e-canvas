@@ -1799,6 +1799,33 @@ export function Inspector({
                 {t("gridCount", lang).replace("{c}", String(g.cols)).replace("{r}", String(g.rows)).replace("{n}", String(g.count))}
               </div>
               <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("gridHint", lang)}</div>
+              {/* The item names: a switch and the words it puts under every full slot. The board's
+                  rows make room for them on their own, so the interval stays right. */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <Toggle
+                  on={!!item.cellNames}
+                  onChange={(cellNames) => onChange({ cellNames: cellNames || undefined })}
+                  p={p}
+                  icon="label"
+                  label={t("showCellNames", lang)}
+                  grow
+                />
+                {item.cellNames && (
+                  <>
+                    <div style={{ border: `1px solid ${p.outline}`, borderRadius: 14, padding: 2 }}>
+                      <Field
+                        value={item.cellText ?? ""}
+                        onChange={(cellText) => onChange({ cellText: cellText || undefined })}
+                        placeholder={t("cellItemName", lang)}
+                        p={p}
+                        icon="label"
+                        height={40}
+                      />
+                    </div>
+                    <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("cellNameHint", lang)}</div>
+                  </>
+                )}
+              </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <Toggle
                   on={!!item.checkboxes}
