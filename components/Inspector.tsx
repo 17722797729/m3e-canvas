@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  blankPrizeLabel,
+  defaultPrizes,
+  prizeChances,
+  type Prize,
   Action,
   BACK_TARGET,
   CONTENT_W,
@@ -134,7 +138,7 @@ import {
 import { IconPicker } from "./IconPicker";
 import { Popover } from "./Menus";
 import { Icon, M3Static } from "./M3Node";
-import { ButtonRun, CardLayoutPicker, CornerIcon, CustomColorDisc, Field, IconBtn, ItemColorChips, Pick, Section, Segmented, SizePresets, Slider, TextTokenChips, Toggle, TokenChips } from "./ui";
+import { ButtonRun, CardLayoutPicker, CornerIcon, CustomColorDisc, Field, IconBtn, ItemColorChips, Pick, Section, Segmented, SizePresets, Slider, TextTokenChips, Toggle, TokenChips, inputBox } from "./ui";
 import { AiWriteBtn } from "./AiPanel";
 import { popHistory } from "@/lib/ai";
 import { KIND_TEXT, Lang, SWIPE_TEXT, TRANSITION_TEXT, UIKey, overlayLevelText, t, useLang } from "@/lib/i18n";
@@ -882,6 +886,9 @@ export function Inspector({
   const slots = item ? iconSlotsOf(item) : [];
   const [slotKey, setSlotKey] = useState("icon");
   const [pickerOpen, setPickerOpen] = useState(false);
+  /* which prize of a wheel has its icon picker open */
+  const [prizeSlot, setPrizeSlot] = useState<number | null>(null);
+  const [prizePicker, setPrizePicker] = useState(false);
   const [actionSlot, setActionSlot] = useState("");
   /** editing the "on" look of a toggle button instead of its normal look */
   const [onTab, setOnTab] = useState(false);
@@ -1234,6 +1241,74 @@ export function Inspector({
           </div>
         </Section>
       )}
+
+      {item.kind === "joystick" && !editOn && (
+        <Section id="joystick" icon="gamepad" title={t("joystickReturn", lang)} p={p}>
+          <Toggle on={item.joystickReturn !== false} onChange={(on) => onChange({ joystickReturn: on })} p={p} icon="center_focus_strong" label={t("joystickReturn", lang)} grow />
+          <div style={{ fontSize: 12, lineHeight: 1.6, color: p.onSurfaceVariant, padding: "8px 6px 0" }}>{t("joystickReturnHint", lang)}</div>
+        </Section>
+      )}
+
+      {spec.hasPrizes && !editOn && (() => {
+        /* A wheel's pool: what each prize says, and the weight that decides its odds. The percentage
+           beside each row is what those weights work out to, so an author sees the real chance while
+           typing rather than after doing the sums. */
+        const prizes: Prize[] = item.prizes && item.prizes.length ? item.prizes : defaultPrizes();
+        const chances = prizeChances(prizes);
+        const put = (next: Prize[]) => onChange({ prizes: next });
+        const setPrize = (i: number, patch: Partial<Prize>) => put(prizes.map((pr, j) => (j === i ? { ...pr, ...patch } : pr)));
+        return (
+          <Section id="prizes" icon="casino" title={t("prizes", lang)} p={p}>
+            <div style={{ fontSize: 12, lineHeight: 1.6, color: p.onSurfaceVariant, padding: "0 6px 10px" }}>{t("prizeHint", lang)}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {prizes.map((pr: Prize, i: number) => (
+                <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", padding: "6px 8px", borderRadius: 12, background: p.surfaceContainerLow }}>
+                  <button
+                    type="button"
+                    onClick={() => { setPrizeSlot(prizeSlot === i ? null : i); setPrizePicker(false); }}
+                    title={t("changeIcon", lang)}
+                    aria-label={t("changeIcon", lang)}
+                    className="m3-press"
+                    style={{ width: 40, height: 40, flex: "0 0 auto", borderRadius: 20, border: "none", background: prizeSlot === i && prizePicker ? p.primary : p.surfaceContainerHigh, color: prizeSlot === i && prizePicker ? p.onPrimary : p.onSurfaceVariant, cursor: "pointer", display: "grid", placeItems: "center" }}
+                  >
+                    <Icon name={pr.icon || "add"} size={20} />
+                  </button>
+                  <Field value={pr.label} onChange={(label) => setPrize(i, { label })} placeholder={blankPrizeLabel()} p={p} height={40} />
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    aria-label={t("prizeWeight", lang)}
+                    value={String(pr.weight ?? 1)}
+                    onChange={(e) => setPrize(i, { weight: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
+                    style={{ ...inputBox(p, 8), width: 62, height: 34, fontVariantNumeric: "tabular-nums" }}
+                  />
+                  <span data-prize-chance={chances[i]} style={{ width: 44, flex: "0 0 auto", textAlign: "right", fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, fontVariantNumeric: "tabular-nums" }}>{`${chances[i]}%`}</span>
+                  <IconBtn icon="delete" p={p} danger title={t("removePrize", lang)} size={30} onClick={() => put(prizes.filter((_, j) => j !== i))} />
+                  {prizeSlot === i && prizePicker && (
+                    <IconPicker
+                      value={pr.icon || null}
+                      onChange={(icon) => setPrize(i, { icon })}
+                      onClose={() => setPrizePicker(false)}
+                      palette={p}
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => put([...prizes, { label: "", icon: "sentiment_dissatisfied", weight: 1 }])}
+              className="m3-press"
+              style={{ marginTop: 8, height: 40, width: "100%", borderRadius: 20, border: `1px solid ${p.outline}`, background: "transparent", color: p.primary, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+            >
+              <Icon name="add" size={18} />
+              {t("addPrize", lang)}
+            </button>
+            <div style={{ fontSize: 12, lineHeight: 1.6, color: p.onSurfaceVariant, padding: "8px 6px 0" }}>{t("spinHint", lang)}</div>
+          </Section>
+        );
+      })()}
 
       {spec.hasTabs && !editOn && (
         <Section id="tabs" icon={isSelect ? "list" : "view_column"} title={t(isSelect ? "options" : "tabs", lang)} p={p} onToggle={(open) => { if (!open && activeSlot?.key.startsWith("tab:")) setPickerOpen(false); }}>

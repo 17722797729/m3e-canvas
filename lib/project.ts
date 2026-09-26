@@ -23,6 +23,18 @@ const validTabs = (tabs: unknown) =>
         (tab.hideBadge === undefined || typeof tab.hideBadge === "boolean"),
     ));
 
+/** the pool a prize wheel draws from: what each prize says, and how likely it is */
+const validPrizes = (prizes: unknown) =>
+  prizes === undefined ||
+  (Array.isArray(prizes) &&
+    prizes.every(
+      (pr) =>
+        isRecord(pr) &&
+        typeof pr.label === "string" &&
+        (typeof pr.icon === "string" || pr.icon === null || pr.icon === undefined) &&
+        (pr.weight === undefined || (Number.isFinite(pr.weight) && (pr.weight as number) >= 0)),
+    ));
+
 const validCorners = (c: unknown) => c === undefined || (isRecord(c) && ["tl", "tr", "bl", "br"].every((k) => Number.isFinite(c[k])));
 
 /** one state transition hung on a part */
@@ -159,6 +171,8 @@ const validItem = (item: unknown): boolean =>
   (item.supporting === undefined || typeof item.supporting === "string") &&
   (item.selected === undefined || Number.isFinite(item.selected)) &&
   (item.note === undefined || typeof item.note === "string") &&
+  (item.joystickReturn === undefined || typeof item.joystickReturn === "boolean") &&
+  validPrizes(item.prizes) &&
   validTabs(item.tabs);
 
 const validGroup = (group: unknown) =>

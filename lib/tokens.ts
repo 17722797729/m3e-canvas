@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
-import { FAB_MENU_TABS, GAME_NAV_TABS, KIND_TEXT, Lang, TAB_LABELS, getLang, t, SELECT_OPTIONS } from "./i18n";
+import { FAB_MENU_TABS, GAME_NAV_TABS, KIND_TEXT,
+  PRIZE_TEXT, Lang, TAB_LABELS, getLang, t, SELECT_OPTIONS } from "./i18n";
 import { Contrast, isHex, isLightColor, onColorFor, schemeFromSeed } from "./color";
 
 /* ---------- geometry ---------- */
@@ -633,6 +634,9 @@ export type Kind =
   | "toolbar"
   | "tabs"
   | "sideTabs"
+  | "joystick"
+  | "wheel"
+  | "gridWheel"
   | "radio"
   | "badge";
 
@@ -672,7 +676,7 @@ export type ConnectSpec = { axis: Axis; outer: number; inner: number; family: st
 /** `presets` are quick picks shown as chips; values outside min..max are hidden */
 export type SizeSpec = { min: number; max: number; step: number; icon: string; presets?: number[] };
 
-export type Category = "actions" | "navigation" | "containment" | "inputs" | "content" | "progress";
+export type Category = "actions" | "navigation" | "containment" | "inputs" | "content" | "progress" | "features";
 
 export const CATEGORIES: { key: Category; label: string; icon: string }[] = [
   { key: "actions", label: "Actions", icon: "touch_app" },
@@ -681,6 +685,7 @@ export const CATEGORIES: { key: Category; label: string; icon: string }[] = [
   { key: "inputs", label: "Inputs", icon: "toggle_on" },
   { key: "content", label: "Content", icon: "notes" },
   { key: "progress", label: "Progress", icon: "progress_activity" },
+  { key: "features", label: "Added features", icon: "auto_awesome" },
 ];
 
 export type KindSpec = {
@@ -706,6 +711,8 @@ export type KindSpec = {
   /** offers the scroll switch: the axes a container's content can be moved along */
   hasScroll?: boolean;
   hasValue?: boolean;
+  /** carries a pool of prizes, each with its own chance: a wheel that is drawn */
+  hasPrizes?: boolean;
   hasWavy?: boolean;
   hasContained?: boolean;
   connect?: ConnectSpec;
@@ -722,6 +729,15 @@ export type KindSpec = {
  *  author asks the part to show one. */
 export const SLIDER_H = 44;
 export const SLIDER_VALUE_H = 64;
+
+/** The pad a direction wheel is drawn at, and the two prize wheels: all three are square by
+ *  default, so a width the author sets carries the height with it. */
+export const JOYSTICK_SIZE = 132;
+export const WHEEL_SIZE = 220;
+export const GRID_WHEEL_SIZE = 240;
+/** How far the knob of a direction wheel travels from the middle, at the pad's default size. It is
+ *  a share of the pad, so a bigger pad has a bigger travel and the pad keeps its look. */
+export const JOYSTICK_TRAVEL = 0.32;
 
 /** The smallest a part may be dragged to. Every part allows it, whatever it is: a prototype often
  *  needs a two-character-wide button or a thumbnail of a screen, and a part smaller than its content
@@ -1501,6 +1517,65 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     size: { min: 6, max: 160, step: 1, icon: "width" },
     size2: { min: 6, max: 160, step: 1, icon: "height" },
   },
+  joystick: {
+    label: "Direction wheel",
+    noun: "方向ホイール",
+    category: "actions",
+    paletteIcon: "gamepad",
+    w: JOYSTICK_SIZE,
+    h: JOYSTICK_SIZE,
+    /* a round pad: the knob travels inside it, and its roundness is the part's own shape */
+    radius: JOYSTICK_SIZE / 2,
+    hasVariant: false,
+    hasLabel: false,
+    hasSupporting: false,
+    hasIcon: false,
+    hasValue: true,
+    size: { min: 64, max: 320, step: 4, icon: "width", presets: [96, 132, 180] },
+    size2: { min: 64, max: 320, step: 4, icon: "height", presets: [96, 132, 180] },
+    defLabel: "",
+    defIcon: null,
+    defSize: JOYSTICK_SIZE,
+  },
+  wheel: {
+    label: "Prize wheel",
+    noun: "円形ルーレット",
+    category: "features",
+    paletteIcon: "donut_large",
+    w: WHEEL_SIZE,
+    h: WHEEL_SIZE,
+    radius: WHEEL_SIZE / 2,
+    hasVariant: false,
+    hasLabel: true,
+    hasSupporting: false,
+    hasIcon: false,
+    /* the pool of prizes, and the words of the button in the middle */
+    hasPrizes: true,
+    size: { min: 120, max: 420, step: 4, icon: "width", presets: [180, 220, 280] },
+    size2: { min: 120, max: 420, step: 4, icon: "height", presets: [180, 220, 280] },
+    defLabel: "抽奖",
+    defIcon: null,
+    defSize: WHEEL_SIZE,
+  },
+  gridWheel: {
+    label: "Grid prize wheel",
+    noun: "四角ルーレット",
+    category: "features",
+    paletteIcon: "grid_view",
+    w: GRID_WHEEL_SIZE,
+    h: GRID_WHEEL_SIZE,
+    radius: 20,
+    hasVariant: false,
+    hasLabel: true,
+    hasSupporting: false,
+    hasIcon: false,
+    hasPrizes: true,
+    size: { min: 140, max: 460, step: 4, icon: "width", presets: [200, 240, 300] },
+    size2: { min: 140, max: 460, step: 4, icon: "height", presets: [200, 240, 300] },
+    defLabel: "抽奖",
+    defIcon: null,
+    defSize: GRID_WHEEL_SIZE,
+  },
 };
 
 export const KIND_ORDER: Kind[] = [
@@ -1511,6 +1586,7 @@ export const KIND_ORDER: Kind[] = [
   "splitButton",
   "fabMenu",
   "chip",
+  "joystick",
   "topAppBar",
   "bottomNav",
   "navRail",
@@ -1541,6 +1617,8 @@ export const KIND_ORDER: Kind[] = [
   "linearProgress",
   "progressBar",
   "circularProgress",
+  "wheel",
+  "gridWheel",
 ];
 
 /* ---------- screen data ---------- */
@@ -1600,6 +1678,11 @@ export type Item = {
   noCheck?: boolean;
   /** 0..100 for sliders and determinate progress; undefined = indeterminate */
   value?: number;
+  /** a direction wheel whose knob springs back to the middle when the finger lifts: undefined means
+   *  it does, which is what a movement stick does */
+  joystickReturn?: boolean;
+  /** the pool a prize wheel draws from, in the order the prizes are drawn on it */
+  prizes?: Prize[];
   wavy?: boolean;
   /** Undefined retains the original rail; false/true select the collapsed/expanded expressive rail. */
   railExpanded?: boolean;
@@ -2265,7 +2348,151 @@ export function actionsOf(it: Item): { slot: string; action: Action }[] {
 }
 
 /** kinds a user can tap in the preview */
-export const TAPPABLE: Kind[] = ["button", "iconButton", "fab", "extendedFab", "chip", "listItem", "card", "image", "text", "splitButton", "radio"];
+export const TAPPABLE: Kind[] = ["button", "iconButton", "fab", "extendedFab", "chip", "listItem", "card", "image", "text", "splitButton", "radio", "wheel", "gridWheel"];
+
+/* ---------- the wheels, and the pad beside them ---------- */
+
+/** One prize of a wheel: the words it shows, an icon if it has one, and how likely it is. Chances are
+ *  written as weights rather than percentages: the wheel works out a share of the whole, so an author
+ *  adding a prize never has to go back and re-add the others to a hundred. */
+export type Prize = { label: string; icon?: string | null; weight?: number };
+
+/** What a prize that says nothing shows: the pool's own "thanks for playing" entry, so a cell left
+ *  blank on a square wheel — or a prize whose words the author cleared — reads as what it is. */
+export const blankPrizeLabel = () => PRIZE_TEXT[getLang()][1] ?? "";
+export const prizeLabel = (pr: Prize | undefined) => (pr?.label?.trim() ? pr.label : blankPrizeLabel());
+
+/** The weight a prize is read at: its own, or one — an even chance among the prizes that say nothing.
+ *  A weight of zero is a prize that can never come up, which is what taking one out of the draw
+ *  without taking it off the wheel means. */
+export const prizeWeight = (pr: Prize) => Math.max(0, pr.weight ?? 1);
+
+/** Each prize's share of the whole, as a percentage that adds up to a hundred: the last one takes the
+ *  rounding the others left over, so the list always reads as a whole. */
+export function prizeChances(prizes: Prize[]): number[] {
+  const total = prizes.reduce((sum, pr) => sum + prizeWeight(pr), 0);
+  if (prizes.length === 0) return [];
+  if (total <= 0) return prizes.map(() => Math.round(100 / prizes.length));
+  const out: number[] = [];
+  let used = 0;
+  prizes.forEach((pr, i) => {
+    if (i === prizes.length - 1) {
+      out.push(Math.max(0, 100 - used));
+      return;
+    }
+    const pct = Math.round((prizeWeight(pr) / total) * 100);
+    used += pct;
+    out.push(pct);
+  });
+  return out;
+}
+
+/** Which prize a roll of the wheel lands on. `roll` is a number in [0, 1) — the draw itself is the
+ *  caller's, so a wheel can be tested without one. An empty pool has no prize to land on. */
+export function pickPrize(prizes: Prize[], roll: number): number {
+  const total = prizes.reduce((sum, pr) => sum + prizeWeight(pr), 0);
+  if (prizes.length === 0 || total <= 0) return 0;
+  let at = Math.max(0, Math.min(0.999999, roll)) * total;
+  for (let i = 0; i < prizes.length; i++) {
+    at -= prizeWeight(prizes[i]);
+    if (at < 0) return i;
+  }
+  return prizes.length - 1;
+}
+
+/** Where a prize's wedge sits on a round wheel: angles in degrees, measured from the top and running
+ *  clockwise, which is the way a wheel is drawn and the way the pointer reads it. */
+export function wheelSlice(index: number, count: number): { start: number; sweep: number } {
+  const n = Math.max(1, count);
+  const sweep = 360 / n;
+  return { start: index * sweep, sweep };
+}
+
+/** The rotation a wheel ends at so the pointer — which sits at the top — reads the winning wedge.
+ *  `turns` whole turns are added first, which is what makes a spin look like a spin. */
+export function wheelStopAngle(index: number, count: number, turns = 5): number {
+  const { start, sweep } = wheelSlice(index, count);
+  /* the wheel turns clockwise; the pointer reads the wedge that comes round to the top */
+  return turns * 360 - (start + sweep / 2);
+}
+
+/** Which wedge the pointer reads at a given rotation: what the wheel shows while it turns. */
+export function wheelIndexAt(angle: number, count: number): number {
+  const n = Math.max(1, count);
+  const sweep = 360 / n;
+  const at = ((-angle % 360) + 360) % 360;
+  return Math.min(n - 1, Math.floor(at / sweep));
+}
+
+/** The grid a square wheel is drawn on: the smallest one whose edge cells can hold every prize. The
+ *  prizes run around that edge in the order they are written, and the middle is the button. */
+export function gridRing(count: number): { rows: number; cols: number } {
+  const n = Math.max(1, count);
+  /* The smallest grid whose edge holds every prize and whose middle still has a cell for the button.
+     It need not be square: nine prizes want three rows of four — ten cells round the edge — rather
+     than the sixteen of a five-by-five. Ties go to the squarer grid. */
+  let best: { rows: number; cols: number } | null = null;
+  let bestWaste = Infinity;
+  let bestGap = Infinity;
+  for (let rows = 3; rows <= n + 3; rows++) {
+    for (let cols = 3; cols <= n + 3; cols++) {
+      const edge = 2 * (rows + cols) - 4;
+      if (edge < n) continue;
+      /* the grid that wastes the fewest cells wins; a tie goes to the squarer one, so sixteen prizes
+         fill a five-by-five rather than a long three-by-seven */
+      const waste = edge - n;
+      const gap = Math.abs(rows - cols);
+      if (!best || waste < bestWaste || (waste === bestWaste && gap < bestGap)) {
+        best = { rows, cols };
+        bestWaste = waste;
+        bestGap = gap;
+      }
+    }
+  }
+  return best ?? { rows: 3, cols: Math.max(3, n) };
+}
+
+/** Every cell round the edge of that grid, in the order the highlight follows: clockwise from the
+ *  top left corner. The cells the pool does not reach are drawn as the pool's blank prize, so a
+ *  three-prize square wheel is a full ring rather than three cards and a gap. */
+export function gridEdgeCells(count: number): { row: number; col: number }[] {
+  const { rows, cols } = gridRing(count);
+  const edge: { row: number; col: number }[] = [];
+  for (let col = 0; col < cols; col++) edge.push({ row: 0, col });
+  for (let row = 1; row < rows; row++) edge.push({ row, col: cols - 1 });
+  if (rows > 1) for (let col = cols - 2; col >= 0; col--) edge.push({ row: rows - 1, col });
+  if (cols > 1) for (let row = rows - 2; row >= 1; row--) edge.push({ row, col: 0 });
+  return edge;
+}
+
+/** Where each prize sits on that edge, in the order they are written. The prizes are spread evenly,
+ *  so a pool that does not fill every cell is laid out symmetrically instead of leaving one side
+ *  crowded. */
+export function gridRingCells(count: number): { row: number; col: number }[] {
+  const edge = gridEdgeCells(count);
+  const n = Math.max(1, count);
+  const picked: { row: number; col: number }[] = [];
+  for (let i = 0; i < n; i++) picked.push(edge[Math.round((i * edge.length) / n) % edge.length]);
+  return picked;
+}
+
+/** How far the knob of a direction wheel travels from the middle, in the pad's own units. */
+export const joystickTravel = (size: number) => Math.max(8, Math.round(size * JOYSTICK_TRAVEL));
+
+/** The knob's place in the pad, in the pad's own units, from the angle its value stands for: 0° is
+ *  straight up and the angle runs clockwise, the way the arrows on the pad read. */
+export function joystickKnob(angle: number, size: number, out = true): { dx: number; dy: number } {
+  if (!out) return { dx: 0, dy: 0 };
+  const r = joystickTravel(size);
+  const rad = ((angle - 90) * Math.PI) / 180;
+  return { dx: Math.round(Math.cos(rad) * r), dy: Math.round(Math.sin(rad) * r) };
+}
+
+/** The angle a finger at (dx, dy) from the middle points at: 0° straight up, clockwise. */
+export function joystickAngle(dx: number, dy: number): number {
+  const deg = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
+  return Math.round(((deg % 360) + 360) % 360);
+}
 
 /** palette roles a user may pick as a background */
 export type ColorToken =
@@ -3124,6 +3351,12 @@ export const defaultTabs = (count = 4): NavTab[] => GAME_NAV_TABS[getLang()].sli
 const TOOLBAR_ICONS = ["format_bold", "format_italic", "format_underlined", "attach_file", "format_color_text", "more_vert"];
 
 /** the entries a kind starts with, also used to fill in rows the author adds */
+/** The pool a fresh prize wheel starts with, in the language the editor is in. */
+export function defaultPrizes(): Prize[] {
+  const icons = ["emoji_events", "sentiment_dissatisfied", "military_tech", "refresh", "workspace_premium", "redeem", "star", "sentiment_dissatisfied", "refresh"];
+  return PRIZE_TEXT[getLang()].map((label, i) => ({ label, icon: icons[i % icons.length] }));
+}
+
 export function defaultTabsFor(kind: Kind): NavTab[] {
   switch (kind) {
     case "tabs":
@@ -3158,6 +3391,9 @@ export function makeItem(kind: Kind): Item {
   if (s.defIcon2 !== undefined) it.icon2 = s.defIcon2;
   if (s.defSize !== undefined) it.size = s.defSize;
   if (s.hasChecked) it.checked = kind !== "chip";
+  /* a fresh wheel comes with a pool to draw from, and a pad with a full turn to point at */
+  if (kind === "wheel" || kind === "gridWheel") it.prizes = defaultPrizes();
+  if (kind === "joystick") it.max = 360;
   if (kind === "box") {
     it.size2 = 220;
     it.radiusTop = 28;
@@ -3254,6 +3490,14 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
       return { w: it.size ?? toolbarWidth(it), h: it.size2 ?? s.h };
     case "tabs":
     case "sideTabs":
+      return { w: n, h: it.size2 ?? s.h };
+    /* a pad and a round wheel are round: a width the author sets carries the height with it. The
+       square wheel is only square by default — the author stretches it into a rectangle whenever the
+       cells want to be wider than they are tall. */
+    case "joystick":
+    case "wheel":
+      return { w: n, h: it.size2 ?? n };
+    case "gridWheel":
       return { w: n, h: it.size2 ?? s.h };
     case "text":
       return { w: widths[it.id] ?? 120, h: Math.round(n * 1.3) };

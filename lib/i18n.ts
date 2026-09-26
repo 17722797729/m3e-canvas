@@ -212,6 +212,28 @@ export const UI = {
   posLeft: { ja: "左", en: "Left", zh: "左" },
   posRight: { ja: "右", en: "Right", zh: "右" },
   rotationReset: { ja: "まっすぐ", en: "Straight", zh: "回正" },
+  joystickReturn: { ja: "指を離したら中央へ", en: "Back to the middle on release", zh: "松手回中" },
+  joystickReturnHint: {
+    ja: "オフにすると、つまみは離した場所に残ります。",
+    en: "Turned off, the knob stays where the finger left it.",
+    zh: "关掉后,手柄停在松手的位置不回中。",
+  },
+  prizes: { ja: "景品", en: "Prizes", zh: "奖池" },
+  prizeHint: {
+    ja: "重みが当たる確率を決めます。右の%は、いまの重みから出した実際の確率です。",
+    en: "The weights decide the odds; the percentage beside each one is what those weights work out to.",
+    zh: "权重决定中奖概率;右边显示的是按当前权重算出的实际概率。",
+  },
+  prizeName: { ja: "景品", en: "Prize", zh: "奖品" },
+  prizeWeight: { ja: "重み", en: "Weight", zh: "权重" },
+  addPrize: { ja: "景品を追加", en: "Add a prize", zh: "添加奖品" },
+  removePrize: { ja: "この景品を削除", en: "Remove this prize", zh: "删除这个奖品" },
+  wonPrize: { ja: "当たり！", en: "You won", zh: "恭喜获得" },
+  spinHint: {
+    ja: "プレビューでこの部品をタップすると回ります。止まった景品をダイアログで知らせます。",
+    en: "Tap the part in the preview to spin it; when it stops, a dialog names the prize.",
+    zh: "预览里点这个组件开始抽奖;停下时弹框提示奖品。",
+  },
   rotationHint: {
     ja: "部品は自分の中心で回ります。描かれるもの（角・文字・中身）が一緒に回り、レイアウト上の位置は動きません。",
     en: "The part turns about its own middle: what is drawn — its corners, its words, everything it holds — goes round with it, while the place it takes in the layout stays put.",
@@ -844,7 +866,7 @@ export const KO: Record<UIKey, string> = {
   parts: "부품", layers: "레이어", audit: "점검", edit: "편집", prompt: "프롬프트", closePanel: "패널 닫기",
   offScreens: "화면 밖 부품", offScreensHint: "어느 화면에도 속하지 않는 부품입니다. 프롬프트에서는 공용 부품으로 다룹니다.",
   tabStyle: "탭 모양", tabStyleUnderline: "밑줄", tabStyleButtons: "버튼", tabPanelsAuto: "탭 패널은 탭과 함께 만들어집니다. 탭을 추가하면 그 패널도 아래에 함께 놓입니다.", tabPanelsHint: "탭마다 패널이 하나씩, 탭 줄 아래에 있습니다. 탭을 바꾸면 그 패널만 표시됩니다.",
-  ruleWhen: "조건", ruleThen: "실행", ruleGoto: "이동", ruleBack: "뒤로", ruleClose: "현재 오버레이 닫기", ruleCloseAll: "모든 오버레이 닫기", ruleLook: "속성 바꾸기", ruleAfter: "N초 뒤 자동 실행", flowStay: "모양 그대로", lookTarget: "바꿀 대상", lookText: "텍스트", lookColor: "사용자 지정 색", lookSelf: "이 부품", actionKeep: "그대로 두기", propColor: "색", propChecked: "켜짐/꺼짐", propSelected: "선택된 항목", propValue: "값", valueMinus: "1 줄이기", valueOpSet: "값 설정", valueOpAdd: "더하기", valueOpSub: "빼기", valueStep: "단계", valuePlus: "1 늘리기", boolYes: "켜기", showsValue: "값 표시", showsUnit: "％ 표시", showsUnitHint: "끄면 슬라이더의 숫자에서 ％가 사라집니다. 값을 읽는 텍스트는 항상 숫자만 받습니다.", mixOwn: "자기 글자와 함께", mixHint: "자기 글자 안의 {v} 자리에 숫자가 들어갑니다. 쓰지 않으면 끝에 붙습니다.", mixInsert: "끝에 {v} 넣기", maxValue: "최댓값", maxHint: "값·드래그·＋／−의 상한입니다. 비우면 {n}.", autoClose: "시간으로 닫기", searchLayers: "페이지와 부품 검색", searchCount: "{n}개 결과", searchNoHit: "{q}와 일치하는 항목이 없습니다", searchClear: "검색 지우기", tabPanel: "패널", rotation: "회전", tabSide: "탭 위치", sideRail: "탭 열 너비", sideRailHint: "탭 열이 가로 폭에서 차지하는 비율입니다. 나머지가 페이지입니다.", tabSideHint: "탭은 고른 쪽에 놓이고 페이지는 반대쪽에 들어갑니다(기본: 가로 탭은 위, 사이드 탭은 왼쪽).", showIcon: "아이콘 표시", showBadge: "배지 표시", badge: "3", posTop: "위", posBottom: "아래", posLeft: "왼쪽", posRight: "오른쪽", rotationReset: "똑바로", rotationHint: "부품은 자기 중심으로 돌아갑니다. 그려지는 것(모서리·글자·안의 자식)이 함께 돌고, 레이아웃에서 차지하는 자리는 그대로입니다.", lookAwayHint: "이 부품은 「{page}」에 있습니다. 미리보기에서 그 화면을 열면 적용되어 있습니다(한 화면에서 줍고 다른 화면 가방 칸이 채워지는 식).", panelSizeHint: "탭의 패널은 탭 줄 아래의 공간 자체라 크기는 탭 줄이 정합니다(탭 줄 크기를 바꾸면 패널도 따라갑니다). 그래서 따로 끌거나 크기를 바꿀 수 없습니다.", panelKeeps: "탭의 패널은 탭 자체의 자리라 지워도 다시 생깁니다. 그래서 안의 내용만 지웠습니다(완전히 없애려면 탭 목록에서 그 탭을 삭제하세요).", autoCloseHint: "그 시간이 지나면 이 부품은 스스로 사라집니다(컨테이너라면 안의 자식까지 함께, 보이지도 탭되지도 않습니다).", autoCloseBubbleHint: "팝오버이므로 바깥을 탭한 것처럼 닫힙니다. 다시 열면 처음부터 셉니다.", autoClosePageHint: "이 페이지가 열린 뒤부터 세어, 시간이 되면 스스로 닫힙니다(위에 열린 것도 함께 닫힘).", autoCloseSpeedHint: "시간은 미리보기 시계로 흐릅니다. 미리보기 위쪽의 시간으로 빠르게 돌릴 수 있습니다.", showsNothing: "자기 글자", showsPickHint: "슬라이더나 바를 고르면 이 텍스트가 그 현재 값을 표시합니다.", ruleStayHint: "이 선의 동작은 다른 부품만 바꿉니다. 모양을 그대로 두면 누를 때마다 적용됩니다.", ruleOrderHint: "여는 동작 뒤에 닫기를 두면 방금 연 겹친 화면을 닫아 버립니다. 닫기를 먼저 두세요.", ruleOrderFix: "닫기를 먼저", ruleCloseHint: "「현재 오버레이 닫기」는 맨 위 한 겹만 닫습니다. 아래 겹은 그대로 남습니다(모두 닫으려면 「모든 오버레이 닫기」).", showsHint: "이 텍스트는 자기 글자 대신 고른 부품의 현재 값을 표시합니다. 슬라이더를 움직이면 숫자도 함께 움직입니다.", boolNo: "끄기", flowAddProp: "바꿀 속성 추가", actionShow: "표시", actionHide: "숨기기", ruleCheckHint: "슬롯 그리드의 체크박스 표시를 켜고 끕니다. 게임의 선택 버튼처럼 프레임 밖 버튼으로 일괄 선택 모드를 열고 닫을 수 있으며, 체크는 보는 사람이 셀을 탭해 채웁니다.", ruleLookHint: "이 단계가 여기서 정한 모양으로 바꾸고 그대로 둡니다(되돌리려면 되돌리는 단계를 더하세요).", ruleAfterShort: "N초 후",
+  ruleWhen: "조건", ruleThen: "실행", ruleGoto: "이동", ruleBack: "뒤로", ruleClose: "현재 오버레이 닫기", ruleCloseAll: "모든 오버레이 닫기", ruleLook: "속성 바꾸기", ruleAfter: "N초 뒤 자동 실행", flowStay: "모양 그대로", lookTarget: "바꿀 대상", lookText: "텍스트", lookColor: "사용자 지정 색", lookSelf: "이 부품", actionKeep: "그대로 두기", propColor: "색", propChecked: "켜짐/꺼짐", propSelected: "선택된 항목", propValue: "값", valueMinus: "1 줄이기", valueOpSet: "값 설정", valueOpAdd: "더하기", valueOpSub: "빼기", valueStep: "단계", valuePlus: "1 늘리기", boolYes: "켜기", showsValue: "값 표시", showsUnit: "％ 표시", showsUnitHint: "끄면 슬라이더의 숫자에서 ％가 사라집니다. 값을 읽는 텍스트는 항상 숫자만 받습니다.", mixOwn: "자기 글자와 함께", mixHint: "자기 글자 안의 {v} 자리에 숫자가 들어갑니다. 쓰지 않으면 끝에 붙습니다.", mixInsert: "끝에 {v} 넣기", maxValue: "최댓값", maxHint: "값·드래그·＋／−의 상한입니다. 비우면 {n}.", autoClose: "시간으로 닫기", searchLayers: "페이지와 부품 검색", searchCount: "{n}개 결과", searchNoHit: "{q}와 일치하는 항목이 없습니다", searchClear: "검색 지우기", tabPanel: "패널", rotation: "회전", tabSide: "탭 위치", sideRail: "탭 열 너비", sideRailHint: "탭 열이 가로 폭에서 차지하는 비율입니다. 나머지가 페이지입니다.", tabSideHint: "탭은 고른 쪽에 놓이고 페이지는 반대쪽에 들어갑니다(기본: 가로 탭은 위, 사이드 탭은 왼쪽).", showIcon: "아이콘 표시", showBadge: "배지 표시", badge: "3", posTop: "위", posBottom: "아래", posLeft: "왼쪽", posRight: "오른쪽", rotationReset: "똑바로", joystickReturn: "손을 떼면 가운데로", joystickReturnHint: "끄면 손잡이가 놓은 자리에 그대로 있습니다.", prizes: "경품", prizeHint: "가중치가 당첨 확률을 정합니다. 오른쪽 %는 지금 가중치로 계산한 실제 확률입니다.", prizeName: "경품", prizeWeight: "가중치", addPrize: "경품 추가", removePrize: "이 경품 삭제", wonPrize: "당첨!", spinHint: "미리보기에서 이 부품을 탭하면 돌아갑니다. 멈추면 어떤 경품인지 팝업으로 알려 줍니다.", rotationHint: "부품은 자기 중심으로 돌아갑니다. 그려지는 것(모서리·글자·안의 자식)이 함께 돌고, 레이아웃에서 차지하는 자리는 그대로입니다.", lookAwayHint: "이 부품은 「{page}」에 있습니다. 미리보기에서 그 화면을 열면 적용되어 있습니다(한 화면에서 줍고 다른 화면 가방 칸이 채워지는 식).", panelSizeHint: "탭의 패널은 탭 줄 아래의 공간 자체라 크기는 탭 줄이 정합니다(탭 줄 크기를 바꾸면 패널도 따라갑니다). 그래서 따로 끌거나 크기를 바꿀 수 없습니다.", panelKeeps: "탭의 패널은 탭 자체의 자리라 지워도 다시 생깁니다. 그래서 안의 내용만 지웠습니다(완전히 없애려면 탭 목록에서 그 탭을 삭제하세요).", autoCloseHint: "그 시간이 지나면 이 부품은 스스로 사라집니다(컨테이너라면 안의 자식까지 함께, 보이지도 탭되지도 않습니다).", autoCloseBubbleHint: "팝오버이므로 바깥을 탭한 것처럼 닫힙니다. 다시 열면 처음부터 셉니다.", autoClosePageHint: "이 페이지가 열린 뒤부터 세어, 시간이 되면 스스로 닫힙니다(위에 열린 것도 함께 닫힘).", autoCloseSpeedHint: "시간은 미리보기 시계로 흐릅니다. 미리보기 위쪽의 시간으로 빠르게 돌릴 수 있습니다.", showsNothing: "자기 글자", showsPickHint: "슬라이더나 바를 고르면 이 텍스트가 그 현재 값을 표시합니다.", ruleStayHint: "이 선의 동작은 다른 부품만 바꿉니다. 모양을 그대로 두면 누를 때마다 적용됩니다.", ruleOrderHint: "여는 동작 뒤에 닫기를 두면 방금 연 겹친 화면을 닫아 버립니다. 닫기를 먼저 두세요.", ruleOrderFix: "닫기를 먼저", ruleCloseHint: "「현재 오버레이 닫기」는 맨 위 한 겹만 닫습니다. 아래 겹은 그대로 남습니다(모두 닫으려면 「모든 오버레이 닫기」).", showsHint: "이 텍스트는 자기 글자 대신 고른 부품의 현재 값을 표시합니다. 슬라이더를 움직이면 숫자도 함께 움직입니다.", boolNo: "끄기", flowAddProp: "바꿀 속성 추가", actionShow: "표시", actionHide: "숨기기", ruleCheckHint: "슬롯 그리드의 체크박스 표시를 켜고 끕니다. 게임의 선택 버튼처럼 프레임 밖 버튼으로 일괄 선택 모드를 열고 닫을 수 있으며, 체크는 보는 사람이 셀을 탭해 채웁니다.", ruleLookHint: "이 단계가 여기서 정한 모양으로 바꾸고 그대로 둡니다(되돌리려면 되돌리는 단계를 더하세요).", ruleAfterShort: "N초 후",
   flowHint: "탭한 뒤의 변화: 상태는 각각 하나의 모양이고, 상태 사이의 선이 '탭하면' 'N초 뒤에' 어디로 가는지 보여 줍니다. 같은 상태에서 나가는 선은 위에서 아래로 읽습니다.",
   flowStart: "처음 모양",
   flowStartHint: "지은 그대로의 모양입니다. 아래 선이 탭을 어디로 보낼지 정합니다.",
@@ -926,6 +948,15 @@ export const t = (key: UIKey, lang: Lang = current): string => (lang === "ko" ? 
 
 /* ---- part defaults and nouns ---- */
 
+/** The prizes a fresh wheel starts with: six of them, so the round wheel has a wedge each and the
+ *  square one a cell each with its middle left for the button. */
+export const PRIZE_TEXT: Record<Lang, string[]> = {
+  ja: ["1等", "はずれ", "2等", "もう一回", "3等", "参加賞", "ラッキー賞", "はずれ", "もう一回"],
+  en: ["First prize", "No prize", "Second prize", "One more", "Third prize", "Take part", "Lucky prize", "No prize", "One more"],
+  zh: ["一等奖", "谢谢参与", "二等奖", "再来一次", "三等奖", "参与奖", "幸运奖", "谢谢参与", "再来一次"],
+  ko: ["1등", "꽝", "2등", "한 번 더", "3등", "참가상", "행운상", "꽝", "한 번 더"],
+};
+
 export const KIND_TEXT: Record<
   Lang,
   Record<string, { noun: string; label?: string; supporting?: string }>
@@ -966,6 +997,9 @@ export const KIND_TEXT: Record<
     toolbar: { noun: "ツールバー" },
     tabs: { noun: "タブ" },
     sideTabs: { noun: "サイドタブ" },
+    joystick: { noun: "方向ホイール" },
+    wheel: { noun: "円形ルーレット", label: "抽選" },
+    gridWheel: { noun: "四角ルーレット", label: "抽選" },
     radio: { noun: "ラジオボタン", label: "選択肢" },
     badge: { noun: "バッジ", label: "3" },
   },
@@ -1005,6 +1039,9 @@ export const KIND_TEXT: Record<
     toolbar: { noun: "toolbar" },
     tabs: { noun: "tabs" },
     sideTabs: { noun: "side tabs" },
+    joystick: { noun: "direction wheel" },
+    wheel: { noun: "prize wheel", label: "Draw" },
+    gridWheel: { noun: "grid prize wheel", label: "Draw" },
     radio: { noun: "radio button", label: "Option" },
     badge: { noun: "badge", label: "3" },
   },
@@ -1044,6 +1081,9 @@ export const KIND_TEXT: Record<
     toolbar: { noun: "工具栏" },
     tabs: { noun: "标签页" },
     sideTabs: { noun: "侧边标签页" },
+    joystick: { noun: "方向轮盘" },
+    wheel: { noun: "圆形轮盘抽奖", label: "抽奖" },
+    gridWheel: { noun: "方形轮盘抽奖", label: "抽奖" },
     radio: { noun: "单选按钮", label: "选项" },
     badge: { noun: "徽标", label: "3" },
   },
@@ -1083,6 +1123,9 @@ export const KIND_TEXT: Record<
     toolbar: { noun: "도구 모음" },
     tabs: { noun: "탭" },
     sideTabs: { noun: "사이드 탭" },
+    joystick: { noun: "방향 휠" },
+    wheel: { noun: "원형 룰렛", label: "뽑기" },
+    gridWheel: { noun: "사각 룰렛", label: "뽑기" },
     radio: { noun: "라디오 버튼", label: "옵션" },
     badge: { noun: "배지", label: "3" },
   },

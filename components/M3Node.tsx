@@ -59,6 +59,17 @@ import {
   tabIndexOf,
   tabStyleOf,
   TAB_ROW_H,
+  GRID_WHEEL_SIZE,
+  WHEEL_SIZE,
+  wheelSlice,
+  gridRingCells,
+  gridEdgeCells,
+  gridRing,
+  defaultPrizes,
+  prizeLabel,
+  joystickKnob,
+  joystickTravel,
+  JOYSTICK_SIZE,
   tabScrollOffset,
   SCROLL_TAB_W,
   fillColor,
@@ -628,8 +639,16 @@ export function GridCellMarks({
  * absent on the canvas and in an export, where a part is drawn but not live — the number is then
  * read-only, which is exactly what the canvas shows.
  */
-export const ValueContext = createContext<{ onSet?: (v: number) => void }>({});
+export type WheelRun = { angle: number; lit: number; ms: number };
+export const ValueContext = createContext<{
+  onSet?: (v: number) => void;
+  /** what a prize wheel is doing right now: how far its disc has turned, which prize is lit, and how
+   *  long the turn takes. Absent on the canvas, where a wheel is drawn at rest. */
+  wheel?: (id: string) => WheelRun | undefined;
+}>({});
 const useValueControls = () => useContext(ValueContext);
+/** What a prize wheel is doing, if it is spinning at all. */
+const useWheelRun = () => useContext(ValueContext).wheel;
 
 /** The value a slider, a slider field or a stepper stands at: what the author set, 0 when unset —
  *  clamped to the part's own range, so a slider that runs to ten thousand is read on its own scale. */
@@ -1745,6 +1764,223 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
       );
     }
 
+    case "joystick": {
+      /* A movement pad: four faint arrows, a knob the visitor drags, and the angle it stands for.
+         The knob is placed from the part's own value, so the canvas, the preview and an export all
+         show the same angle. */
+      const size = Math.min(item.size ?? JOYSTICK_SIZE, item.size2 ?? item.size ?? JOYSTICK_SIZE);
+      const travel = joystickTravel(size);
+      const angle = clampValue(item.value ?? 0, maxOf(item));
+      const knob = joystickKnob(angle, size, angle > 0);
+      const arrow = (name: string, deg: number) => (
+        <span
+          key={name}
+          style={{ position: "absolute", left: "50%", top: "50%", transform: `translate(-50%, -50%) rotate(${deg}deg) translateY(-${Math.round(size * 0.36)}px)`, color: p.outline, display: "inline-flex" }}
+        >
+          <Icon name={name} size={Math.max(14, Math.round(size * 0.15))} />
+        </span>
+      );
+      return (
+        <div style={{ position: "relative", width: "100%", height: "100%" }}>
+          {arrow("keyboard_arrow_up", 0)}
+          {arrow("keyboard_arrow_right", 90)}
+          {arrow("keyboard_arrow_down", 180)}
+          {arrow("keyboard_arrow_left", 270)}
+          <span
+            data-joystick-knob=""
+            style={{
+              position: "absolute",
+              left: `calc(50% + ${knob.dx}px)`,
+              top: `calc(50% + ${knob.dy}px)`,
+              width: Math.max(24, Math.round(size * 0.34)),
+              height: Math.max(24, Math.round(size * 0.34)),
+              marginLeft: -Math.round(Math.max(24, size * 0.34) / 2),
+              marginTop: -Math.round(Math.max(24, size * 0.34) / 2),
+              borderRadius: "50%",
+              background: angle > 0 ? p.primary : p.primaryContainer,
+              color: angle > 0 ? p.onPrimary : p.onPrimaryContainer,
+              boxShadow: "0 2px 6px rgba(0,0,0,0.18)",
+              display: "grid",
+              placeItems: "center",
+              fontSize: 11,
+              fontWeight: 700,
+            }}
+          >
+            {angle > 0 ? `${angle}°` : ""}
+          </span>
+          <span style={{ position: "absolute", left: "50%", top: "50%", width: 6, height: 6, marginLeft: -3, marginTop: -3, borderRadius: 3, background: p.outlineVariant }} />
+          <span style={{ position: "absolute", left: travel > 0 ? "50%" : 0, top: 0, display: "none" }} />
+        </div>
+      );
+    }
+
+    case "wheel": {
+      // eslint-disable-next-line react-hooks/rules-of-hooks
+      const wheelOf = useWheelRun();
+      /* The pool drawn as wedges, a pointer at the top that never moves, and the button in the
+         middle. The wedges are a conic gradient, so the wheel is one element however many prizes it
+         holds; the disc turns under the pointer while the preview spins it. */
+      const prizes = item.prizes && item.prizes.length ? item.prizes : defaultPrizes();
+      const n = prizes.length;
+      const sweep = 360 / n;
+      const run = wheelOf?.(item.id);
+      const lit = run?.lit ?? -1;
+      const disc = prizes
+        .map((_: unknown, i: number) => {
+          const fill = i === lit ? p.primaryContainer : i % 2 ? p.surfaceContainerHigh : p.surfaceContainerLow;
+          return `${fill} ${i * sweep}deg ${(i + 1) * sweep}deg`;
+        })
+        .join(", ");
+      const size = Math.min(item.size ?? WHEEL_SIZE, item.size2 ?? item.size ?? WHEEL_SIZE);
+      return (
+        <div style={{ position: "relative", width: "100%", height: "100%" }}>
+          <div
+            data-wheel-disc=""
+            style={{
+              position: "absolute",
+              inset: 0,
+              borderRadius: "50%",
+              background: `conic-gradient(${disc})`,
+              transform: `rotate(${run?.angle ?? 0}deg)`,
+              transition: run && run.ms > 0 ? `transform ${run.ms}ms cubic-bezier(0.15, 0.85, 0.2, 1)` : undefined,
+            }}
+          >
+            {prizes.map((pr, i) => (
+              <span
+                key={i}
+                data-prize={i}
+                style={{
+                  position: "absolute",
+                  left: "50%",
+                  top: "50%",
+                  /* The label lies along its own spoke: turned so its first character is the one
+                     nearest the middle and its words run out towards the rim, and placed far enough
+                     out to sit in the wedge rather than across the button. */
+                  transform: `translate(-50%, -50%) rotate(${wheelSlice(i, n).start + sweep / 2 - 90}deg) translateX(${Math.round(size * 0.28)}px)`,
+                  color: i === lit ? p.onPrimaryContainer : p.onSurfaceVariant,
+                  fontSize: Math.max(9, Math.round(size * 0.055)),
+                  fontWeight: i === lit ? 700 : 500,
+                  whiteSpace: "nowrap",
+                  maxWidth: Math.round(size * 0.52),
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 2,
+                }}
+              >
+                {pr.icon && <Icon name={pr.icon} size={Math.max(10, Math.round(size * 0.06))} />}
+                {prizeLabel(pr)}
+              </span>
+            ))}
+          </div>
+          {/* the pointer, the rim and the button: none of them turn with the wheel */}
+          <span style={{ position: "absolute", left: "50%", top: -2, marginLeft: -8, width: 0, height: 0, borderLeft: "8px solid transparent", borderRight: "8px solid transparent", borderTop: `14px solid ${p.error}` }} />
+          <span style={{ position: "absolute", inset: 0, borderRadius: "50%", border: `3px solid ${p.outlineVariant}` }} />
+          <span
+            style={{
+              position: "absolute",
+              left: "50%",
+              top: "50%",
+              width: Math.max(48, Math.round(size * 0.3)),
+              height: Math.max(48, Math.round(size * 0.3)),
+              marginLeft: -Math.round(Math.max(48, size * 0.3) / 2),
+              marginTop: -Math.round(Math.max(48, size * 0.3) / 2),
+              borderRadius: "50%",
+              background: p.primary,
+              color: p.onPrimary,
+              display: "grid",
+              placeItems: "center",
+              fontSize: Math.max(10, Math.round(size * 0.065)),
+              fontWeight: 700,
+              textAlign: "center",
+              padding: 4,
+              boxSizing: "border-box",
+              overflow: "hidden",
+            }}
+          >
+            {item.label.trim() || "抽奖"}
+          </span>
+        </div>
+      );
+    }
+
+    case "gridWheel": {
+      // eslint-disable-next-line react-hooks/rules-of-hooks
+      const wheelOf = useWheelRun();
+      /* The same pool laid round the edge of a grid, with the button in the middle: the highlight
+         runs from cell to cell and stops on the prize, which is the shape a nine-cell draw is drawn
+         in. */
+      const prizes = item.prizes && item.prizes.length ? item.prizes : defaultPrizes();
+      const { rows, cols } = gridRing(prizes.length);
+      /* every cell of the edge is drawn; the ones the pool does not reach show the blank prize, so a
+         ring is a ring rather than a few cards and a gap */
+      const cells = gridEdgeCells(prizes.length);
+      const placed = gridRingCells(prizes.length);
+      const run = wheelOf?.(item.id);
+      const lit = run?.lit ?? -1;
+      return (
+        <div style={{ position: "relative", width: "100%", height: "100%", display: "grid", gridTemplateRows: `repeat(${rows}, 1fr)`, gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 4, boxSizing: "border-box", padding: 4 }}>
+          {cells.map((cell, i) => {
+            const at = placed.findIndex((c) => c.row === cell.row && c.col === cell.col);
+            const pr = at >= 0 ? prizes[at] : undefined;
+            const empty = !pr;
+            return (
+              <div
+                key={i}
+                data-prize={i}
+                data-prize-at={at >= 0 ? at : undefined}
+                data-prize-empty={empty ? "" : undefined}
+                style={{
+                  gridRow: cell.row + 1,
+                  gridColumn: cell.col + 1,
+                  borderRadius: 10,
+                  background: at === lit ? p.primaryContainer : i % 2 ? p.surfaceContainerHigh : p.surfaceContainerLow,
+                  color: at === lit ? p.onPrimaryContainer : p.onSurfaceVariant,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 2,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  padding: 2,
+                  boxSizing: "border-box",
+                  fontWeight: at === lit ? 700 : 500,
+                  fontSize: 11,
+                  textAlign: "center",
+                }}
+              >
+                {(pr?.icon ?? (empty ? "sentiment_dissatisfied" : undefined)) && <Icon name={pr?.icon ?? "sentiment_dissatisfied"} size={16} />}
+                <span style={{ maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{prizeLabel(pr)}</span>
+              </div>
+            );
+          })}
+          {rows >= 3 && cols >= 3 && (
+            <div
+              style={{
+                gridRow: `2 / span ${rows - 2}`,
+                gridColumn: `2 / span ${cols - 2}`,
+                borderRadius: 10,
+                background: p.primary,
+                color: p.onPrimary,
+                display: "grid",
+                placeItems: "center",
+                fontWeight: 700,
+                fontSize: 12,
+                textAlign: "center",
+                padding: 4,
+                boxSizing: "border-box",
+                overflow: "hidden",
+              }}
+            >
+              {item.label.trim() || "抽奖"}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     case "loadingIndicator": {
       const s = item.size ?? 48;
       return (
@@ -1770,6 +2006,12 @@ function boxStyle(item: Item, p: Palette): React.CSSProperties {
     return { background: own.main, color: own.on, border: outlined ? `1px solid ${own.main}` : "none" };
   }
   switch (item.kind) {
+    case "joystick":
+      return { background: p.surfaceContainerHighest, color: p.onSurfaceVariant, border: `1px solid ${p.outlineVariant}` };
+    case "wheel":
+      return { background: p.surfaceContainerHighest, color: p.onSurface, border: `1px solid ${p.outlineVariant}` };
+    case "gridWheel":
+      return { background: p.surfaceContainerLow, color: p.onSurface, border: `1px solid ${p.outlineVariant}` };
     case "box": {
       const t = item.fill ?? "surfaceContainerLow";
       return { background: fillColor(t, p, "surfaceContainerLow"), color: fillInk(t, p, "surfaceContainerLow"), border: "none" };

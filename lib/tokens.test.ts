@@ -4,7 +4,7 @@ import { contrastRatio } from "./color";
 import { itemNameOf } from "./flow";
 import { getLang, KIND_TEXT, t } from "./i18n";
 
-import { CELL_DEF, CELL_MAX, CELL_MIN, COLS_MAX, ROWS_MAX, cellGap, cellOf, scrollContent, slotGrid, gridCells, cellBox, gridCheckZ, rulePatch, ruleFieldsFor, readoutOf, hasReadout, unitOf, mixText, readText, VALUE_TOKEN, hasValueToken, valueAfter, maxOf, clampMax, MAX_DEF, MAX_MAX, isValueOp, withGridCells, BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill, childShown, connectedButton, DIALOG_COLOR, childDrawn, badgeSurface, buttonScale, findItemIn, foldMargins, radiiOfRuns, roundByNature, runPartRadii, ROUND_SHAPES, foldPlace, foldShift, layoutOf, NO_FOLD, fitTabPanels, keepPanelSlots, liftAbove, isStateEffect, STATE_EFFECTS, START_LOOK, firstTapStep, firstDueStep, waitLeft, lookItem, lookAt, statesAsFlow, migrateFlows, hasTimedSteps, hasAutoClose, namePanels, rotOf, rotStyle, ROT_MAX, labelSideOf, isTabSide, tabShowsIcon, tabBadge, RAIL_CELL_MIN, RAIL_W, SIDE_RAIL_MIN, SIDE_RAIL_MAX, sideRailW, retiredTransition, TRANSITIONS, layerEntryOffset, panelBox, isTabRow, isSideTabs, SIDE_TAB_W, syncTabPanels, foldOrphanPanels, drawnIds, isTabPanel, freshPanel, AUTO_HIDE_STEP, AUTO_CLOSE_DEF, RULE_ACTIONS, isRuleKind, fillColor, fillInk, TRANSPARENT, cardFillOf, type PartFlow, type PartLook, type PartStep, type MachineAt, NAV_ICON, NAV_INDICATOR, NAV_INDICATOR_R, NAV_LABEL_FONT, selectedAncestor, takesText, panelSlotFor, refillPanels, restorePanel, slotsOf, resizedChildren, needsTabPanels, tabIndexOf, tabPanelId, tabRenamePatch, tabPanelsPatch, tabStyleOf, TAB_PANEL_H, TAB_ROW_H, onToken, pageTintOf, PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type Kind, type ItemState, type PlacedItem, type Frame } from "./tokens";
+import { JOYSTICK_TRAVEL, CELL_DEF, CELL_MAX, CELL_MIN, COLS_MAX, ROWS_MAX, cellGap, cellOf, scrollContent, slotGrid, gridCells, cellBox, gridCheckZ, rulePatch, ruleFieldsFor, readoutOf, hasReadout, unitOf, mixText, readText, VALUE_TOKEN, hasValueToken, valueAfter, maxOf, clampMax, MAX_DEF, MAX_MAX, isValueOp, withGridCells, BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill, childShown, connectedButton, DIALOG_COLOR, childDrawn, badgeSurface, buttonScale, findItemIn, foldMargins, radiiOfRuns, roundByNature, runPartRadii, ROUND_SHAPES, foldPlace, foldShift, layoutOf, NO_FOLD, fitTabPanels, keepPanelSlots, liftAbove, isStateEffect, STATE_EFFECTS, START_LOOK, firstTapStep, firstDueStep, waitLeft, lookItem, lookAt, statesAsFlow, migrateFlows, hasTimedSteps, hasAutoClose, namePanels, rotOf, rotStyle, ROT_MAX, labelSideOf, isTabSide, tabShowsIcon, tabBadge, RAIL_CELL_MIN, RAIL_W, SIDE_RAIL_MIN, SIDE_RAIL_MAX, sideRailW, retiredTransition, TRANSITIONS, layerEntryOffset, panelBox, prizeChances, pickPrize, wheelSlice, wheelStopAngle, wheelIndexAt, gridRing, gridRingCells, joystickAngle, joystickKnob, isTabRow, isSideTabs, SIDE_TAB_W, syncTabPanels, foldOrphanPanels, drawnIds, isTabPanel, freshPanel, AUTO_HIDE_STEP, AUTO_CLOSE_DEF, RULE_ACTIONS, isRuleKind, fillColor, fillInk, TRANSPARENT, cardFillOf, type PartFlow, type PartLook, type PartStep, type MachineAt, NAV_ICON, NAV_INDICATOR, NAV_INDICATOR_R, NAV_LABEL_FONT, selectedAncestor, takesText, panelSlotFor, refillPanels, restorePanel, slotsOf, resizedChildren, needsTabPanels, tabIndexOf, tabPanelId, tabRenamePatch, tabPanelsPatch, tabStyleOf, TAB_PANEL_H, TAB_ROW_H, onToken, pageTintOf, PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type Kind, type ItemState, type PlacedItem, type Frame } from "./tokens";
 
 afterEach(() => setGlobalShape("rounded")); // restore the module default
 
@@ -1731,5 +1731,84 @@ describe("layerEntryOffset", () => {
   it("a fade, and no animation, start exactly where the page belongs", () => {
     expect(layerEntryOffset("fade", 360, 240, 412, 892)).toEqual({ x: 0, y: 0 });
     expect(layerEntryOffset("none", 360, 240, 412, 892)).toEqual({ x: 0, y: 0 });
+  });
+});
+
+
+describe("the prize wheels", () => {
+  const pool = [{ label: "a" }, { label: "b", weight: 3 }];
+
+  it("gives each prize the share its weight asks for", () => {
+    expect(prizeChances(pool)).toEqual([25, 75]);
+    expect(prizeChances([{ label: "a" }, { label: "b" }, { label: "c" }])).toEqual([33, 33, 34]);
+    expect(prizeChances([])).toEqual([]);
+  });
+
+  it("never draws a prize whose weight is zero", () => {
+    const zero = [{ label: "a", weight: 0 }, { label: "b", weight: 0 }, { label: "c", weight: 1 }];
+    /* only the third prize can come up, whatever the roll */
+    expect(pickPrize(zero, 0)).toBe(2);
+    expect(pickPrize(zero, 0.99)).toBe(2);
+  });
+
+  it("draws by weight, over the whole range of a roll", () => {
+    expect(pickPrize(pool, 0)).toBe(0);
+    expect(pickPrize(pool, 0.24)).toBe(0);
+    expect(pickPrize(pool, 0.26)).toBe(1);
+    expect(pickPrize(pool, 0.999)).toBe(1);
+    expect(pickPrize([], 0.5)).toBe(0);
+  });
+
+  it("draws a wedge for every prize, all the way round", () => {
+    expect(wheelSlice(0, 6)).toEqual({ start: 0, sweep: 60 });
+    expect(wheelSlice(5, 6)).toEqual({ start: 300, sweep: 60 });
+  });
+
+  it("stops with the winning wedge under the pointer", () => {
+    for (const count of [4, 6, 8]) {
+      for (let i = 0; i < count; i++) {
+        const angle = wheelStopAngle(i, count, 5);
+        expect(wheelIndexAt(angle, count)).toBe(i);
+      }
+    }
+    expect(wheelStopAngle(0, 6, 5)).toBe(1800 - 30);
+  });
+
+  it("reads the wedge a turning wheel shows", () => {
+    expect(wheelIndexAt(0, 6)).toBe(0);
+    expect(wheelIndexAt(-59, 6)).toBe(0);
+    expect(wheelIndexAt(-61, 6)).toBe(1);
+    expect(wheelIndexAt(-359, 6)).toBe(5);
+  });
+
+  it("lays a square wheel's prizes round the edge, with the middle left for the button", () => {
+    expect(gridRing(8)).toEqual({ rows: 3, cols: 3 });
+    expect(gridRing(6)).toEqual({ rows: 3, cols: 3 });
+    /* nine prizes take three rows of four — ten cells round the edge — not a five-by-five */
+    expect(gridRing(9)).toEqual({ rows: 3, cols: 4 });
+    expect(gridRing(16)).toEqual({ rows: 5, cols: 5 });
+    expect(gridRingCells(8)).toHaveLength(8);
+    /* every cell is on the edge of the grid, so the middle stays free */
+    for (const cell of gridRingCells(8)) expect(cell.row === 0 || cell.col === 0 || cell.row === 2 || cell.col === 2).toBe(true);
+    expect(gridRing(12)).toEqual({ rows: 4, cols: 4 });
+    const seen = new Set(gridRingCells(8).map((c) => `${c.row},${c.col}`));
+    expect(seen.size).toBe(8);
+  });
+});
+
+describe("the direction wheel", () => {
+  it("reads an angle from a finger, straight up being zero", () => {
+    expect(joystickAngle(0, -10)).toBe(0);
+    expect(joystickAngle(10, 0)).toBe(90);
+    expect(joystickAngle(0, 10)).toBe(180);
+    expect(joystickAngle(-10, 0)).toBe(270);
+  });
+
+  it("places the knob on the angle, inside the pad", () => {
+    const r = 132;
+    const travel = Math.round(r * JOYSTICK_TRAVEL);
+    expect(joystickKnob(0, r)).toEqual({ dx: 0, dy: -travel });
+    expect(joystickKnob(90, r)).toEqual({ dx: travel, dy: 0 });
+    expect(joystickKnob(0, r, false)).toEqual({ dx: 0, dy: 0 });
   });
 });

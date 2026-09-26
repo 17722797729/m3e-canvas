@@ -5,6 +5,11 @@ import type { Item } from "@/lib/tokens";
 import { AnimatePresence, animate, motion, useMotionValue, useTransform, useReducedMotion, useIsPresent } from "motion/react";
 import type { TargetAndTransition, Variants } from "motion/react";
 import {
+  JOYSTICK_TRAVEL,
+  joystickAngle,
+  defaultPrizes,
+  pickPrize,
+  wheelStopAngle,
   fillColor,
   fillInk,
   Action,
@@ -98,7 +103,7 @@ import {
   type OverlayLevel,
   type Kind,
 } from "@/lib/tokens";
-import { GridCellMarks, Icon, M3Node, ValueContext } from "./M3Node";
+import { GridCellMarks, Icon, M3Node, ValueContext, type WheelRun } from "./M3Node";
 import { IconBtn } from "./ui";
 import { t, useLang } from "@/lib/i18n";
 import { constrainModalRails, modalRailOf, updateRail } from "@/lib/rail";
@@ -198,9 +203,17 @@ const navKeyOf = (it: Item) => `nav:${it.kind}:${(it.tabs ?? []).map((t) => t.la
 /** The kinds whose value a visitor changes: a slider to scrub, a stepper to walk, a slider field to
  *  do both. One list, because a part of one of these kinds has to answer the same way wherever it
  *  stands — on the screen, inside a container, or inside a dialog panel. */
-const VALUE_KINDS: Kind[] = ["slider", "stepper", "progressBar", "linearProgress", "circularProgress"];
+const VALUE_KINDS: Kind[] = ["slider", "stepper", "progressBar", "linearProgress", "circularProgress", "joystick"];
 const SCRUBS: Kind[] = ["slider"];
 const STEPS: Kind[] = ["stepper"];
+/** the pad, whose knob is dragged anywhere inside it, and the two draws, which are tapped */
+const PADS: Kind[] = ["joystick"];
+const DRAWS: Kind[] = ["wheel", "gridWheel"];
+/** How long a draw takes, and how many whole turns the round wheel makes on the way. */
+const SPIN_MS = 2600;
+const SPIN_TURNS = 5;
+/** The highlight steps round the pool about this often at the start, slowing towards the end. */
+const SPIN_STEPS = 26;
 
 /** Whether a board's cell is ticked right now: how the author left it, flipped by every tap since
  *  the preview opened — the same rule the visitor's own taps follow everywhere else. */
@@ -292,6 +305,8 @@ function Tappable({
   looks,
   checkOf,
   liveValue,
+  wheelOf,
+  onSpin,
   onSet,
   setValue,
   readout,
@@ -309,6 +324,10 @@ function Tappable({
   checkOf?: (it: Item) => boolean;
   /** The live value the visitor has moved a slider to, by part */
   liveValue?: (it: Item) => number | undefined;
+  /** what a prize wheel is showing while it spins */
+  wheelOf?: (id: string) => WheelRun | undefined;
+  /** starts a prize wheel's draw */
+  onSpin?: (it: Item) => void;
   /** A control inside the part asking for a value of its own: the box and the buttons of a stepper */
   onSet?: (v: number) => void;
   /** The screen's own setter, for a control inside a part the container holds */
@@ -494,6 +513,20 @@ function Tappable({
     onValue(clampValue(share * maxOf(item), maxOf(item)));
   };
 
+  /* The pad is dragged anywhere inside it: the knob follows the finger and the direction it points
+     at is the part's value, so a movement wheel reads the same way a slider does. The middle is not a
+     direction, so a finger there is worth nothing rather than a random angle. */
+  const dragPad = (e: React.PointerEvent) => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r || !onValue) return;
+    const dx = e.clientX - (r.left + r.width / 2);
+    const dy = e.clientY - (r.top + r.height / 2);
+    const travel = Math.max(1, Math.min(r.width, r.height) * JOYSTICK_TRAVEL);
+    onValue(Math.hypot(dx, dy) < travel * 0.22 ? 0 : clampValue(joystickAngle(dx, dy), maxOf(item)));
+  };
+  const isPad = item.kind === "joystick";
+  const dragPart = (e: React.PointerEvent) => (isPad ? dragPad(e) : dragValue(e));
+
   /** hit areas for the icons on a top app bar and the destinations on a navigation bar */
   const slots: { key: string; style: React.CSSProperties }[] = [];
   if (onSlot && item.kind === "topAppBar") {
@@ -661,16 +694,20 @@ function Tappable({
         if (onValue) {
           e.stopPropagation();
           e.currentTarget.setPointerCapture(e.pointerId);
-          dragValue(e);
+          dragPart(e);
           setPressed(true);
           return;
         }
         if (live) setPressed(true);
       }}
       onPointerMove={(e) => {
-        if (onValue && pressed) dragValue(e);
+        if (onValue && pressed) dragPart(e);
       }}
-      onPointerUp={() => setPressed(false)}
+      onPointerUp={() => {
+        /* a movement stick springs back to the middle unless the author said it stays put */
+        if (isPad && item.joystickReturn !== false) onValue?.(0);
+        setPressed(false);
+      }}
       onPointerCancel={() => setPressed(false)}
       onPointerLeave={() => !onValue && setPressed(false)}
       onClick={
@@ -717,7 +754,7 @@ function Tappable({
     >
       {/* the controls inside a part — a stepper's buttons, a slider field's number — reach the value
           through this, so a part works the same on a screen and inside a dialog panel */}
-      <ValueContext.Provider value={{ onSet }}>
+      <ValueContext.Provider value={{ onSet, wheel: wheelOf }}>
       <M3Node
         item={view}
         palette={p}
@@ -911,6 +948,8 @@ function Screen({
   onValue,
   runtime,
   dialog,
+  wheelOf,
+  onSpin,
   scrollRt,
   onRule,
 }: {
@@ -932,6 +971,9 @@ function Screen({
   runtime: StateRuntime;
   /** the dialog this screen has open, if any: an in-page overlay, not another screen */
   dialog: { openId: string | null; onOpen: (id: string | null) => void };
+  /** what a prize wheel is showing while it spins, and how a draw is started */
+  wheelOf?: (id: string) => WheelRun | undefined;
+  onSpin?: (it: Item) => void;
   /** the live scroll of the containers on this screen */
   scrollRt?: ScrollRuntime;
   /** runs one rule action: what a timed rule does when its wait is over */
@@ -1282,7 +1324,9 @@ function Screen({
             };
             if (it.slotFlows && it.tabs?.length) shown = { ...shown, tabs: it.tabs.map(tabLook) };
             const tap =
-              act || flips(it) || it.flow
+              DRAWS.includes(it.kind)
+                ? () => onSpin?.(it)
+                : act || flips(it) || it.flow
                 ? () => {
                     if (flips(it)) onFlip(it.id);
                     /* The machine is not run here: the tap itself takes the step, before this
@@ -1316,7 +1360,9 @@ function Screen({
                 childSlot={pickSlot}
                 childMenu={(id, open) => setMenuId(open ? id : null)}
                 menuOpenId={menuId}
-                onValue={SCRUBS.includes(it.kind) ? (v) => onValue(it.id, v) : undefined}
+                onValue={VALUE_KINDS.includes(it.kind) ? (v) => onValue(it.id, v) : undefined}
+                wheelOf={wheelOf}
+                onSpin={onSpin}
                 onSet={STEPS.includes(it.kind) ? (v) => onValue(it.id, v) : undefined}
                 navToggle={
                   it.kind === "bottomNav" && it.barFolded !== undefined
@@ -1432,6 +1478,48 @@ export function Preview({
   /* the in-page overlay each screen has open, keyed by the screen that owns it: two screens can
      each hold a dialog of their own, and stepping away and back finds each one as it was left */
   const [dialogs, setDialogs] = useState<Record<string, string | null>>({});
+  /** what each prize wheel is showing while a draw runs, and the prize a finished draw won */
+  const [runs, setRuns] = useState<Record<string, WheelRun>>({});
+  const [won, setWon] = useState<{ id: string; label: string; icon?: string | null } | null>(null);
+  const runRef = useRef<Record<string, number>>({});
+  /** Spins a wheel: the disc turns to the winning wedge, the highlight runs round the pool, and the
+   *  prize is named when it stops. Which prize comes up is drawn on the weights the author set. */
+  const spin = useCallback((it: Item) => {
+    const prizes = it.prizes && it.prizes.length ? it.prizes : defaultPrizes();
+    if (runRef.current[it.id] !== undefined) return;
+    const index = pickPrize(prizes, Math.random());
+    const n = prizes.length;
+    const angle = it.kind === "wheel" ? wheelStopAngle(index, n, SPIN_TURNS) : 0;
+    setRuns((r) => ({ ...r, [it.id]: { angle: 0, lit: index, ms: 0 } }));
+    const started = performance.now();
+    /* the first frame lays the wheel down where it starts, the next one sends it on its way, so the
+       turn is a transition and not a jump */
+    const go = () => {
+      setRuns((r) => ({ ...r, [it.id]: { angle, lit: index, ms: SPIN_MS } }));
+      const tick = (now: number) => {
+        const t = Math.min(1, (now - started) / SPIN_MS);
+        /* the highlight runs faster than the wheel itself and eases off with it */
+        const stepped = Math.min(SPIN_STEPS, Math.floor(Math.pow(t, 0.55) * SPIN_STEPS));
+        setRuns((r) => ({ ...r, [it.id]: { angle, lit: ((stepped % n) + n) % n, ms: SPIN_MS } }));
+        if (t < 1) {
+          runRef.current[it.id] = requestAnimationFrame(tick);
+          return;
+        }
+        delete runRef.current[it.id];
+        setRuns((r) => ({ ...r, [it.id]: { angle, lit: index, ms: SPIN_MS } }));
+        setWon({ id: it.id, label: prizes[index]?.label ?? "", icon: prizes[index]?.icon ?? null });
+      };
+      runRef.current[it.id] = requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(go);
+  }, []);
+  useEffect(
+    () => () => {
+      for (const frame of Object.values(runRef.current)) cancelAnimationFrame(frame);
+      runRef.current = {};
+    },
+    [],
+  );
   /** whether the rule action just run landed the visitor somewhere: one tap must not land twice */
   const landedRef = useRef(false);
   /* the overlays each screen has open, keyed the same way: a dialog belongs to the screen that
@@ -1926,6 +2014,8 @@ export function Preview({
     values,
     onValue: writeValue,
     runtime: { at, pinned, now, onStep: stepOnTap, take, activeId, onActivate: setActiveId },
+    wheelOf: (id: string) => runs[id],
+    onSpin: spin,
     onRule: runRuleAction,
     /* a container's scroll is a runtime value like a slider's position: what the visitor moved it
        to is remembered per part, and the screen's own swipe gives way to a drag a container claims */
@@ -2062,6 +2152,53 @@ export function Preview({
                 </motion.div>
               </AnimatePresence>
             </motion.div>
+            {won && (
+              <>
+                <div
+                  data-prize-scrim=""
+                  onClick={() => setWon(null)}
+                  style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.32)", zIndex: 40 }}
+                />
+                <div
+                  data-prize-dialog=""
+                  role="dialog"
+                  aria-label={t("wonPrize", lang)}
+                  style={{
+                    position: "absolute",
+                    left: "50%",
+                    top: "50%",
+                    transform: "translate(-50%, -50%)",
+                    minWidth: 220,
+                    maxWidth: "80%",
+                    padding: "22px 20px 14px",
+                    borderRadius: 28,
+                    background: p.surfaceContainerHigh,
+                    color: p.onSurface,
+                    boxShadow: "0 12px 36px rgba(0,0,0,0.28)",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 10,
+                    zIndex: 41,
+                    textAlign: "center",
+                  }}
+                >
+                  <span style={{ fontSize: 13, fontWeight: 600, color: p.onSurfaceVariant }}>{t("wonPrize", lang)}</span>
+                  {won.icon && <Icon name={won.icon} size={40} color={p.primary} />}
+                  <span data-won-label={won.label} style={{ fontSize: 20, fontWeight: 700, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {won.label}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setWon(null)}
+                    className="m3-press"
+                    style={{ marginTop: 4, height: 40, padding: "0 24px", borderRadius: 20, border: "none", background: p.primary, color: p.onPrimary, fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+                  >
+                    {t("ok", lang)}
+                  </button>
+                </div>
+              </>
+            )}
             {peek && peekFrame && (
               <motion.div
                 style={{

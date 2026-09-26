@@ -203,3 +203,14 @@ Icons are Material Symbols names (`home`, `search`, `add`, `favorite`, `settings
 - Every item has `id`, `kind`, `label`, `icon` (or `null`), `variant`.
 - Group coordinates include the screen offset.
 - You are replying with the link (or the JSON), not with a description of it.
+
+## 方向轮盘 / 轮盘抽奖 (direction wheel, prize wheels)
+
+- `kind: "joystick"` — 移动方向轮盘. `value` (0–360) is the direction, 0 = straight up,
+  clockwise; `max` is 360. `joystickReturn: false` keeps the knob where the finger left it
+  (default: it springs back to the middle).
+- `kind: "wheel"` — 圆形轮盘抽奖, and `kind: "gridWheel"` — 方形轮盘抽奖. Both carry
+  `prizes: [{ label, icon?, weight? }]`; the chance of a prize is its weight over the sum of
+  all weights (a weight of 0 can never come up). `label` is the words of the button in the
+  middle. In the preview a tap spins the wheel, the prizes highlight in turn, and a dialog
+  names the prize it stopped on.
