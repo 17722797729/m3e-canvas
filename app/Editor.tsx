@@ -181,9 +181,13 @@ const pruneItems = (items: Item[], gone: Set<string>): Item[] => pruneParts(item
 function migrateGroups(groups: Group[], frames: Frame[]): Group[] {
   const oldNavH = KIND_SPEC.bottomNav.h - NAV_BAR_H;
   /* A part whose kind the palette no longer offers comes back as the part that replaced it: the
-     slider field was the slider and its number in one, and the slider is what is left of it. */
+     slider field was the slider and its number in one, and the slider is what is left of it. The
+     money tree and the eggs draw from a pool of prizes with a button or a tap, which is the capsule
+     machine — so a board written with one keeps its place, its size and its prizes instead of
+     disappearing with the part. */
   const retired = (it: Item): Item => ({
     ...(it.kind === "sliderInput" ? { ...it, kind: "slider" as const, size2: Math.min(it.size2 ?? 44, 44) } : it),
+    ...(it.kind === "moneyTree" || it.kind === "eggSmash" ? { ...it, kind: "gacha" as const, label2: it.label2 ?? "" } : it),
     ...(it.children ? { children: it.children.map(retired) as PlacedItem[] } : {}),
   });
   return syncTabPanels(withGridCells(groups.map((g) => ({ ...g, items: g.items.map(retired) })))).map((g) => {

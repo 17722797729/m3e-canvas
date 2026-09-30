@@ -98,6 +98,7 @@ import {
   maxOf,
   clampValue,
   valueAfter,
+  rewardClaimKey,
   PROGRESS_DEFAULT,
   type RulePatch,
   withLayers,
@@ -210,14 +211,14 @@ const navKeyOf = (it: Item) => `nav:${it.kind}:${(it.tabs ?? []).map((t) => t.la
 /** The kinds whose value a visitor changes: a slider to scrub, a stepper to walk, a slider field to
  *  do both. One list, because a part of one of these kinds has to answer the same way wherever it
  *  stands — on the screen, inside a container, or inside a dialog panel. */
-const VALUE_KINDS: Kind[] = ["slider", "stepper", "progressBar", "linearProgress", "circularProgress", "joystick", "calendar"];
+const VALUE_KINDS: Kind[] = ["slider", "stepper", "progressBar", "linearProgress", "circularProgress", "joystick", "calendar", "rewardTrack"];
 const SCRUBS: Kind[] = ["slider"];
 const STEPS: Kind[] = ["stepper"];
 /** the pad, whose knob is dragged anywhere inside it, and the two draws, which are tapped */
 const PADS: Kind[] = ["joystick"];
-const DRAWS: Kind[] = ["wheel", "gridWheel", "gacha", "slot", "moneyTree", "eggSmash"];
+const DRAWS: Kind[] = ["wheel", "gridWheel", "gacha", "slot"];
 /** the two parts whose second button draws ten at once */
-const TENS: Kind[] = ["gacha", "moneyTree"];
+const TENS: Kind[] = ["gacha"];
 /** the check-in calendar, whose tap signs the next day in */
 const SIGNS: Kind[] = ["calendar"];
 /** How long a draw takes, and how many whole turns the round wheel makes on the way. */
@@ -319,6 +320,8 @@ function Tappable({
   liveValue,
   wheelOf,
   reelsOf,
+  claimOf,
+  claimedOf,
   onSpin,
   onSet,
   setValue,
@@ -339,6 +342,10 @@ function Tappable({
   liveValue?: (it: Item) => number | undefined;
   /** what a prize wheel is showing while it spins */
   wheelOf?: (id: string) => WheelRun | undefined;
+  /** takes a reward on a progress track */
+  claimOf?: (id: string, i: number) => void;
+  /** what a progress track has already handed out */
+  claimedOf?: (id: string, i: number) => boolean;
   /** the three symbols a slot machine shows */
   reelsOf?: (id: string) => number[] | undefined;
   /** starts a prize wheel's draw */
@@ -769,7 +776,7 @@ function Tappable({
     >
       {/* the controls inside a part — a stepper's buttons, a slider field's number — reach the value
           through this, so a part works the same on a screen and inside a dialog panel */}
-      <ValueContext.Provider value={{ onSet, wheel: wheelOf, reels: reelsOf }}>
+      <ValueContext.Provider value={{ onSet, wheel: wheelOf, reels: reelsOf, claim: claimOf, claimed: claimedOf }}>
       <M3Node
         item={view}
         palette={p}
@@ -965,6 +972,8 @@ function Screen({
   dialog,
   wheelOf,
   reelsOf,
+  claimOf,
+  claimedOf,
   onSpin,
   targetOf,
   onDraw,
@@ -992,6 +1001,9 @@ function Screen({
   dialog: { openId: string | null; onOpen: (id: string | null) => void };
   /** what a prize wheel is showing while it spins, and how a draw is started */
   wheelOf?: (id: string) => WheelRun | undefined;
+  /** takes a reward on a progress track, and what it has already handed out */
+  claimOf?: (id: string, i: number) => void;
+  claimedOf?: (id: string, i: number) => boolean;
   onSpin?: (it: Item) => void;
   /** a part by id anywhere in the document, for a text bound across screens */
   targetOf?: (id: string) => Item | null;
@@ -1412,6 +1424,8 @@ function Screen({
                 menuOpenId={menuId}
                 onValue={SCRUBS.includes(it.kind) || PADS.includes(it.kind) ? (v) => onValue(it.id, v) : undefined}
                 wheelOf={wheelOf}
+                claimOf={claimOf}
+                claimedOf={claimedOf}
                 onSpin={onSpin}
                 onSet={STEPS.includes(it.kind) ? (v) => onValue(it.id, v) : undefined}
                 navToggle={
@@ -1562,7 +1576,7 @@ export function Preview({
     const wonIndex = it.kind === "slot" ? slotWin(rolls) : many ? -1 : pickPrize(prizes, Math.random());
     const blank = -1;
     const index = it.kind === "slot" ? (wonIndex >= 0 ? wonIndex : blank) : many ? blank : wonIndex;
-    const angle = it.kind === "wheel" ? wheelStopAngle(pickPrize(prizes, Math.random()), n, SPIN_TURNS) : it.kind === "eggSmash" ? 62 : 0;
+    const angle = it.kind === "wheel" ? wheelStopAngle(pickPrize(prizes, Math.random()), n, SPIN_TURNS) : 0;
     if (it.kind === "slot") setReels((r) => ({ ...r, [it.id]: rolls }));
     setRuns((r) => ({ ...r, [it.id]: { angle: 0, lit: index, ms: 0 } }));
     const started = performance.now();
@@ -1588,9 +1602,6 @@ export function Preview({
           const win = wonIndex >= 0 ? prizes[wonIndex] : undefined;
           setWon({ id: it.id, label: prizeLabel(win), icon: win?.icon ?? "sentiment_dissatisfied" });
           return;
-        }
-        if (it.kind === "eggSmash") {
-          setValues((v) => ({ ...v, [it.id]: Math.min(n, (v[it.id] ?? it.value ?? 0) + 1) }));
         }
         if (many) {
           /* ten draws of the same prize are one line with a count: "first prize ×2" */
@@ -2125,6 +2136,10 @@ export function Preview({
     onValue: writeValue,
     runtime: { at, pinned, now, onStep: stepOnTap, take, activeId, onActivate: setActiveId },
     wheelOf: (id: string) => runs[id],
+    /* a reward is taken once and stays taken: the claim is a runtime value like a slider's position,
+       so it survives the visitor walking off the screen and coming back */
+    claimOf: (id: string, i: number) => setValues((v) => (v[rewardClaimKey(id, i)] ? v : { ...v, [rewardClaimKey(id, i)]: 1 })),
+    claimedOf: (id: string, i: number) => (values[rewardClaimKey(id, i)] ?? 0) === 1,
     reelsOf: (id: string) => reels[id],
     onSpin: spin,
     onDraw: draw,

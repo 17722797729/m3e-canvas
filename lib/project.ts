@@ -24,6 +24,20 @@ const validTabs = (tabs: unknown) =>
     ));
 
 /** the pool a prize wheel draws from: what each prize says, and how likely it is */
+/** A reward track's list: where each reward waits, and what it hands out. `at` decides where its
+ *  tile lands on the bar, so a value this build cannot read would draw the track wrong. */
+const validRewards = (rewards: unknown) =>
+  rewards === undefined ||
+  (Array.isArray(rewards) &&
+    rewards.every(
+      (r) =>
+        isRecord(r) &&
+        Number.isFinite(r.at) &&
+        (r.at as number) >= 0 &&
+        typeof r.label === "string" &&
+        (typeof r.icon === "string" || r.icon === null || r.icon === undefined),
+    ));
+
 const validPrizes = (prizes: unknown) =>
   prizes === undefined ||
   (Array.isArray(prizes) &&
@@ -178,6 +192,7 @@ const validItem = (item: unknown): boolean =>
   (item.joystickReturn === undefined || typeof item.joystickReturn === "boolean") &&
   (item.many === undefined || (Number.isFinite(item.many) && (item.many as number) >= 2)) &&
   validPrizes(item.prizes) &&
+  validRewards(item.rewards) &&
   validTabs(item.tabs);
 
 const validGroup = (group: unknown) =>

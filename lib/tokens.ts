@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { FAB_MENU_TABS, GAME_NAV_TABS, KIND_TEXT,
-  PRIZE_TEXT, Lang, TAB_LABELS, getLang, t, SELECT_OPTIONS } from "./i18n";
+  PRIZE_TEXT, REWARD_TEXT, Lang, TAB_LABELS, getLang, t, SELECT_OPTIONS } from "./i18n";
 import { Contrast, isHex, isLightColor, onColorFor, schemeFromSeed } from "./color";
 
 /* ---------- geometry ---------- */
@@ -640,8 +640,11 @@ export type Kind =
   | "gacha"
   | "slot"
   | "calendar"
+  /* Retired kinds: the palette no longer offers them, a document that holds one is still read
+     (see LEGACY_KINDS), and the editor turns it into the part that replaced it. */
   | "moneyTree"
   | "eggSmash"
+  | "rewardTrack"
   | "radio"
   | "badge";
 
@@ -718,6 +721,8 @@ export type KindSpec = {
   hasValue?: boolean;
   /** carries a pool of prizes, each with its own chance: a wheel that is drawn */
   hasPrizes?: boolean;
+  /** carries a list of rewards along a track, each claimable at its own progress */
+  hasRewards?: boolean;
   hasWavy?: boolean;
   hasContained?: boolean;
   connect?: ConnectSpec;
@@ -761,7 +766,17 @@ export const SIZE_MIN = 20;
 
 /** Kinds the palette no longer offers but a document may still hold: they stay readable so an older
  *  document opens, and the editor's reader turns them into what the palette offers instead. */
-export const LEGACY_KINDS: Kind[] = ["sliderInput"];
+export const LEGACY_KINDS: Kind[] = ["sliderInput", "moneyTree", "eggSmash"];
+
+/** How tall a fresh track is, and the measurements its own drawing is laid out with: the square tile
+ *  a reward sits in, the room between two tiles, the bar itself, and the line of numbers under it. */
+export const REWARD_TRACK_H = 108;
+export const REWARD_TILE = 56;
+export const REWARD_TILE_GAP = 8;
+export const REWARD_NUM_H = 18;
+/** The progress a fresh track runs to, which is what the four default rewards are laid out on. */
+export const REWARD_DEF_MAX = 60;
+export const REWARD_DEFAULT_ATS = [10, 20, 30, 60];
 
 export const KIND_SPEC: Record<Kind, KindSpec> = {
   box: {
@@ -1591,6 +1606,52 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     defIcon: null,
     defSize: GACHA_W,
   },
+    rewardTrack: {
+    label: "Reward track",
+    /* A progress bar that hands things out: the visitor's progress is the part's value, and every
+       reward on the track is claimed by tapping it once the progress has reached it. */
+    noun: "報酬トラック",
+    category: "features",
+    paletteIcon: "linear_scale",
+    w: CONTENT_W,
+    h: REWARD_TRACK_H,
+    radius: 20,
+    hasVariant: false,
+    /* the track is its own drawing: a bar, the marks along it and a tile over each one, so there is
+       no part label to draw on it */
+    hasLabel: false,
+    hasSupporting: false,
+    hasIcon: false,
+    hasRewards: true,
+    hasValue: true,
+    size: { min: 200, max: PHONE_W, step: 4, icon: "width", presets: [CONTENT_W, PHONE_W] },
+    size2: { min: 84, max: 220, step: 4, icon: "height", presets: [96, REWARD_TRACK_H, 130] },
+    defLabel: "",
+    defIcon: null,
+    defSize: CONTENT_W,
+  },
+    slot: {
+    label: "Shake to draw",
+    noun: "シェイク",
+    category: "features",
+    paletteIcon: "casino",
+    w: SLOT_W,
+    h: SLOT_H,
+    radius: 18,
+    hasVariant: false,
+    hasLabel: true,
+    hasSupporting: false,
+    hasIcon: false,
+    hasPrizes: true,
+    size: { min: 120, max: 420, step: 4, icon: "width", presets: [220, 280, 340] },
+    size2: { min: 80, max: 260, step: 4, icon: "height", presets: [120, 150, 190] },
+    defLabel: "摇一摇",
+    defIcon: null,
+    defSize: SLOT_W,
+  },
+  /* retired: the palette offers neither of these any more — a document that holds one is migrated
+     *  to the capsule machine on load (see `migrateGroups`), and this is here so the part still
+     *  measures correctly on the way through */
   eggSmash: {
     label: "Golden eggs",
     noun: "金の卵",
@@ -1629,25 +1690,6 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     defLabel: "摇一摇",
     defIcon: null,
     defSize: 190,
-  },
-  slot: {
-    label: "Slot machine",
-    noun: "スロット",
-    category: "features",
-    paletteIcon: "casino",
-    w: SLOT_W,
-    h: SLOT_H,
-    radius: 18,
-    hasVariant: false,
-    hasLabel: true,
-    hasSupporting: false,
-    hasIcon: false,
-    hasPrizes: true,
-    size: { min: 120, max: 420, step: 4, icon: "width", presets: [220, 280, 340] },
-    size2: { min: 80, max: 260, step: 4, icon: "height", presets: [120, 150, 190] },
-    defLabel: "拉一下",
-    defIcon: null,
-    defSize: SLOT_W,
   },
   calendar: {
     label: "Check-in calendar",
@@ -1733,8 +1775,7 @@ export const KIND_ORDER: Kind[] = [
   "gacha",
   "slot",
   "calendar",
-  "moneyTree",
-  "eggSmash",
+  "rewardTrack",
 ];
 
 /* ---------- screen data ---------- */
@@ -1844,6 +1885,9 @@ export type Item = {
   /** A text that reads another part instead of its own words: the id of the part whose value it
    *  shows — a volume slider's number beside the slider, live while the visitor drags it. */
   shows?: string;
+  /** A reward track's own list: what waits at each step of the progress, and how far along that is.
+   *  The part's own `value` is how far the visitor has come. */
+  rewards?: Reward[];
   /** Sliders and bars: draw the value on the part itself, so a number a button or a drag moves is
    *  there to be read without a second component bound to it. */
   showValue?: boolean;
@@ -2477,7 +2521,7 @@ export function actionsOf(it: Item): { slot: string; action: Action }[] {
 }
 
 /** kinds a user can tap in the preview */
-export const TAPPABLE: Kind[] = ["button", "iconButton", "fab", "extendedFab", "chip", "listItem", "card", "image", "text", "splitButton", "radio", "wheel", "gridWheel", "gacha", "slot", "calendar", "moneyTree", "eggSmash"];
+export const TAPPABLE: Kind[] = ["button", "iconButton", "fab", "extendedFab", "chip", "listItem", "card", "image", "text", "splitButton", "radio", "wheel", "gridWheel", "gacha", "slot", "calendar", "rewardTrack"];
 
 /** Where each day of a check-in calendar sits: seven to a row, the way a month is printed. */
 export function calendarCell(day: number): { row: number; col: number } {
@@ -2493,6 +2537,69 @@ export const calendarRows = (days: number = CALENDAR_DAYS) => Math.ceil(Math.max
  *  written as weights rather than percentages: the wheel works out a share of the whole, so an author
  *  adding a prize never has to go back and re-add the others to a hundred. */
 export type Prize = { label: string; icon?: string | null; weight?: number };
+
+/* ---------- a reward track ---------- */
+
+/** One thing a progress track hands out: where on the track it waits (`at`, in the part's own
+ *  range), the icon on its tile, and the words under it — the count of what is given, usually. */
+export type Reward = { at: number; icon?: string | null; label: string };
+
+/** The rewards an author has not written any of: four steps along the default track. */
+export function defaultRewards(): Reward[] {
+  const icons = ["redeem", "savings", "inventory_2", "workspace_premium"];
+  return REWARD_DEFAULT_ATS.map((at, i) => ({ at, icon: icons[i % icons.length], label: REWARD_TEXT[getLang()][i] ?? "" }));
+}
+
+/** A track's rewards: the author's own, or the four that come with a fresh one. */
+export const rewardsOf = (it: { rewards?: Reward[] }): Reward[] => (it.rewards && it.rewards.length ? it.rewards : defaultRewards());
+
+/** Where a reward's count sits on the track: the author's number, kept inside the range the bar
+ *  actually runs to, so a reward typed past the end still shows on it rather than off it. */
+export const rewardAt = (r: Reward, max: number): number => Math.max(0, Math.min(max, Math.round(r.at)));
+
+/** Whether the visitor has come far enough for a reward: at the number itself it is ready, which is
+ *  what the mock everyone draws shows — the reward sitting on the mark is the one just unlocked. */
+export const rewardReady = (value: number, at: number): boolean => value >= at;
+
+/** Where a reward's claim is remembered at runtime: one key per reward, so a claimed one stays
+ *  claimed while the visitor moves on and comes back. */
+export const rewardClaimKey = (id: string, i: number) => `${id}:claim:${i}`;
+
+/** One reward as it is drawn: its place along the track in pixels, and whether it is in reach. */
+export type RewardMark = { i: number; reward: Reward; at: number; pct: number; x: number; y: number; size: number; ready: boolean };
+
+/** How a track lays its own rewards out: tiles along the top, each over the mark it belongs to, and
+ *  the bar along the bottom. Tiles are pushed apart rather than drawn one over the other, keeping the
+ *  order the author gave them, so two rewards close together still read as two. */
+export function rewardMarks(it: Item, widths: Record<string, number>): { w: number; h: number; tile: number; barY: number; barH: number; numH: number; value: number; max: number; marks: RewardMark[] } {
+  const { w, h } = sizeOf(it, widths);
+  const max = maxOf(it);
+  const value = clampValue(it.value ?? 0, max);
+  const tile = Math.max(24, Math.min(REWARD_TILE, Math.round(h * 0.52)));
+  const numH = Math.max(12, Math.min(REWARD_NUM_H, Math.round(h * 0.18)));
+  const barH = Math.max(8, Math.min(REWARD_NUM_H, Math.round(h * 0.18)));
+  const barY = Math.max(tile, h - numH - barH);
+  const rewards = rewardsOf(it);
+  /* left to right, a tile never sits closer to the last one than a tile and the gap: the author's
+     order is what a track reads by, and a later reward belongs further along */
+  const marks: RewardMark[] = rewards.map((reward, i) => {
+    const at = rewardAt(reward, max);
+    const pct = max > 0 ? at / max : 0;
+    return { i, reward, at, pct, x: Math.round(pct * w - tile / 2), y: 0, size: tile, ready: rewardReady(value, at) };
+  });
+  let cursor = 0;
+  for (const m of marks) {
+    m.x = Math.max(m.x, cursor);
+    cursor = m.x + tile + REWARD_TILE_GAP;
+  }
+  /* and back from the end, so the last reward on the track stays on the track */
+  let back = w - tile;
+  for (let i = marks.length - 1; i >= 0; i--) {
+    marks[i].x = Math.min(Math.max(marks[i].x, 0), Math.max(0, back));
+    back = marks[i].x - tile - REWARD_TILE_GAP;
+  }
+  return { w, h, tile, barY, barH, numH, value, max, marks };
+}
 
 /** What the second button of a capsule machine says — "ten at once" unless the author writes
  *  something else. */
@@ -3550,8 +3657,18 @@ export function makeItem(kind: Kind): Item {
   if (s.defSize !== undefined) it.size = s.defSize;
   if (s.hasChecked) it.checked = kind !== "chip";
   /* a fresh wheel comes with a pool to draw from, and a pad with a full turn to point at */
-  if (kind === "wheel" || kind === "gridWheel" || kind === "gacha" || kind === "slot" || kind === "moneyTree" || kind === "eggSmash") it.prizes = defaultPrizes();
-  if (kind === "gacha" || kind === "moneyTree") it.label2 = "";
+  if (kind === "wheel" || kind === "gridWheel" || kind === "gacha" || kind === "slot") it.prizes = defaultPrizes();
+  if (kind === "gacha") it.label2 = "";
+  if (kind === "rewardTrack") {
+    /* a track an author drops is already a working one: four rewards spread along it and the
+       visitor part of the way there, so the thing that makes it a track — a reward going from
+       ready to claimed — can be tried on the spot. Its progress is a count of things, not a share
+       of a hundred, so its number carries no percent sign. */
+    it.rewards = defaultRewards();
+    it.max = REWARD_DEF_MAX;
+    it.value = 20;
+    it.unit = false;
+  }
   if (kind === "joystick") it.max = 360;
   if (kind === "box") {
     it.size2 = 220;
@@ -3660,8 +3777,7 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
     case "gacha":
     case "slot":
     case "calendar":
-    case "moneyTree":
-    case "eggSmash":
+    case "rewardTrack":
       return { w: n, h: it.size2 ?? s.h };
     case "text":
       return { w: widths[it.id] ?? 120, h: Math.round(n * 1.3) };
@@ -4237,7 +4353,7 @@ export function ruleTargets(
 /* ---------- what a bound text reads ---------- */
 
 /** The kinds whose value a text can read: the ones a visitor can move or choose. */
-export const READOUT_KINDS: Kind[] = ["slider", "stepper", "progressBar", "linearProgress", "circularProgress", "select", "tabs", "sideTabs"];
+export const READOUT_KINDS: Kind[] = ["slider", "stepper", "progressBar", "linearProgress", "circularProgress", "rewardTrack", "select", "tabs", "sideTabs"];
 
 /** Whether a part has a value worth showing beside it. */
 export const hasReadout = (it: Item) => READOUT_KINDS.includes(it.kind) || !!it.switch || !!it.autoClose;

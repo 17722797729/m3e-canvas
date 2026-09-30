@@ -82,6 +82,7 @@ import {
   fillColor,
   fillInk,
   slotGrid,
+  rewardMarks,
   cellSlot,
   CELL_DEF,
   CELL_NAME_FONT,
@@ -100,7 +101,7 @@ import {
   clampValue,
 } from "@/lib/tokens";
 import { CircularProgress, LinearProgress, LoadingIndicator } from "./Loading";
-import { t, useLang } from "@/lib/i18n";
+import { KIND_TEXT, t, useLang } from "@/lib/i18n";
 import { useTheme } from "@/lib/theme";
 import { railSelectedLabelColor } from "@/lib/color";
 
@@ -160,6 +161,7 @@ const NO_BOX: Kind[] = [
   "splitButton",
   "fabMenu",
   "badge",
+  "rewardTrack",
 ];
 
 /** Padding follows M3: icon+label is tighter than label alone. */
@@ -696,11 +698,21 @@ export const ValueContext = createContext<{
   /** what a prize wheel is doing right now: how far its disc has turned, which prize is lit, and how
    *  long the turn takes. Absent on the canvas, where a wheel is drawn at rest. */
   wheel?: (id: string) => WheelRun | undefined;
+  /** takes a reward on a track, by the part and the place of the reward in its list. Given only
+   *  where there is a visitor to take it: the preview. */
+  claim?: (id: string, i: number) => void;
+  /** whether that reward has been taken already */
+  claimed?: (id: string, i: number) => boolean;
 }>({});
 const useValueControls = () => useContext(ValueContext);
 /** What a prize wheel is doing, if it is spinning at all. */
 const useWheelRun = () => useContext(ValueContext).wheel;
 const useReels = () => useContext(ValueContext).reels;
+/** How a reward track takes a reward: the callback that claims one, and what is already claimed. */
+const useClaims = () => {
+  const cbs = useContext(ValueContext);
+  return { claim: cbs.claim, claimed: cbs.claimed };
+};
 
 /** The value a slider, a slider field or a stepper stands at: what the author set, 0 when unset —
  *  clamped to the part's own range, so a slider that runs to ten thousand is read on its own scale. */
@@ -858,7 +870,7 @@ function ValueRow({ item, p }: { item: Item; p: Palette }) {
   );
 }
 
-function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: number }) {
+function Body({ item, p, tabScroll, widths }: { item: Item; p: Palette; tabScroll?: number; widths?: Record<string, number> }) {
   const lang = useLang();
   const w = useWeight();
   const hasLabel = item.label.trim().length > 0;
@@ -2116,151 +2128,8 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
       );
     }
 
-    case "eggSmash": {
-      // eslint-disable-next-line react-hooks/rules-of-hooks
-      const wheelOf = useWheelRun();
-      /* A row of golden eggs under a hammer: a tap swings the hammer down, the egg it lands on
-         cracks, and the prize it held comes up in the dialog. The cracked eggs are the part's own
-         value, so the canvas shows what the author left and the preview adds to it. */
-      const prizes = item.prizes && item.prizes.length ? item.prizes : defaultPrizes();
-      const run = wheelOf?.(item.id);
-      const n = Math.min(6, Math.max(3, prizes.length));
-      const smashed = clampValue(item.value ?? 0, n);
-      const w = item.size ?? 260;
-      const h = item.size2 ?? 200;
-      return (
-        <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", padding: 8, boxSizing: "border-box", gap: 6 }}>
-          <span
-            data-egg-hammer=""
-            style={{
-              position: "absolute",
-              left: "50%",
-              top: 4,
-              marginLeft: -Math.round(w * 0.06),
-              width: Math.round(w * 0.12),
-              height: Math.round(h * 0.42),
-              transformOrigin: "50% 90%",
-              transform: `rotate(${run ? 62 : 0}deg)`,
-              transition: run ? "transform 900ms cubic-bezier(0.4, 0, 0.2, 1)" : undefined,
-              display: "grid",
-              placeItems: "center",
-              color: p.onSurfaceVariant,
-            }}
-          >
-            <Icon name="hardware" size={Math.max(18, Math.round(w * 0.09))} />
-          </span>
-          <div style={{ display: "flex", gap: 6, alignItems: "flex-end", justifyContent: "center" }}>
-            {Array.from({ length: n }, (_, i) => {
-              const broken = i < smashed;
-              return (
-                <span
-                  key={i}
-                  data-egg={i}
-                  data-egg-broken={broken ? "" : undefined}
-                  style={{
-                    position: "relative",
-                    width: Math.round(w / n) - 8,
-                    height: Math.round(h * 0.4),
-                    borderRadius: "50% 50% 45% 45% / 60% 60% 40% 40%",
-                    background: broken ? p.surfaceContainerHigh : "#ffd54f",
-                    border: `2px solid ${p.outlineVariant}`,
-                    display: "grid",
-                    placeItems: "center",
-                    color: "#7a5c00",
-                    fontSize: Math.max(10, Math.round(w / n * 0.22)),
-                    fontWeight: 700,
-                    overflow: "hidden",
-                  }}
-                >
-                  {broken ? (
-                    <span style={{ display: "grid", placeItems: "center", color: p.outline }}>
-                      <Icon name="egg_alt" size={Math.round(w / n * 0.4)} />
-                    </span>
-                  ) : (
-                    "?"
-                  )}
-                </span>
-              );
-            })}
-          </div>
-          <div style={{ textAlign: "center", fontSize: 12, fontWeight: 700, color: p.onSurfaceVariant, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label.trim()}</div>
-        </div>
-      );
-    }
-
-    case "moneyTree": {
-      // eslint-disable-next-line react-hooks/rules-of-hooks
-      const wheelOf = useWheelRun();
-      /* A tree of coins: it shakes while a draw runs — every coin shifted by the run the preview
-         sends — and the two buttons along its foot draw one or ten. */
-      const prizes = item.prizes && item.prizes.length ? item.prizes : defaultPrizes();
-      const run = wheelOf?.(item.id);
-      const lit = run?.lit ?? -1;
-      const w = item.size ?? 190;
-      const h = item.size2 ?? 220;
-      const coins = Math.min(14, Math.max(6, prizes.length + 3));
-      return (
-        <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", flexDirection: "column", padding: 8, boxSizing: "border-box", gap: 6 }}>
-          <div
-            data-tree-canopy=""
-            style={{
-              position: "relative",
-              flex: 1,
-              minHeight: 0,
-              /* shaken, not turned: the whole crown swings while a draw runs */
-              transform: run ? `translateX(${(Math.sin(run.lit * 2.4) * w * 0.035).toFixed(1)}px) rotate(${(Math.sin(run.lit * 2.4) * 1.6).toFixed(1)}deg)` : undefined,
-              transition: run ? "transform 90ms linear" : undefined,
-              transformOrigin: "50% 90%",
-            }}
-          >
-            <span style={{ position: "absolute", left: "50%", bottom: 0, width: Math.max(10, Math.round(w * 0.1)), height: "38%", marginLeft: -Math.round(Math.max(10, w * 0.1) / 2), borderRadius: 6, background: "#8d6e63" }} />
-            {Array.from({ length: coins }, (_, i) => {
-              const a = (i / coins) * Math.PI * 2;
-              const jiggle = run ? Math.sin((run.lit + i) * 1.9) * 0.08 : 0;
-              const r = 0.3 + jiggle + (i % 3) * 0.07;
-              const s = Math.max(12, Math.round(Math.min(w, h) * 0.13));
-              return (
-                <span
-                  key={i}
-                  data-tree-coin={i}
-                  style={{
-                    position: "absolute",
-                    left: `calc(50% + ${Math.round(Math.cos(a) * w * r * 0.5)}px)`,
-                    top: `calc(38% + ${Math.round(Math.sin(a) * w * r * 0.5)}px)`,
-                    width: s,
-                    height: s,
-                    marginLeft: -Math.round(s / 2),
-                    marginTop: -Math.round(s / 2),
-                    borderRadius: "50%",
-                    background: i % Math.max(1, prizes.length) === lit ? p.primaryContainer : "#ffd54f",
-                    border: `2px solid ${p.outlineVariant}`,
-                    display: "grid",
-                    placeItems: "center",
-                    color: "#7a5c00",
-                    fontSize: Math.round(s * 0.5),
-                    fontWeight: 700,
-                  }}
-                >
-                  ¥
-                </span>
-              );
-            })}
-          </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            {[{ text: item.label.trim(), many: false }, { text: secondLabel(item), many: true }].map((b, i) => (
-              <span
-                key={i}
-                data-gacha-button={b.many ? "ten" : "one"}
-                style={{ flex: 1, minWidth: 0, height: Math.max(24, Math.round(h * 0.14)), borderRadius: 12, background: i === 0 ? p.primary : p.secondaryContainer, color: i === 0 ? p.onPrimary : p.onSecondaryContainer, display: "grid", placeItems: "center", fontSize: 11, fontWeight: 700, overflow: "hidden", whiteSpace: "nowrap" }}
-              >
-                {b.text}
-              </span>
-            ))}
-          </div>
-        </div>
-      );
-    }
-
+    
+    
     case "slot": {
       // eslint-disable-next-line react-hooks/rules-of-hooks
       const wheelOf = useWheelRun();
@@ -2351,6 +2220,104 @@ function Body({ item, p, tabScroll }: { item: Item; p: Palette; tabScroll?: numb
               );
             })}
           </div>
+        </div>
+      );
+    }
+
+    case "rewardTrack": {
+      /* A progress bar that hands things out: the visitor's progress is the part's own value, the
+         bar shows how far along it is, and every reward waits at its mark with the number it needs
+         under it. A reward in reach is tapped to take it, and its icon becomes the check that says
+         it is taken — which is the whole point of the part. */
+      const { claim, claimed } = useClaims();
+      const g = rewardMarks(item, widths ?? {});
+      const pct = g.max > 0 ? (g.value / g.max) * 100 : 0;
+      const numFont = Math.max(9, Math.round(g.tile * 0.28));
+      const nameFont = Math.max(8, Math.round(g.tile * 0.2));
+      return (
+        <div style={{ position: "relative", width: "100%", height: "100%" }}>
+          {/* the track and the visitor's share of it */}
+          <div
+            data-reward-track=""
+            style={{ position: "absolute", left: 0, right: 0, top: g.barY, height: g.barH, borderRadius: g.barH / 2, background: p.secondaryContainer, overflow: "hidden" }}
+          >
+            <div data-reward-fill={Math.round(pct)} style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${pct}%`, background: p.primary }} />
+          </div>
+          {g.marks.map((m) => {
+            const taken = claimed?.(item.id, m.i) ?? false;
+            const live = !!claim && m.ready && !taken;
+            const ink = taken ? p.onPrimaryContainer : m.ready ? p.onSurface : p.onSurfaceVariant;
+            return (
+              <div key={m.i}>
+                {/* the mark: the tile on top, a pointer down to the bar, and the number the progress
+                    has to reach sitting under it */}
+                <span
+                  aria-hidden
+                  style={{ position: "absolute", left: m.x + g.tile / 2 - 8, top: g.barY - 11, width: 16, height: 11, display: "grid", placeItems: "center", color: m.ready ? p.primary : p.outline, pointerEvents: "none" }}
+                >
+                  <Icon name="arrow_drop_down" size={16} />
+                </span>
+                <button
+                  type="button"
+                  data-reward={m.i}
+                  data-reward-state={taken ? "claimed" : m.ready ? "ready" : "locked"}
+                  disabled={!live}
+                  onPointerDown={live ? (e) => e.stopPropagation() : undefined}
+                  onClick={
+                    live
+                      ? (e) => {
+                          e.stopPropagation();
+                          claim?.(item.id, m.i);
+                        }
+                      : undefined
+                  }
+                  title={`${item.label.trim() || KIND_TEXT[lang]?.rewardTrack?.noun || ""} ${m.at}`.trim()}
+                  style={{
+                    position: "absolute",
+                    left: m.x,
+                    top: 0,
+                    width: g.tile,
+                    height: g.tile,
+                    boxSizing: "border-box",
+                    padding: 0,
+                    borderRadius: Math.round(g.tile * 0.28),
+                    border: m.ready && !taken ? `2px solid ${p.primary}` : `1px solid ${p.outlineVariant}`,
+                    background: taken ? p.primaryContainer : p.surfaceContainerLow,
+                    color: ink,
+                    cursor: live ? "pointer" : "default",
+                    /* a reward the progress has not reached is there to be seen, not to be taken */
+                    opacity: m.ready || taken ? 1 : 0.5,
+                    display: "grid",
+                    placeItems: "center",
+                  }}
+                >
+                  <span style={{ display: "grid", placeItems: "center", marginBottom: nameFont + 2 }}>
+                    <Icon name={taken ? "check" : m.reward.icon || "redeem"} size={Math.round(g.tile * 0.46)} />
+                  </span>
+                  {!m.ready && !taken && (
+                    <span aria-hidden style={{ position: "absolute", top: 2, right: 2, color: p.onSurfaceVariant, pointerEvents: "none" }}>
+                      <Icon name="lock" size={Math.round(g.tile * 0.24)} />
+                    </span>
+                  )}
+                  {!!m.reward.label.trim() && (
+                    /* the count sits inside the tile, along its foot, the way a game draws it */
+                    <span
+                      data-reward-label={m.reward.label.trim()}
+                      style={{ position: "absolute", left: 0, right: 2, bottom: 3, textAlign: "center", fontSize: nameFont, fontWeight: 700, lineHeight: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                    >
+                      {m.reward.label.trim()}
+                    </span>
+                  )}
+                </button>
+                <span
+                  data-reward-at={m.at}
+                  style={{ position: "absolute", left: m.x, top: g.barY + g.barH + 1, width: g.tile, height: g.numH, display: "grid", placeItems: "center", fontSize: numFont, fontWeight: 700, color: m.ready ? p.primary : p.onSurfaceVariant, fontVariantNumeric: "tabular-nums", pointerEvents: "none" }}
+                >
+                  {m.at}
+                </span>
+              </div>
+            );
+          })}
         </div>
       );
     }
@@ -2589,7 +2556,7 @@ export function M3Node({
         ...style,
       }}
     >
-      <Body item={item} p={ep} tabScroll={tabScroll} />
+      <Body item={item} p={ep} tabScroll={tabScroll} widths={widths} />
       <ScrollLayer item={item} p={ep} widths={widths} scroll={scroll}>
         {overlay}
       </ScrollLayer>
@@ -2641,7 +2608,7 @@ export function M3Static({
         ...style,
       }}
     >
-      <Body item={item} p={ep} />
+      <Body item={item} p={ep} widths={{}} />
       <ScrollLayer item={item} p={ep} widths={{}}>
         {overlay}
       </ScrollLayer>

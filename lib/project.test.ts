@@ -22,6 +22,15 @@ describe("isProject", () => {
     expect(value).toEqual(before);
   });
 
+  it("still opens a document written with a kind the palette has retired", () => {
+    /* the money tree and the eggs were taken out of the palette: a file that holds one has to open
+       — the editor turns it into the capsule machine — rather than being thrown away as invalid */
+    expect(isProject(withItem({ kind: "moneyTree" }))).toBe(true);
+    expect(isProject(withItem({ kind: "eggSmash" }))).toBe(true);
+    /* while a kind no build ever offered is still refused */
+    expect(isProject(withItem({ kind: "notAPart" }))).toBe(false);
+  });
+
   it("accepts legacy minimal documents without supplying defaults", () => {
     const legacy = { groups: [], frames: [{ id: "f", name: "Home", x: 0, y: 0 }] };
     expect(isProject(legacy)).toBe(true);

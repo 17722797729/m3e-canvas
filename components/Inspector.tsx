@@ -10,6 +10,9 @@ import {
   defaultPrizes,
   prizeChances,
   type Prize,
+  type Reward,
+  rewardsOf,
+  rewardAt,
   Action,
   BACK_TARGET,
   CONTENT_W,
@@ -1291,7 +1294,7 @@ export function Inspector({
         </Section>
       )}
 
-      {(item.kind === "gacha" || item.kind === "moneyTree") && !editOn && (
+      {item.kind === "gacha" && !editOn && (
         <Section id="gacha" icon="toys" title={t("gachaTen", lang)} p={p}>
           <Field value={item.label2 ?? ""} onChange={(label2) => onChange({ label2 })} placeholder={secondLabel(item)} p={p} icon="label" height={40} />
           <Slider icon="pin" title={t("manyCount", lang)} value={manyOf(item)} min={MANY_MIN} max={MANY_MAX} step={1} onChange={(many) => onChange({ many })} p={p} />
@@ -1304,6 +1307,73 @@ export function Inspector({
           <div style={{ fontSize: 12, lineHeight: 1.6, color: p.onSurfaceVariant, padding: "8px 6px 0" }}>{t("joystickReturnHint", lang)}</div>
         </Section>
       )}
+
+      {spec.hasRewards && !editOn && (() => {
+        /* A track's rewards: how far along the progress each one waits, and what it hands out. The
+           number is the progress the bar has to reach — the same numbers the track draws under its
+           tiles — so the author reads the track as the visitor will. */
+        const rewards: Reward[] = rewardsOf(item);
+        const top = maxOf(item);
+        const put = (next: Reward[]) => onChange({ rewards: next });
+        const setReward = (i: number, patch: Partial<Reward>) => put(rewards.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+        return (
+          <Section id="rewards" icon="redeem" title={t("rewards", lang)} p={p}>
+            <div style={{ fontSize: 12, lineHeight: 1.6, color: p.onSurfaceVariant, padding: "0 6px 10px" }}>{t("rewardHint", lang)}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {rewards.map((r: Reward, i: number) => (
+                /* one reward: where it waits, what it gives — and the icon picker under the row,
+                   the way a prize's opens */
+                <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6, padding: "6px 8px", borderRadius: 12, background: p.surfaceContainerLow }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <button
+                      type="button"
+                      onClick={() => { setPrizeSlot(prizeSlot === i ? null : i); setPrizePicker(!(prizeSlot === i && prizePicker)); }}
+                      aria-expanded={prizeSlot === i && prizePicker}
+                      title={t("changeIcon", lang)}
+                      aria-label={t("changeIcon", lang)}
+                      className="m3-press"
+                      style={{ width: 40, height: 40, flex: "0 0 auto", borderRadius: 20, border: "none", background: prizeSlot === i && prizePicker ? p.primary : p.surfaceContainerHigh, color: prizeSlot === i && prizePicker ? p.onPrimary : p.onSurfaceVariant, cursor: "pointer", display: "grid", placeItems: "center" }}
+                    >
+                      <Icon name={r.icon || "add"} size={20} />
+                    </button>
+                    <input
+                      type="number"
+                      min={0}
+                      max={top}
+                      step={1}
+                      aria-label={t("rewardAt", lang)}
+                      title={t("rewardAt", lang)}
+                      value={String(rewardAt(r, top))}
+                      onChange={(e) => setReward(i, { at: Math.max(0, Math.min(top, Math.round(Number(e.target.value) || 0))) })}
+                      style={{ ...inputBox(p, 8), width: 64, height: 34, fontVariantNumeric: "tabular-nums" }}
+                    />
+                    <Field value={r.label} onChange={(label) => setReward(i, { label })} placeholder={t("rewardLabel", lang)} p={p} height={40} />
+                    <IconBtn icon="delete" p={p} danger title={t("removeReward", lang)} size={30} onClick={() => put(rewards.filter((_, j) => j !== i))} />
+                  </div>
+                  {prizeSlot === i && prizePicker && (
+                    <IconPicker
+                      value={r.icon || null}
+                      onChange={(icon) => setReward(i, { icon })}
+                      onClose={() => setPrizePicker(false)}
+                      palette={p}
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => put([...rewards, { at: Math.min(top, Math.max(0, (rewards[rewards.length - 1]?.at ?? 0) + 10)), icon: "redeem", label: "" }])}
+              className="m3-press"
+              style={{ marginTop: 8, height: 40, width: "100%", borderRadius: 20, border: `1px solid ${p.outline}`, background: "transparent", color: p.primary, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+            >
+              <Icon name="add" size={18} />
+              {t("addReward", lang)}
+            </button>
+            <div style={{ fontSize: 12, lineHeight: 1.6, color: p.onSurfaceVariant, padding: "8px 6px 0" }}>{t("rewardTapHint", lang)}</div>
+          </Section>
+        );
+      })()}
 
       {spec.hasPrizes && !editOn && (() => {
         /* A wheel's pool: what each prize says, and the weight that decides its odds. The percentage
@@ -2172,7 +2242,9 @@ export function Inspector({
                   </div>
                   {/* the ceiling is the author's, so it is a number field rather than a slider: a
                       count of things wants to say 10000 exactly, not slide towards it */}
-                  {(item.kind === "slider" || item.kind === "stepper") && (
+                  {/* the ceiling a part runs to: a slider's top end, and how far a reward track
+                      goes before its last reward — both are the author's number */}
+                  {(item.kind === "slider" || item.kind === "stepper" || item.kind === "rewardTrack") && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("maxValue", lang)}</div>
                       <Field

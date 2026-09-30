@@ -4,7 +4,7 @@ import { contrastRatio } from "./color";
 import { itemNameOf } from "./flow";
 import { getLang, KIND_TEXT, t } from "./i18n";
 
-import { slotWin, secondLabel, manyOf, clockText, countdownLeft, readsTimer,KIND_ORDER,CALENDAR_DAYS,calendarRows,calendarCell,defaultPrizes, JOYSTICK_TRAVEL, CELL_DEF, CELL_MAX, CELL_MIN, CELL_NAME_H, GRID_PAD, GRID_PANEL_PAD, COLS_MAX, ROWS_MAX, cellGap, cellOf, scrollContent, slotGrid, gridCells, cellBox, gridCheckZ, rulePatch, ruleFieldsFor, readoutOf, hasReadout, unitOf, mixText, readText, VALUE_TOKEN, hasValueToken, valueAfter, maxOf, clampMax, MAX_DEF, MAX_MAX, isValueOp, withGridCells, BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill, childShown, connectedButton, DIALOG_COLOR, childDrawn, badgeSurface, buttonScale, findItemIn, foldMargins, radiiOfRuns, roundByNature, runPartRadii, ROUND_SHAPES, foldPlace, foldShift, layoutOf, NO_FOLD, fitTabPanels, keepPanelSlots, liftAbove, isStateEffect, STATE_EFFECTS, START_LOOK, firstTapStep, firstDueStep, waitLeft, lookItem, lookAt, statesAsFlow, migrateFlows, hasTimedSteps, hasAutoClose, namePanels, rotOf, rotStyle, ROT_MAX, labelSideOf, isTabSide, tabShowsIcon, tabBadge, RAIL_CELL_MIN, RAIL_W, SIDE_RAIL_MIN, SIDE_RAIL_MAX, sideRailW, retiredTransition, TRANSITIONS, layerEntryOffset, panelBox, prizeChances, pickPrize, wheelSlice, wheelStopAngle, wheelIndexAt, gridRing, gridRingCells, joystickAngle, joystickKnob, isTabRow, isSideTabs, SIDE_TAB_W, syncTabPanels, foldOrphanPanels, drawnIds, isTabPanel, freshPanel, AUTO_HIDE_STEP, AUTO_CLOSE_DEF, RULE_ACTIONS, isRuleKind, fillColor, fillInk, TRANSPARENT, cardFillOf, type PartFlow, type PartLook, type PartStep, type MachineAt, NAV_ICON, NAV_INDICATOR, NAV_INDICATOR_R, NAV_LABEL_FONT, selectedAncestor, takesText, panelSlotFor, refillPanels, restorePanel, slotsOf, resizedChildren, needsTabPanels, tabIndexOf, tabPanelId, tabRenamePatch, tabPanelsPatch, tabStyleOf, TAB_PANEL_H, TAB_ROW_H, onToken, pageTintOf, PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type Kind, type ItemState, type PlacedItem, type Frame } from "./tokens";
+import { slotWin, secondLabel, manyOf, clockText, countdownLeft, readsTimer,KIND_ORDER,CALENDAR_DAYS,calendarRows,calendarCell,defaultPrizes, JOYSTICK_TRAVEL, CELL_DEF, CELL_MAX, CELL_MIN, CELL_NAME_H, GRID_PAD, GRID_PANEL_PAD, rewardsOf, rewardMarks, rewardReady, rewardClaimKey, REWARD_DEFAULT_ATS, REWARD_TILE, COLS_MAX, ROWS_MAX, cellGap, cellOf, scrollContent, slotGrid, gridCells, cellBox, gridCheckZ, rulePatch, ruleFieldsFor, readoutOf, hasReadout, unitOf, mixText, readText, VALUE_TOKEN, hasValueToken, valueAfter, maxOf, clampMax, MAX_DEF, MAX_MAX, isValueOp, withGridCells, BAR_FOLDED_H, BAR_FOLDED_W, BUTTON_SHAPES, NAV_BAR_H, PHONE_H, PHONE_W, DEFAULT_THEME, H, KIND_SPEC, LAYER_DEFAULT, RAIL_COLLAPSED_W, RAIL_EXPANDED_W, RAIL_HEADER_GAP, RAIL_HEADER_H, isWideRail, navCell, navLabelInk, navRows, railCell, SHAPED, PALETTES, R_FULL, baseRadii, byLayer, carryItemSize, colorOverrideOf, connectSpecOf, connectable, compositeInstance, copySubtree, foldsToPill, childShown, connectedButton, DIALOG_COLOR, childDrawn, badgeSurface, buttonScale, findItemIn, foldMargins, radiiOfRuns, roundByNature, runPartRadii, ROUND_SHAPES, foldPlace, foldShift, layoutOf, NO_FOLD, fitTabPanels, keepPanelSlots, liftAbove, isStateEffect, STATE_EFFECTS, START_LOOK, firstTapStep, firstDueStep, waitLeft, lookItem, lookAt, statesAsFlow, migrateFlows, hasTimedSteps, hasAutoClose, namePanels, rotOf, rotStyle, ROT_MAX, labelSideOf, isTabSide, tabShowsIcon, tabBadge, RAIL_CELL_MIN, RAIL_W, SIDE_RAIL_MIN, SIDE_RAIL_MAX, sideRailW, retiredTransition, TRANSITIONS, layerEntryOffset, panelBox, prizeChances, pickPrize, wheelSlice, wheelStopAngle, wheelIndexAt, gridRing, gridRingCells, joystickAngle, joystickKnob, isTabRow, isSideTabs, SIDE_TAB_W, syncTabPanels, foldOrphanPanels, drawnIds, isTabPanel, freshPanel, AUTO_HIDE_STEP, AUTO_CLOSE_DEF, RULE_ACTIONS, isRuleKind, fillColor, fillInk, TRANSPARENT, cardFillOf, type PartFlow, type PartLook, type PartStep, type MachineAt, NAV_ICON, NAV_INDICATOR, NAV_INDICATOR_R, NAV_LABEL_FONT, selectedAncestor, takesText, panelSlotFor, refillPanels, restorePanel, slotsOf, resizedChildren, needsTabPanels, tabIndexOf, tabPanelId, tabRenamePatch, tabPanelsPatch, tabStyleOf, TAB_PANEL_H, TAB_ROW_H, onToken, pageTintOf, PROGRESS_DEFAULT, progressValue, progressTrack, CONTENT_W, actionPatchFor, scrollOffset, scrollRange, childDragFree, childDragRoom, pruneParts, paletteOf, fitHeight, iconSlotsOf, isCustomColor, itemsOf, layerOf, makeItem, normalizeTheme, paletteForItem, parentOf, railLayoutWidth, railMetrics, resolveStates, runCorners, scaleChildren, scaleR, setGlobalShape, sizeOf, strokeOf, subtreeOf, tappable, isScrollableTabs, tabScrollOffset, removeTabPatch, tabCountPatch, SCROLL_TAB_W, uniformRadii, type CustomPart, type Group, type Item, type Kind, type ItemState, type PlacedItem, type Frame } from "./tokens";
 
 afterEach(() => setGlobalShape("rounded")); // restore the module default
 
@@ -1465,6 +1465,59 @@ describe("a background that paints nothing", () => {
   });
 });
 
+describe("the rewards along a progress track", () => {
+  const track = (patch: Partial<Item> = {}): Item => ({ ...makeItem("rewardTrack"), id: "rt", ...patch });
+
+  it("comes as a whole track: rewards spread along it and the progress part of the way there", () => {
+    const it = track();
+    expect(it.rewards).toHaveLength(4);
+    expect(rewardsOf(it).map((r) => r.at)).toEqual(REWARD_DEFAULT_ATS);
+    /* a fresh track is already part of the way along, so its first reward is in reach — which is
+       what makes the claim worth trying the moment it is dropped */
+    expect(it.value).toBe(20);
+    expect(it.max).toBe(60);
+    /* the progress is a count of things, not a share of a hundred: no percent sign on its number,
+       and a text may read it the way it reads a bar */
+    expect(it.unit).toBe(false);
+    expect(hasReadout(it)).toBe(true);
+  });
+
+  it("tells a reward in reach from one the progress has not reached", () => {
+    expect(rewardReady(20, 10)).toBe(true);
+    /* at the number itself the reward is ready: the mark the bar has just touched is the one that
+       has been unlocked */
+    expect(rewardReady(20, 20)).toBe(true);
+    expect(rewardReady(19, 20)).toBe(false);
+    const g = rewardMarks(track({ rewards: [{ at: 10, icon: null, label: "" }, { at: 50, icon: null, label: "" }], value: 20 }), {});
+    expect(g.marks.map((m) => m.ready)).toEqual([true, false]);
+  });
+
+  it("places each reward where its own progress sits along the bar", () => {
+    const g = rewardMarks(track({ rewards: [{ at: 0, icon: null, label: "a" }, { at: 30, icon: null, label: "b" }, { at: 60, icon: null, label: "c" }] }), {});
+    expect(g.marks.map((m) => m.at)).toEqual([0, 30, 60]);
+    expect(g.marks[0].x).toBe(0);
+    /* the last reward stays on the track rather than hanging off its end */
+    expect(g.marks[2].x + REWARD_TILE).toBeLessThanOrEqual(g.w);
+    /* and a mark in the middle sits in the middle */
+    expect(Math.abs(g.marks[1].x + REWARD_TILE / 2 - g.w / 2)).toBeLessThanOrEqual(1);
+  });
+
+  it("keeps two rewards apart rather than drawing one over the other", () => {
+    const close = rewardMarks(track({ rewards: [{ at: 10, icon: null, label: "" }, { at: 10, icon: null, label: "" }] }), {});
+    expect(close.marks[1].x - close.marks[0].x).toBeGreaterThanOrEqual(REWARD_TILE);
+    expect(close.marks.every((m) => m.x >= 0)).toBe(true);
+    /* a reward typed past the end of the track waits at the end, still on the bar */
+    const past = rewardMarks(track({ rewards: [{ at: 999, icon: null, label: "" }] }), {});
+    expect(past.marks[0].at).toBe(60);
+    expect(past.marks[0].x + REWARD_TILE).toBeLessThanOrEqual(past.w);
+  });
+
+  it("remembers a claim by the place of the reward, so one claim cannot take another", () => {
+    expect(rewardClaimKey("rt", 0)).toBe("rt:claim:0");
+    expect(rewardClaimKey("rt", 3)).not.toBe(rewardClaimKey("rt", 2));
+  });
+});
+
 describe("the board a slot grid draws", () => {
   const grid = (patch: Partial<Item> = {}, size = 380, size2 = 320): Item => ({ ...makeItem("invGrid"), id: "g", size, size2, ...patch });
 
@@ -1489,7 +1542,7 @@ describe("the board a slot grid draws", () => {
     expect(short.count).toBe(short.cols * short.rows);
   });
 
-  it("makes room for the item name under a cell, and lays the rows out around it", () => {
+  it("fills the frame with as many cells of the author's size as fit", () => {
     const bare = slotGrid(grid(), {});
     const named = slotGrid(grid({ cellNames: true, cellText: "物品名" }), {});
     expect(bare.nameH).toBe(0);
@@ -1528,7 +1581,7 @@ describe("the board a slot grid draws", () => {
     expect(off.y).toBe(CELL_DEF + cellGap(CELL_DEF) + GRID_PAD + GRID_PANEL_PAD);
   });
 
-  it("grows the child frame past the viewport when the author pins more rows than fit", () => {
+  it("makes room for the item name under a cell, and lays the rows out around it", () => {
     const auto = slotGrid(grid(), {});
     /* nothing to move while the rows are the ones that fit */
     expect(scrollRange(grid(), {})).toEqual({ x: 0, y: 0 });
@@ -1863,8 +1916,8 @@ describe("the check-in calendar", () => {
 });
 
 describe("the added features", () => {
-  it("offers a capsule machine, a slot machine and a calendar under 功能", () => {
-    for (const kind of ["gacha", "slot", "calendar", "moneyTree", "eggSmash"] as const) {
+  it("offers a capsule machine, a shake to draw, a calendar and a reward track under 功能", () => {
+    for (const kind of ["gacha", "slot", "calendar", "rewardTrack"] as const) {
       expect(KIND_ORDER).toContain(kind);
       expect(KIND_SPEC[kind].category).toBe("features");
     }
@@ -1874,8 +1927,6 @@ describe("the added features", () => {
     expect(defaultPrizes()).toHaveLength(9);
     expect(makeItem("slot").prizes).toHaveLength(9);
     expect(makeItem("gacha").prizes).toHaveLength(9);
-    expect(makeItem("moneyTree").prizes).toHaveLength(9);
-    expect(makeItem("eggSmash").prizes).toHaveLength(9);
     /* the second button draws ten times until the author says otherwise */
     expect(manyOf({})).toBe(10);
     expect(manyOf({ many: 3 })).toBe(3);
