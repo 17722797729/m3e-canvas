@@ -113,9 +113,23 @@ describe("the syai client", () => {
     await marketComponentPage(2, 8, 5, "轮盘");
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://syai.vxwebgame.com/app-api/syai/market-component/page");
-    expect(JSON.parse(String(init.body))).toEqual({ pageNo: 2, pageSize: 8, type: 5, name: "轮盘" });
+    expect(JSON.parse(String(init.body))).toEqual({ pageNo: 2, pageSize: 8, type: 5, name: "轮盘", sort: "created" });
     /* the market list is public: no token, and no header when there is none */
     expect(init.headers).toBeInstanceOf(Headers);
+  });
+
+  /* 排序交给后端：两者都是降序，前端只把选择传过去 */
+  it("passes the chosen sort through, newest first by default", async () => {
+    const fetchMock = vi.fn(async () => ok({ list: [], total: 0 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await marketComponentPage(1, 8, null, undefined, "downloads");
+    expect(JSON.parse(String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body))).toMatchObject({
+      sort: "downloads",
+    });
+    await marketComponentPage(1, 8);
+    expect(JSON.parse(String((fetchMock.mock.calls[1] as unknown as [string, RequestInit])[1].body))).toMatchObject({
+      sort: "created",
+    });
   });
 
   it("sends my-upload paging with the audit filter, so a rejected part is findable", async () => {

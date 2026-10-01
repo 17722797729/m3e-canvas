@@ -6,7 +6,7 @@ import { buildFlow, flowMarkdown, overlayLevelName, FLOW_TEXT, type Flow, type F
 import { isProject } from "@/lib/project";
 import { paletteOf, type Doc, type Palette } from "@/lib/tokens";
 import { isLang, setGlobalLang, t, type Lang } from "@/lib/i18n";
-import { editorHref } from "@/lib/appPath";
+import { goToEditor } from "@/lib/appPath";
 
 /* The flow page: the screens of the saved document as a layered diagram. It reads
  * the same autosave the editor writes, draws the graph buildFlow returns, and can
@@ -167,10 +167,16 @@ export default function FlowPage() {
       {label}
     </button>
   );
+  /* 从编辑器来的就退回去，不然跳编辑器首页；两种都不会丢掉离开前的面板状态 */
   const link = (label: string, primary = false) => (
-    <a className="m3-press" href={editorHref()} style={{ ...look(primary), font: "500 14px Roboto, system-ui, sans-serif" }}>
+    <button
+      type="button"
+      className="m3-press"
+      onClick={() => goToEditor()}
+      style={{ ...look(primary), border: "none", cursor: "pointer", font: "500 14px Roboto, system-ui, sans-serif" }}
+    >
       {label}
-    </a>
+    </button>
   );
 
   /* the language is read after mount, so the first paint has nothing to draw yet */

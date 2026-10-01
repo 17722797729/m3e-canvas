@@ -50,7 +50,8 @@ import { UploadMarketDialog } from "@/components/UploadMarketDialog";
 import { AvatarMenu } from "@/components/AvatarMenu";
 import { bootSession, useSession } from "@/lib/session";
 import { MarketComponent, MyComponent, deleteMyComponent, myComponentList } from "@/lib/syai";
-import { categoryOf, partOf } from "@/lib/market";
+import { categoryOf, isJoinedPart, partOf } from "@/lib/market";
+import { markFromEditor } from "@/lib/appPath";
 
 /** the screens while a model drafts: primary, tertiary and primary container, drifting */
 const DRAFT_GRADIENT = (p: Palette) => `linear-gradient(120deg, ${p.primaryContainer}, ${p.tertiaryContainer}, ${p.primary}, ${p.secondaryContainer}, ${p.primaryContainer})`;
@@ -688,6 +689,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
         if (ui.view) setView(ui.view);
         if (typeof ui.leftOpen === "boolean") setLeftOpen(ui.leftOpen);
         if (typeof ui.rightOpen === "boolean") setRightOpen(ui.rightOpen);
+        /* 认得的页签才还原：旧版本写下的值可能不是这一版的页签 */
+        if (typeof ui.leftTab === "string" && LEFT_TABS.some((t2) => t2.key === ui.leftTab)) setLeftTab(ui.leftTab as LeftTab);
         if (ui.leftW) setLeftW(Math.max(RAIL_W + 244, ui.leftW));
         if (ui.rightW) setRightW(ui.rightW);
         if (Array.isArray(ui.favorites)) setFavorites(ui.favorites);
@@ -806,6 +809,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           view,
           leftOpen,
           rightOpen,
+          /* 左栏停在哪一页、开着还是收起：从市场页退回来时要回到离开前的样子 */
+          leftTab,
           leftW,
           rightW,
           favorites,
@@ -818,6 +823,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     view,
     leftOpen,
     rightOpen,
+    leftTab,
     leftW,
     rightW,
     favorites,
@@ -3264,28 +3270,27 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
 
   /* ---------- 市场组件 ---------- */
 
-  /** 把一个市场组件摆到当前屏幕上：新开一个组，位置取这一屏的左内边距 */
+  /**
+   * 把一个市场组件收进组件面板（「加入我的组件」真正要做的事）
+   *
+   * 只进面板、不往画布上乱放：作者要的是「这个组件以后我能一直用」，
+   * 想放到屏幕上时从组件面板里拖出来即可（也可以拖拽直接落）。
+   * 与前一份同名时按来源覆盖，不会把作者自己存的组合组件顶掉。
+   */
   const addMarketPart = useCallback(
     (part: CustomPart) => {
-      const item = compositeInstance(part, uid);
-      const frame = framesRef.current.find((f) => f.id === selectedFrameId) ?? framesRef.current[0];
-      const size = sizeOf(item, widthsRef.current);
-      const at = frame
-        ? { x: frame.x + PHONE_MARGIN, y: frame.y + PHONE_MARGIN }
-        : (() => {
-            const r = canvasRect();
-            const v = viewRef.current;
-            return {
-              x: Math.round(((r?.width ?? 800) / 2 - v.x) / v.z - size.w / 2),
-              y: Math.round(((r?.height ?? 600) / 2 - v.y) / v.z - size.h / 2),
-            };
-          })();
-      snapshot();
-      setGroups((cur) => [...cur, { id: uid(), x: at.x, y: at.y, axis: "x", items: [item] }]);
-      setSelectedIds([item.id]);
-      setSelectedFrameId(frame?.id ?? null);
+      setCustomParts((cur) => {
+        const taken = cur.find(
+          (c) => isJoinedPart(c) && (c.source === part.source || c.name.trim() === part.name.trim()),
+        );
+        return taken ? cur.map((c) => (c.id === taken.id ? { ...part, id: taken.id } : c)) : [...cur, part];
+      });
+      /* 切到组件面板，让它就在眼前 */
+      setLeftTab("parts");
+      setLeftOpen(true);
+      setMarketKey((n) => n + 1);
     },
-    [snapshot, selectedFrameId],
+    [],
   );
 
   /** 从市场面板里把一个组件拖到画布上 */
@@ -3424,11 +3429,14 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   /** Opens the flow diagram: the page reads the same autosaved document, so the
    *  transitions drawn there are the ones on the canvas. */
   const openFlow = () => {
+    markFromEditor();
     window.location.href = `${BASE_PATH}/flow/`;
   };
 
   /** 打开市场组件页：整页分页浏览全部已公开的组件 */
   const openMarketPage = () => {
+    /* 留个记号：市场页的「返回编辑器」据此走历史返回，而不是重新加载编辑器 */
+    markFromEditor();
     window.location.href = `${BASE_PATH}/market/`;
   };
 

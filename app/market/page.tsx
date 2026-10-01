@@ -9,11 +9,12 @@ import {
   ComponentType,
   ComponentTypeCode,
   MarketComponent,
+  MarketSort,
   componentTypes,
   marketComponentPage,
 } from "@/lib/syai";
 import { CATEGORY_NAMES, CODE_OF_CATEGORY, categoryOf, downloadText } from "@/lib/market";
-import { editorHref } from "@/lib/appPath";
+import { goToEditor } from "@/lib/appPath";
 import { MarketDialog } from "@/components/MarketDialog";
 import { Icon } from "@/components/M3Node";
 import { Field, TypeSelect } from "@/components/ui";
@@ -50,6 +51,7 @@ export default function MarketPage() {
   const [doc, setDoc] = useState<Doc | null>(null);
   const [types, setTypes] = useState<ComponentType[]>([]);
   const [type, setType] = useState<ComponentTypeCode | null>(null);
+  const [sort, setSort] = useState<MarketSort>("created");
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<MarketComponent[]>([]);
@@ -82,14 +84,14 @@ export default function MarketPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [type, q]);
+  }, [type, sort, q]);
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
     setFailed(false);
     const timer = setTimeout(() => {
-      void marketComponentPage(page, PAGE_SIZE, type, q)
+      void marketComponentPage(page, PAGE_SIZE, type, q, sort)
         .then((res) => {
           if (!alive) return;
           setItems(res.list ?? []);
@@ -109,7 +111,7 @@ export default function MarketPage() {
       alive = false;
       clearTimeout(timer);
     };
-  }, [page, type, q]);
+  }, [page, type, sort, q]);
 
   const nameOfType = useCallback(
     (code: number) => types.find((x) => x.code === code)?.name ?? CATEGORY_NAMES[categoryOf(code)],
@@ -162,18 +164,20 @@ export default function MarketPage() {
             {t("marketPageHint", ui)}
           </div>
         </div>
-        <a
-          href={editorHref()}
+        {/* 从编辑器来的就退回去（不重新加载、回到离开前的面板），否则跳编辑器首页 */}
+        <button
+          onClick={() => goToEditor()}
           className="m3-press"
           style={{
             height: 40,
             padding: "0 18px",
             borderRadius: 20,
+            border: "none",
             background: p.primary,
             color: p.onPrimary,
             fontSize: 13,
             fontWeight: 600,
-            textDecoration: "none",
+            cursor: "pointer",
             display: "inline-flex",
             alignItems: "center",
             gap: 8,
@@ -182,7 +186,7 @@ export default function MarketPage() {
         >
           <Icon name="arrow_back" size={18} />
           {t("marketBackToEditor", ui)}
-        </a>
+        </button>
       </header>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", padding: "16px 20px 0" }}>
@@ -197,6 +201,19 @@ export default function MarketPage() {
             title={t("marketType", ui)}
             height={44}
             onChange={(value) => setType(value === 0 ? null : (value as ComponentTypeCode))}
+          />
+        </div>
+        <div style={{ flex: "0 0 190px" }}>
+          <TypeSelect
+            p={p}
+            value={sort === "downloads" ? 1 : 0}
+            options={[
+              { value: 0, label: t("marketSortNewest", ui), icon: "schedule" },
+              { value: 1, label: t("marketSortPopular", ui), icon: "download" },
+            ]}
+            title={t("marketSort", ui)}
+            height={44}
+            onChange={(value) => setSort(value === 1 ? "downloads" : "created")}
           />
         </div>
         <span style={{ fontSize: 12, color: p.onSurfaceVariant, fontVariantNumeric: "tabular-nums" }}>

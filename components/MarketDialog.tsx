@@ -99,11 +99,6 @@ export function MarketDialog({
   }, [component, picking, onClose]);
 
   const parsed = useMemo(() => parseMarketData(detail?.data), [detail?.data]);
-  /* 同一份数据解一次就够：预览要形状，落画布要 CustomPart */
-  const customPart = useMemo(
-    () => (detail ? partOf(detail.data, `market-${detail.id}`, detail.name) : null),
-    [detail],
-  );
   /* 退回静态图时才需要缩放：有原屏幕的时候交给 Preview 自己适配 */
   const scale = parsed ? Math.min(1, STAGE_W / Math.max(1, parsed.w), STAGE_H / Math.max(1, parsed.h)) : 1;
 
@@ -112,7 +107,8 @@ export function MarketDialog({
     setBusy(true);
     try {
       await addToMyComponents(detail.id, type, detail.name);
-      const part = partOf(detail.data, `market-${detail.id}`, detail.name);
+      /* 带上来源：组件面板据此把它算进「已加入的组件」，而不是和作者自己存的那批混在一起 */
+      const part = partOf(detail.data, `market-${detail.id}`, detail.name, detail.id);
       if (part && onAdd) onAdd(part, type, detail.name);
       onToast?.(t("marketAdded", lang), 2000, "library_add");
       setPicking(false);

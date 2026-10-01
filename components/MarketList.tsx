@@ -9,6 +9,7 @@ import {
   ComponentType,
   ComponentTypeCode,
   MarketComponent,
+  MarketSort,
   componentTypes,
   marketComponentPage,
 } from "@/lib/syai";
@@ -40,6 +41,8 @@ export function MarketList({
   const lang = useLang();
   const [types, setTypes] = useState<ComponentType[]>([]);
   const [type, setType] = useState<ComponentTypeCode | null>(null);
+  /* 默认最新上传；也可以按下载量看 */
+  const [sort, setSort] = useState<MarketSort>("created");
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<MarketComponent[]>([]);
@@ -60,17 +63,17 @@ export function MarketList({
     };
   }, []);
 
-  /* 类型或搜索词一变就回到第一页：停在第三页看一个只有两页的结果是空手 */
+  /* 筛选或排序一变就回到第一页：停在第三页看一个只有两页的结果是空手 */
   useEffect(() => {
     setPage(1);
-  }, [type, q, refreshKey]);
+  }, [type, sort, q, refreshKey]);
 
   useEffect(() => {
     const id = ++query.current;
     setLoading(true);
     setFailed(false);
     const timer = setTimeout(() => {
-      void marketComponentPage(page, MARKET_PAGE_SIZE, type, q)
+      void marketComponentPage(page, MARKET_PAGE_SIZE, type, q, sort)
         .then((res) => {
           if (query.current !== id) return;
           setItems(res.list ?? []);
@@ -87,7 +90,7 @@ export function MarketList({
         });
     }, q ? 260 : 0);
     return () => clearTimeout(timer);
-  }, [page, type, q, refreshKey]);
+  }, [page, type, q, sort, refreshKey]);
 
   const pages = Math.max(1, Math.ceil(total / MARKET_PAGE_SIZE));
   const nameOfType = (code: number) =>
@@ -108,6 +111,16 @@ export function MarketList({
           options={typeOptions}
           title={t("marketType", lang)}
           onChange={(value) => setType(value === 0 ? null : (value as ComponentTypeCode))}
+        />
+        <TypeSelect
+          p={p}
+          value={sort === "downloads" ? 1 : 0}
+          options={[
+            { value: 0, label: t("marketSortNewest", lang), icon: "schedule" },
+            { value: 1, label: t("marketSortPopular", lang), icon: "download" },
+          ]}
+          title={t("marketSort", lang)}
+          onChange={(value) => setSort(value === 1 ? "downloads" : "created")}
         />
       </div>
 

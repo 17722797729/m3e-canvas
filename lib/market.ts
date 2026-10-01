@@ -255,16 +255,26 @@ export function parseMarketData(data: string | undefined | null): MarketPart | n
   };
 }
 
-/** 把组件数据变成可以放进组件面板的组合组件；id 与名称由调用方决定 */
+/**
+ * 把组件数据变成可以放进组件面板的组合组件；id 与名称由调用方决定
+ *
+ * `source` 记下来源：市场组件的编号。面板据此把它算进「已加入的组件」，
+ * 而不是和作者自己存的组合组件混成一个「我的组件」。
+ */
 export function partOf(
   data: string | undefined | null,
   id: string,
   name: string,
+  source?: string | number,
 ): CustomPart | null {
   const parsed = parseMarketData(data);
   if (!parsed) return null;
-  return { ...parsed.part, id, name };
+  return { ...parsed.part, id, name, ...(source !== undefined ? { source } : undefined) };
 }
+
+/** 这一份是市场里加来的，还是作者自己在画布上存下来的 */
+export const isJoinedPart = (part: CustomPart): boolean =>
+  part.source !== undefined && part.source !== "mine";
 
 /**
  * 上传时打包组件数据

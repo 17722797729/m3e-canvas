@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { CustomPart, Palette, Theme } from "@/lib/tokens";
+import { CATEGORIES, CustomPart, Palette, Theme } from "@/lib/tokens";
 import { t, useLang } from "@/lib/i18n";
 import {
   AUDIT_PASSED,
@@ -12,29 +12,29 @@ import {
   MyComponent,
   deleteMyComponent,
   deleteMyUpload,
-  myComponentList,
+  myComponentPage,
   myUploadPage,
 } from "@/lib/syai";
-import { CATEGORY_NAMES, categoryOf, formatWhen, partOf } from "@/lib/market";
+import { CODE_OF_CATEGORY, CATEGORY_NAMES, categoryOf, formatWhen, partOf } from "@/lib/market";
 import { useSession } from "@/lib/session";
 import { Icon } from "./M3Node";
-import { AuditTag, Hint, MarketList, Pager, auditText } from "./MarketList";
+import { AuditTag, Hint, Pager, auditText } from "./MarketList";
 import { MarketDialog } from "./MarketDialog";
 import { TypeSelect } from "./ui";
 
-/** 一次最多铺出多少个「我的组件」的预览；再多的仍在后端，组件面板按类型分组去看 */
-const MINE_LIMIT = 40;
-const MINE_PAGE_SIZE = 10;
+const JOINED_PAGE_SIZE = 10;
+const UPLOAD_PAGE_SIZE = 10;
 
-/** 市场组件面板的两页：市场，和自己上传的那一批 */
-type MarketTab = "market" | "mine";
+/** 市场组件面板的两页：已经加入的组件，和自己上传的那一批 */
+type MarketTab = "joined" | "mine";
 
 /**
  * 市场组件面板
  * ---------------------------------------------------------------------------
- * 「市场组件」：按组件类型（下拉）筛选 + 分页，一行一张卡片；点缩略图或名称打开「屏幕」。
- *              底部给一个入口去独立的市场页，那里是整页的大卡片。
- * 「我的市场组件」：自己上传的组件，带审核状态、审核备注与时间。
+ * 「已加入的组件」：从市场加入到自己名下的那一批（后端 my-page），带类型筛选与分页，
+ *              可以摆到屏幕上、打开看、或删掉。
+ * 「我的市场组件」：自己上传的组件，连同审核状态、审核备注与时间；
+ *              底部给一个入口去独立的市场页，在整页里逛全部已公开的组件。
  */
 export function MarketPanel({
   p,
@@ -56,12 +56,11 @@ export function MarketPanel({
 }) {
   const lang = useLang();
   const { loggedIn } = useSession();
-  const [tab, setTab] = useState<MarketTab>("market");
-  const [mine, setMine] = useState<MyComponent[]>([]);
+  const [tab, setTab] = useState<MarketTab>("joined");
   const [opened, setOpened] = useState<MarketComponent | null>(null);
   const [reload, setReload] = useState(0);
 
-  /* 我的市场组件（上传的那一批）：分页 + 审核状态筛选 */
+  /* 我上传的组件：分页 + 审核状态筛选 */
   const [uploads, setUploads] = useState<MarketComponent[]>([]);
   const [uploadTotal, setUploadTotal] = useState(0);
   const [uploadPage, setUploadPage] = useState(1);
@@ -69,19 +68,49 @@ export function MarketPanel({
   const [uploadLoad, setUploadLoad] = useState(false);
   const [uploadFailed, setUploadFailed] = useState(false);
 
-  const loadMine = useCallback(() => {
-    if (!loggedIn) {
-      setMine([]);
-      return;
-    }
-    void myComponentList()
-      .then((list) => setMine(list ?? []))
-      .catch(() => setMine([]));
-  }, [loggedIn]);
-
-  useEffect(loadMine, [loadMine, refreshKey, reload]);
+  /* 已加入的组件：分页 + 类型筛选 */
+  const [joined, setJoined] = useState<MyComponent[]>([]);
+  const [joinedTotal, setJoinedTotal] = useState(0);
+  const [joinedPage, setJoinedPage] = useState(1);
+  const [joinedType, setJoinedType] = useState<ComponentTypeCode | null>(null);
+  const [joinedLoad, setJoinedLoad] = useState(false);
+  const [joinedFailed, setJoinedFailed] = useState(false);
 
   /* 筛选或刷新一变就回到第一页：停在第三页看一个只有两页的结果是空手 */
+  useEffect(() => {
+    setJoinedPage(1);
+  }, [joinedType, refreshKey, reload]);
+
+  useEffect(() => {
+    if (!loggedIn) {
+      setJoined([]);
+      setJoinedTotal(0);
+      return;
+    }
+    let alive = true;
+    setJoinedLoad(true);
+    setJoinedFailed(false);
+    void myComponentPage(joinedPage, JOINED_PAGE_SIZE, joinedType)
+      .then((res) => {
+        if (!alive) return;
+        setJoined(res.list ?? []);
+        setJoinedTotal(res.total ?? 0);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setJoinedFailed(true);
+        setJoined([]);
+        setJoinedTotal(0);
+      })
+      .finally(() => {
+        if (alive) setJoinedLoad(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [loggedIn, joinedPage, joinedType, refreshKey, reload]);
+
+  /* 我上传的组件：与「已加入的组件」一样，筛选或刷新一变就回到第一页 */
   useEffect(() => {
     setUploadPage(1);
   }, [uploadAudit, refreshKey, reload]);
@@ -95,7 +124,7 @@ export function MarketPanel({
     let alive = true;
     setUploadLoad(true);
     setUploadFailed(false);
-    void myUploadPage(uploadPage, MINE_PAGE_SIZE, null, uploadAudit)
+    void myUploadPage(uploadPage, UPLOAD_PAGE_SIZE, null, uploadAudit)
       .then((res) => {
         if (!alive) return;
         setUploads(res.list ?? []);
@@ -115,37 +144,13 @@ export function MarketPanel({
     };
   }, [loggedIn, uploadPage, uploadAudit, refreshKey, reload]);
 
-  /** 加入我的组件：市场那边记一次下载量，这里把清单刷新出来并把组件摆到屏幕上 */
+  /** 加入我的组件：市场那边记一次下载量，这里把「已加入的组件」刷新出来 */
   const onAdd = (part: CustomPart) => {
     setReload((n) => n + 1);
     onAddPart?.(part);
   };
 
-  /** 「我的组件」也用同一块「屏幕」来看 */
-  const openMine = (component: MyComponent) => {
-    setOpened({
-      id: component.id,
-      name: component.name,
-      type: component.type,
-      typeName: component.typeName,
-      thumbnail: component.thumbnail,
-      description: component.description,
-      userName: component.sourceUserName,
-      data: component.data,
-    });
-  };
-
-  const removeOwned = async (component: MyComponent) => {
-    try {
-      await deleteMyComponent(component.id);
-      setMine((cur) => cur.filter((c) => c.id !== component.id));
-      onToast?.(t("myPartDeleted", lang), 2200, "delete");
-    } catch (err) {
-      onToast?.(err instanceof Error ? err.message : t("marketFailed", lang), 2400, "error");
-    }
-  };
-
-  /** 删掉自己上传的市场组件：市场页与「我的市场组件」都不会再看到它 */
+  /** 删掉自己上传的市场组件：市场里与「我的市场组件」都不会再看到它 */
   const removeUpload = async (component: MarketComponent) => {
     try {
       await deleteMyUpload(component.id);
@@ -158,15 +163,30 @@ export function MarketPanel({
     }
   };
 
-  const myPart = (component: MyComponent) =>
-    partOf(component.data, `mine-${component.id}`, component.name);
+  /** 从「已加入的组件」里删掉一份：后端删掉，列表随之少一条 */
+  const removeJoined = async (component: MyComponent) => {
+    try {
+      await deleteMyComponent(component.id);
+      setJoined((cur) => cur.filter((c) => c.id !== component.id));
+      setJoinedTotal((n) => Math.max(0, n - 1));
+      setReload((n) => n + 1);
+      onToast?.(t("myPartDeleted", lang), 2200, "delete");
+    } catch (err) {
+      onToast?.(err instanceof Error ? err.message : t("marketFailed", lang), 2400, "error");
+    }
+  };
 
-  const uploadPages = Math.max(1, Math.ceil(uploadTotal / MINE_PAGE_SIZE));
+  const joinedPages = Math.max(1, Math.ceil(joinedTotal / JOINED_PAGE_SIZE));
+  const uploadPages = Math.max(1, Math.ceil(uploadTotal / UPLOAD_PAGE_SIZE));
   const auditOptions = [
     { value: -1, label: t("auditAll", lang) },
     { value: AUDIT_WAITING, label: t("auditWaiting", lang) },
     { value: AUDIT_PASSED, label: t("auditPassed", lang) },
     { value: AUDIT_REJECTED, label: t("auditRejected", lang) },
+  ];
+  const typeOptions = [
+    { value: 0, label: t("marketAll", lang) },
+    ...CATEGORIES.map((c) => ({ value: CODE_OF_CATEGORY[c.key] as number, label: CATEGORY_NAMES[c.key] })),
   ];
 
   const tabButton = (key: MarketTab, label: string, icon: string) => {
@@ -206,145 +226,70 @@ export function MarketPanel({
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       {/* 「我的市场组件」和「市场组件」两页 */}
       <div style={{ display: "flex", gap: 4, padding: "10px 10px 6px", background: p.surfaceContainerLow }}>
-        {tabButton("market", t("marketTab", lang), "storefront")}
+        {tabButton("joined", t("marketJoined", lang), "bookmark_added")}
         {tabButton("mine", t("marketMine", lang), "cloud_upload")}
       </div>
 
-      {tab === "market" ? (
-        <>
-          <div style={{ flex: 1, minHeight: 0 }}>
-            <MarketList p={p} refreshKey={refreshKey + reload} onOpen={setOpened} />
+      {tab === "joined" ? (
+        /* 「已加入的组件」：从市场加入到自己名下的那一批 */
+        <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
+          <div style={{ padding: "6px 12px 8px" }}>
+            <TypeSelect
+              p={p}
+              value={joinedType ?? 0}
+              options={typeOptions}
+              title={t("marketType", lang)}
+              onChange={(value) => setJoinedType(value === 0 ? null : (value as ComponentTypeCode))}
+            />
           </div>
 
-          {loggedIn && (
-            <div style={{ borderTop: `1px solid ${p.outlineVariant}`, padding: "10px 12px 12px", display: "grid", gap: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <Icon name="bookmark" size={16} />
-                <span style={{ fontSize: 12, fontWeight: 700, flex: 1 }}>{t("myParts", lang)}</span>
-                <span style={{ fontSize: 11, color: p.onSurfaceVariant }}>{mine.length}</span>
-              </div>
-
-              {mine.length === 0 ? (
-                <span style={{ fontSize: 11, color: p.onSurfaceVariant }}>{t("myPartsEmpty", lang)}</span>
-              ) : (
-                <div className="no-scrollbar" style={{ maxHeight: 150, overflowY: "auto", display: "grid", gap: 6 }}>
-                  {mine.slice(0, MINE_LIMIT).map((component) => {
-                    const parsed = myPart(component);
-                    return (
-                      <div
+          {!loggedIn ? (
+            <Hint p={p} icon="person" text={t("signInToUse", lang)} />
+          ) : (
+            <>
+              <div className="no-scrollbar" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "0 12px 10px" }}>
+                {joinedLoad && joined.length === 0 ? (
+                  <Hint p={p} icon="hourglass_top" text={t("marketLoading", lang)} />
+                ) : joinedFailed ? (
+                  <Hint p={p} icon="cloud_off" text={t("marketFailed", lang)} />
+                ) : joined.length === 0 ? (
+                  <Hint p={p} icon="bookmark_added" text={t("marketJoinedEmpty", lang)} />
+                ) : (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {joined.map((component) => (
+                      <JoinedRow
                         key={component.id}
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "44px 1fr auto",
-                          alignItems: "center",
-                          gap: 8,
-                          padding: 6,
-                          borderRadius: 12,
-                          background: p.surfaceContainerLow,
+                        p={p}
+                        component={component}
+                        onPreview={() =>
+                          setOpened({
+                            id: component.id,
+                            name: component.name,
+                            type: component.type,
+                            typeName: component.typeName,
+                            thumbnail: component.thumbnail,
+                            description: component.description,
+                            userName: component.sourceUserName,
+                            data: component.data,
+                          })
+                        }
+                        onAdd={() => {
+                          const part = partOf(component.data, `joined-${component.id}`, component.name, component.id);
+                          if (part) onAddPart?.(part);
                         }}
-                      >
-                        <button
-                          onClick={() => openMine(component)}
-                          title={t("myPartDetail", lang)}
-                          className="m3-press"
-                          style={{
-                            width: 44,
-                            height: 44,
-                            padding: 0,
-                            borderRadius: 10,
-                            border: "none",
-                            overflow: "hidden",
-                            background: p.surfaceContainerHighest,
-                            cursor: "pointer",
-                            display: "grid",
-                            placeItems: "center",
-                          }}
-                        >
-                          {component.thumbnail ? (
-                            <img src={component.thumbnail} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-                          ) : (
-                            <Icon name="dashboard_customize" size={18} />
-                          )}
-                        </button>
-                        <button
-                          onClick={() => parsed && onAddPart?.(parsed)}
-                          disabled={!parsed}
-                          title={parsed ? t("myPartAdd", lang) : t("marketNoData", lang)}
-                          className="m3-press"
-                          style={{
-                            minWidth: 0,
-                            padding: 0,
-                            border: "none",
-                            background: "transparent",
-                            color: p.onSurface,
-                            textAlign: "left",
-                            cursor: parsed ? "pointer" : "default",
-                            display: "grid",
-                            gap: 2,
-                          }}
-                        >
-                          <span style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {component.name}
-                          </span>
-                          <span style={{ fontSize: 10, color: p.onSurfaceVariant }}>
-                            {CATEGORY_NAMES[categoryOf(component.type)]}
-                            {component.sourceUserName ? ` · ${t("myPartBy", lang).replace("{name}", component.sourceUserName)}` : ""}
-                          </span>
-                        </button>
-                        <button
-                          onClick={() => void removeOwned(component)}
-                          title={t("myPartDelete", lang)}
-                          aria-label={t("myPartDelete", lang)}
-                          className="m3-press"
-                          style={{
-                            width: 28,
-                            height: 28,
-                            borderRadius: 14,
-                            border: "none",
-                            background: p.errorContainer,
-                            color: p.onErrorContainer,
-                            cursor: "pointer",
-                            display: "grid",
-                            placeItems: "center",
-                          }}
-                        >
-                          <Icon name="delete" size={15} />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {onOpenMarketPage && (
-                <button
-                  onClick={onOpenMarketPage}
-                  title={t("marketOpenHint", lang)}
-                  className="m3-press"
-                  style={{
-                    height: 40,
-                    borderRadius: 20,
-                    border: "none",
-                    background: p.primary,
-                    color: p.onPrimary,
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                  }}
-                >
-                  <Icon name="open_in_new" size={18} />
-                  {t("marketOpen", lang)}
-                </button>
-              )}
-            </div>
+                        onDelete={() => void removeJoined(component)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+              <Pager p={p} page={joinedPage} pages={joinedPages} busy={joinedLoad} onChange={setJoinedPage} />
+              <OpenMarketButton p={p} onClick={onOpenMarketPage} />
+            </>
           )}
-        </>
+        </div>
       ) : (
-        /* 「我的市场组件」：自己上传的，带审核情况 */
+        /* 「我的市场组件」：自己上传的，带审核状态、备注与时间 */
         <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
           <div style={{ padding: "6px 12px 8px" }}>
             <TypeSelect
@@ -382,6 +327,8 @@ export function MarketPanel({
                 )}
               </div>
               <Pager p={p} page={uploadPage} pages={uploadPages} busy={uploadLoad} onChange={setUploadPage} />
+
+              <OpenMarketButton p={p} onClick={onOpenMarketPage} />
             </>
           )}
         </div>
@@ -399,7 +346,116 @@ export function MarketPanel({
   );
 }
 
-/** 我上传的一个市场组件：缩略图、名称、审核状态、审核备注与时间 */
+/** 「已加入的组件」里的一行：缩略图、名称、类型与来源作者；可以摆到屏幕上或删掉 */
+function JoinedRow({
+  p,
+  component,
+  onPreview,
+  onAdd,
+  onDelete,
+}: {
+  p: Palette;
+  component: MyComponent;
+  onPreview: () => void;
+  /** 摆到当前屏幕上 */
+  onAdd: () => void;
+  onDelete: () => void;
+}) {
+  const lang = useLang();
+  const openBtn: React.CSSProperties = {
+    padding: 0,
+    border: "none",
+    background: "transparent",
+    color: p.onSurface,
+    textAlign: "left",
+    cursor: "pointer",
+  };
+  const actionBtn: React.CSSProperties = {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    border: "none",
+    cursor: "pointer",
+    display: "grid",
+    placeItems: "center",
+  };
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "58px 1fr auto",
+        gap: 10,
+        padding: 8,
+        borderRadius: 16,
+        background: p.surfaceContainerLow,
+      }}
+    >
+      <button
+        onClick={onPreview}
+        title={component.name}
+        className="m3-press"
+        style={{
+          ...openBtn,
+          width: 58,
+          height: 58,
+          borderRadius: 12,
+          overflow: "hidden",
+          background: p.surfaceContainerLow,
+          display: "grid",
+          placeItems: "center",
+        }}
+      >
+        {component.thumbnail ? (
+          <img src={component.thumbnail} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+        ) : (
+          <Icon name="dashboard_customize" size={20} />
+        )}
+      </button>
+
+      <button
+        onClick={onPreview}
+        title={t("myPartDetail", lang)}
+        className="m3-press"
+        style={{ ...openBtn, minWidth: 0, display: "grid", gap: 3, alignContent: "center" }}
+      >
+        <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {component.name}
+        </span>
+        <span style={{ fontSize: 10, color: p.onSurfaceVariant, display: "flex", gap: 8, minWidth: 0 }}>
+          <span>{component.typeName ?? CATEGORY_NAMES[categoryOf(component.type)]}</span>
+          {component.sourceUserName ? (
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {t("myPartBy", lang).replace("{name}", component.sourceUserName)}
+            </span>
+          ) : null}
+        </span>
+      </button>
+
+      <span style={{ display: "flex", gap: 4, alignSelf: "start" }}>
+        <button
+          onClick={onAdd}
+          title={t("myPartAdd", lang)}
+          aria-label={t("myPartAdd", lang)}
+          className="m3-press"
+          style={{ ...actionBtn, background: p.secondaryContainer, color: p.onSecondaryContainer }}
+        >
+          <Icon name="add_to_photos" size={15} />
+        </button>
+        <button
+          onClick={onDelete}
+          title={t("myPartDelete", lang)}
+          aria-label={t("myPartDelete", lang)}
+          className="m3-press"
+          style={{ ...actionBtn, background: p.errorContainer, color: p.onErrorContainer }}
+        >
+          <Icon name="delete" size={15} />
+        </button>
+      </span>
+    </div>
+  );
+}
+
+/** 「我的市场组件」里的一行：缩略图、名称、审核状态、审核备注与时间 */
 function UploadRow({
   p,
   component,
@@ -425,7 +481,7 @@ function UploadRow({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "68px 1fr auto",
+        gridTemplateColumns: "58px 1fr auto",
         gap: 10,
         padding: 8,
         borderRadius: 16,
@@ -438,11 +494,11 @@ function UploadRow({
         className="m3-press"
         style={{
           ...openBtn,
-          width: 68,
-          height: 68,
+          width: 58,
+          height: 58,
           borderRadius: 12,
           overflow: "hidden",
-          background: p.surfaceContainerHighest,
+          background: p.surfaceContainerLow,
           display: "grid",
           placeItems: "center",
         }}
@@ -458,7 +514,7 @@ function UploadRow({
         onClick={onOpen}
         title={t("myPartDetail", lang)}
         className="m3-press"
-        style={{ ...openBtn, minWidth: 0, display: "grid", gap: 3, alignContent: "start" }}
+        style={{ ...openBtn, minWidth: 0, display: "grid", gap: 3, alignContent: "center" }}
       >
         <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {component.name}
@@ -471,9 +527,7 @@ function UploadRow({
           </span>
         </span>
         {/* 通过了的组件才在市场里：这一行说清楚它此刻在不在 */}
-        {status === AUDIT_PASSED && (
-          <span style={{ fontSize: 10, color: p.primary }}>{t("marketInMarket", lang)}</span>
-        )}
+        {status === AUDIT_PASSED && <span style={{ fontSize: 10, color: p.primary }}>{t("marketInMarket", lang)}</span>}
         {component.auditRemark && (
           <span style={{ fontSize: 10, lineHeight: 1.5, color: status === AUDIT_REJECTED ? p.error : p.onSurfaceVariant }}>
             {t("auditRemarkLabel", lang)}：{component.auditRemark}
@@ -488,7 +542,7 @@ function UploadRow({
       <button
         onClick={onDelete}
         title={t("myUploadDeleteTitle", lang)}
-        aria-label={t("myUploadDelete", lang)}
+        aria-label={t("myUploadDeleteTitle", lang)}
         className="m3-press"
         style={{
           width: 28,
@@ -509,3 +563,40 @@ function UploadRow({
   );
 }
 
+/**
+ * 「打开市场组件页」入口
+ *
+ * 「已加入的组件」与「我的市场组件」两页底部都有它：
+ * 这两页管的都是「我自己的那一份」，想逛全部已公开的组件就去这一页。
+ */
+function OpenMarketButton({ p, onClick }: { p: Palette; onClick?: () => void }) {
+  const lang = useLang();
+  if (!onClick) return null;
+  return (
+    <div style={{ padding: "0 12px 12px" }}>
+      <button
+        onClick={onClick}
+        title={t("marketOpenHint", lang)}
+        className="m3-press"
+        style={{
+          width: "100%",
+          height: 40,
+          borderRadius: 20,
+          border: "none",
+          background: p.primary,
+          color: p.onPrimary,
+          fontSize: 13,
+          fontWeight: 600,
+          cursor: "pointer",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 8,
+        }}
+      >
+        <Icon name="open_in_new" size={18} />
+        {t("marketOpen", lang)}
+      </button>
+    </div>
+  );
+}

@@ -309,12 +309,22 @@ export interface PageResult<T> {
 }
 
 /** 市场组件分页；name / type 都可选 */
-export const marketComponentPage = (pageNo: number, pageSize: number, type?: ComponentTypeCode | null, name?: string) =>
+/** 市场组件的排序：两者都是降序 —— newest 看最新上传，popular 看下载量 */
+export type MarketSort = "created" | "downloads";
+
+export const marketComponentPage = (
+  pageNo: number,
+  pageSize: number,
+  type?: ComponentTypeCode | null,
+  name?: string,
+  sort: MarketSort = "created",
+) =>
   post<PageResult<MarketComponent>>("/syai/market-component/page", {
     pageNo,
     pageSize,
     type: type ?? undefined,
     name: name?.trim() || undefined,
+    sort,
   }, false);
 
 /** 市场组件详情，带组件数据 */

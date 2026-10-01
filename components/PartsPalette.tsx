@@ -6,7 +6,7 @@ import { Icon } from "./M3Node";
 import { KIND_TEXT, t, useLang } from "@/lib/i18n";
 import { Field, Section, Tile } from "./ui";
 import { MyComponent } from "@/lib/syai";
-import { categoryOf, categoryName, partOf } from "@/lib/market";
+import { categoryOf, categoryName, isJoinedPart, partOf } from "@/lib/market";
 
 const CATEGORY_TEXT = {
   ja: { actions: "操作", navigation: "ナビゲーション", containment: "コンテナ", inputs: "入力", content: "コンテンツ", progress: "進捗", features: "機能" },
@@ -49,6 +49,8 @@ export function PartsPalette({
 }) {
   const lang = useLang();
   const [q, setQ] = useState("");
+  /* 本地存的组合组件与市场加来的是两回事：前者单独一节，后者按类型落到各自分类里 */
+  const localParts = useMemo(() => customParts.filter((c) => !isJoinedPart(c)), [customParts]);
   const labelOf = (k: Kind) => lang === "en" ? KIND_SPEC[k].label : KIND_TEXT[lang][k]?.noun ?? KIND_SPEC[k].label;
 
   const filtered = useMemo(() => {
@@ -128,13 +130,14 @@ export function PartsPalette({
             <div style={grid}>{favorites.filter((k) => KIND_SPEC[k]).map(tile)}</div>
           </Section>
         )}
-        {!q && customParts.length > 0 && (
+        {!q && localParts.length > 0 && (
           /* the author's own sets of parts — a container saved whole from the canvas — ready to drop
              as often as they like. Nothing is composed from scratch here: a set is made by saving
-             what is on the page. */
+             what is on the page. Parts joined from the market are not here: they belong to their
+             own type below, next to the palette's own kinds. */
           <Section id="composite" icon="widgets" title={t("composites", lang)} p={p}>
             <div style={grid}>
-              {customParts.map((part) => (
+              {localParts.map((part) => (
                 /* a saved composite: drag the body to use it, the corner buttons change it */
                 <div key={part.id} style={{ position: "relative" }}>
                   <Tile

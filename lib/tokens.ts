@@ -3555,6 +3555,13 @@ export type Doc = {
 export type CustomPart = {
   id: string;
   name: string;
+  /**
+   * 从哪来的：市场组件的编号，或 "mine"（作者自己在画布上存下来的组合组件）。
+   *
+   * 两者在组件面板里都要出现，但只有市场来的那一批属于「已加入的组件」，
+   * 而且它们不能互相顶掉 —— 名字撞上时，本地存的那个才是该被覆盖的一份。
+   */
+  source?: string | number;
   /** the box an instance takes, before anything inside it is edited */
   w: number;
   h: number;
