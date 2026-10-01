@@ -1,4 +1,4 @@
-import { Doc, Group, KIND_ORDER, LEGACY_KINDS, Kind, VARIANTS, isCardAlign, isCardImagePos, isCustomColor, isOverlayLevel, isPlace, isRuleKind, isTabSide, isStateEffect, isValueOp, isTextToken, isPlatform, isTrackThickness, isVariant } from "./tokens";
+import { Doc, Group, KIND_ORDER, LEGACY_KINDS, Kind, PlacedItem, VARIANTS, isCardAlign, isCardImagePos, isCustomColor, isOverlayLevel, isPlace, isRuleKind, isTabSide, isStateEffect, isValueOp, isTextToken, isPlatform, isTrackThickness, isVariant } from "./tokens";
 
 /* A project file is the Doc as JSON, nothing more. Reading one back only checks
  * the shape the editor relies on; the same migrations that run on a saved
@@ -194,6 +194,10 @@ const validItem = (item: unknown): boolean =>
   validPrizes(item.prizes) &&
   validRewards(item.rewards) &&
   validTabs(item.tabs);
+
+/** whether a parsed value is one part of a document this build can draw. Exported because a part
+ *  also arrives on its own — from the component market — and has to be checked the same way. */
+export const isPlacedItem = (item: unknown): item is PlacedItem => validItem(item);
 
 const validGroup = (group: unknown) =>
   isRecord(group) &&

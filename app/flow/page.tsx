@@ -6,6 +6,7 @@ import { buildFlow, flowMarkdown, overlayLevelName, FLOW_TEXT, type Flow, type F
 import { isProject } from "@/lib/project";
 import { paletteOf, type Doc, type Palette } from "@/lib/tokens";
 import { isLang, setGlobalLang, t, type Lang } from "@/lib/i18n";
+import { editorHref } from "@/lib/appPath";
 
 /* The flow page: the screens of the saved document as a layered diagram. It reads
  * the same autosave the editor writes, draws the graph buildFlow returns, and can
@@ -13,7 +14,6 @@ import { isLang, setGlobalLang, t, type Lang } from "@/lib/i18n";
 
 /** the page is exported under a basePath, so links stay relative and the
  *  export-only paths (agent.md and friends) are built from the same env var */
-const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
 /* layout: a column per BFS depth, rows inside a column, in frame order */
 const NODE_W = 200;
@@ -100,8 +100,7 @@ function downloadUrl(url: string, name: string) {
   a.click();
 }
 
-/** a link that stays inside the export, whatever basePath the app is served from */
-const editorHref = () => `${BASE_PATH || "."}/`;
+
 
 export default function FlowPage() {
   const [lang, setLang] = useState<Lang | null>(null);

@@ -688,6 +688,7 @@ export function Tile({
   onStar,
   active,
   compact,
+  image,
 }: {
   icon: string;
   label: string;
@@ -698,6 +699,8 @@ export function Tile({
   onStar?: () => void;
   active?: boolean;
   compact?: boolean;
+  /** 用一张缩略图代替图标：市场里带回来的组件有自己的样子，画出来比一个通用图标好认 */
+  image?: string;
 }) {
   const lang = useLang();
   return (
@@ -724,7 +727,24 @@ export function Tile({
         boxSizing: "border-box",
       }}
     >
-      <Icon name={icon} size={compact ? 20 : 26} color={active ? p.onSecondaryContainer : p.primary} />
+      {image ? (
+        <span
+          style={{
+            width: compact ? 28 : 60,
+            height: compact ? 20 : 30,
+            borderRadius: 6,
+            overflow: "hidden",
+            background: p.surfaceContainerHighest,
+            display: "grid",
+            placeItems: "center",
+            flex: "0 0 auto",
+          }}
+        >
+          <img src={image} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+        </span>
+      ) : (
+        <Icon name={icon} size={compact ? 20 : 26} color={active ? p.onSecondaryContainer : p.primary} />
+      )}
       <span
         style={{
           fontSize: 11,
@@ -1226,6 +1246,142 @@ export function Pick<K extends string>({
           {shown.length === 0 && <div style={{ padding: "8px", fontSize: 12, color: p.outline, textAlign: "center" }}>{t("searchOff", lang)}</div>}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * 一个下拉选择：一个按钮，点开是一列选项。
+ *
+ * 组件类型、审核状态这类「一次只能选一个」的筛选都走它 ——
+ * 排成一行可横向拖动的分类条，在窄面板里既占地方又不好点。
+ */
+export function TypeSelect<T extends number>({
+  p,
+  value,
+  options,
+  title,
+  onChange,
+  height = 40,
+}: {
+  p: Palette;
+  value: T;
+  options: { value: T; label: string; icon?: string }[];
+  title?: string;
+  onChange: (value: T) => void;
+  height?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const current = options.find((o) => o.value === value) ?? options[0];
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        title={title}
+        className="m3-press"
+        style={{
+          width: "100%",
+          height,
+          padding: "0 10px 0 14px",
+          borderRadius: height / 2,
+          border: `1px solid ${open ? p.primary : p.outline}`,
+          background: p.surface,
+          color: p.onSurface,
+          fontSize: 13,
+          fontWeight: 600,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          textAlign: "left",
+        }}
+      >
+        {current?.icon && <Icon name={current.icon} size={18} />}
+        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {current?.label ?? ""}
+        </span>
+        <Icon name={open ? "expand_less" : "expand_more"} size={20} />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            role="listbox"
+            initial={{ opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.98 }}
+            transition={{ duration: 0.14, ease: [0.2, 0, 0, 1] }}
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              top: height + 6,
+              zIndex: 70,
+              padding: 6,
+              borderRadius: 18,
+              background: p.surfaceContainerLow,
+              boxShadow: "0 6px 20px rgba(0,0,0,0.16), 0 0 0 1px rgba(0,0,0,0.04)",
+              transformOrigin: "top center",
+              maxHeight: 260,
+              overflowY: "auto",
+            }}
+          >
+            {options.map((o) => (
+              <button
+                key={o.value}
+                role="option"
+                aria-selected={o.value === value}
+                onClick={() => {
+                  onChange(o.value);
+                  setOpen(false);
+                }}
+                className="m3-press"
+                style={{
+                  width: "100%",
+                  height: 38,
+                  padding: "0 12px 0 8px",
+                  borderRadius: 12,
+                  border: "none",
+                  background: o.value === value ? p.secondaryContainer : "transparent",
+                  color: o.value === value ? p.onSecondaryContainer : p.onSurface,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                <span style={{ width: 18, display: "inline-flex", flex: "0 0 auto" }}>
+                  {o.value === value && <Icon name="check" size={18} />}
+                </span>
+                {o.icon && <Icon name={o.icon} size={16} />}
+                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}>
+                  {o.label}
+                </span>
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

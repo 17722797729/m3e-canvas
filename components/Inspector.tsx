@@ -582,6 +582,7 @@ export function FrameInspector({
   frames,
   ai,
   onSize,
+  onUploadMarket,
 }: {
   frame: Frame;
   palette: Palette;
@@ -594,6 +595,8 @@ export function FrameInspector({
   frames: Frame[];
   ai: AiHooks;
   onSize: (preset: FramePreset) => void;
+  /** 把这一屏的组件上传到市场 */
+  onUploadMarket?: () => void;
 }) {
   const lang = useLang();
   const [copied, setCopied] = useState(false);
@@ -666,6 +669,16 @@ export function FrameInspector({
           style={{ width: 32, height: 32, borderRadius: 16, border: "none", background: "transparent", color: "#ffffff", cursor: "pointer", display: "grid", placeItems: "center" }}
         >
           <Icon name="content_copy" size={20} />
+        </button>
+        {/* 复制旁边：把这一屏的组件传到市场，别人就能在自己的画布上用 */}
+        <button
+          onClick={() => onUploadMarket?.()}
+          title={t("uploadMarket", lang)}
+          aria-label={t("uploadMarket", lang)}
+          className="m3-press"
+          style={{ width: 32, height: 32, borderRadius: 16, border: "none", background: "transparent", color: "#ffffff", cursor: "pointer", display: "grid", placeItems: "center" }}
+        >
+          <Icon name="cloud_upload" size={20} />
         </button>
         <IconBtn icon="delete" p={p} danger onClick={onDelete} title={t("delete", lang)} size={32} />
       </div>

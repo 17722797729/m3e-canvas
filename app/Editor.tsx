@@ -37,12 +37,20 @@ import { hasShareHash, readShareHash } from "@/lib/share";
 import { LoadingIndicator } from "@/components/Loading";
 import { draftDesign } from "@/lib/ai";
 import { ShareDialog } from "@/components/ShareMenu";
+import { StaticScreen } from "@/components/StaticFrame";
+import { captureOptions as thumbCaptureOptions, iconFontEmbedCss } from "@/lib/marketThumbnail";
 import { ColorPanel } from "@/components/ColorPanel";
 import { MotionPanel, ShapePanel, TypePanel } from "@/components/ThemePanel";
 import { ThemeContext, ensureFontLoaded, ensureLangFontLoaded } from "@/lib/theme";
 import { BottomSheet, MobileActionBar, MobileInspector, MobileLang, MobileSettings } from "@/components/Mobile";
 import { ConfirmDialog, FoldButton, IconBtn, Segmented } from "@/components/ui";
 import { KIND_TEXT, Lang, LangContext, SEED_TEXT, adoptDoc, getLang, overlayLevelText, setGlobalLang, t, translateDoc } from "@/lib/i18n";
+import { MarketPanel } from "@/components/MarketPanel";
+import { UploadMarketDialog } from "@/components/UploadMarketDialog";
+import { AvatarMenu } from "@/components/AvatarMenu";
+import { bootSession, useSession } from "@/lib/session";
+import { MarketComponent, MyComponent, deleteMyComponent, myComponentList } from "@/lib/syai";
+import { categoryOf, partOf } from "@/lib/market";
 
 /** the screens while a model drafts: primary, tertiary and primary container, drifting */
 const DRAFT_GRADIENT = (p: Palette) => `linear-gradient(120deg, ${p.primaryContainer}, ${p.tertiaryContainer}, ${p.primary}, ${p.secondaryContainer}, ${p.primaryContainer})`;
@@ -294,9 +302,9 @@ function ThinkingRing({ p, frame }: { p: Palette; frame: Frame }) {
   );
 }
 
-type LeftTab = "parts" | "layers" | "audit" | "color" | "shape" | "type" | "motion" | "ai";
+type LeftTab = "parts" | "layers" | "audit" | "color" | "shape" | "type" | "motion" | "ai" | "market";
 /** the left rail: what the document is made of, what is wrong with it, then its four theme axes */
-const LEFT_TABS: { key: LeftTab; icon: string; title: "parts" | "layers" | "audit" | "colors" | "shape" | "typography" | "motion" | "ai" }[] = [
+const LEFT_TABS: { key: LeftTab; icon: string; title: "parts" | "layers" | "audit" | "colors" | "shape" | "typography" | "motion" | "ai" | "marketPanel" }[] = [
   { key: "parts", icon: "add_box", title: "parts" },
   { key: "layers", icon: "layers", title: "layers" },
   { key: "audit", icon: "fact_check", title: "audit" },
@@ -305,6 +313,8 @@ const LEFT_TABS: { key: LeftTab; icon: string; title: "parts" | "layers" | "audi
   { key: "type", icon: "text_fields", title: "typography" },
   { key: "motion", icon: "animation", title: "motion" },
   { key: "ai", icon: "auto_awesome", title: "ai" },
+  /* 「文字」是组件面板里的一类部件，市场组件排在它下面，是另一处来源 */
+  { key: "market", icon: "storefront", title: "marketPanel" },
 ];
 
 export default function Editor({ initialLang, onReady }: { initialLang: Lang; onReady?: () => void }) {
@@ -388,6 +398,12 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const [favorites, setFavorites] = useState<Kind[]>([]);
   /** the author's own composite parts, offered by the palette beside the kinds */
   const [customParts, setCustomParts] = useState<CustomPart[]>([]);
+  /** 市场里「加入我的组件」后落到后端、也铺进组件面板的那一批 */
+  const [myParts, setMyParts] = useState<MyComponent[]>([]);
+  /** 上传到市场组件的弹窗 */
+  const [uploadOpen, setUploadOpen] = useState(false);
+  /** 变了就让市场列表与我的组件重拉一次，例如刚上传完 */
+  const [marketKey, setMarketKey] = useState(0);
   /** the values the prototype carries between taps: coins, stamina, what has been claimed */
   /** the saved composite being renamed, if any: a saved set is only ever renamed — its parts are
    *  kept exactly as they were saved, so a rename can never restyle it. */
@@ -527,6 +543,33 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   useEffect(() => {
     instantRef.current.clear();
   });
+
+  /* 登录态：页面加载时先把缓存的账号渲染出来，再后台校验一次 */
+  useEffect(() => {
+    bootSession();
+  }, []);
+
+  /** 登录态：marketParts 只在登录后才有内容 */
+  const { loggedIn } = useSession();
+
+  /* 我的组件：登录后拉一次，登录/退出或刚加入/删除后重拉 */
+  useEffect(() => {
+    if (!loggedIn) {
+      setMyParts([]);
+      return;
+    }
+    let alive = true;
+    void myComponentList()
+      .then((list) => {
+        if (alive) setMyParts(list ?? []);
+      })
+      .catch(() => {
+        if (alive) setMyParts([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [loggedIn, marketKey]);
 
   /* ---------- persistence ---------- */
   useEffect(() => {
@@ -3219,6 +3262,57 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     [snapshot],
   );
 
+  /* ---------- 市场组件 ---------- */
+
+  /** 把一个市场组件摆到当前屏幕上：新开一个组，位置取这一屏的左内边距 */
+  const addMarketPart = useCallback(
+    (part: CustomPart) => {
+      const item = compositeInstance(part, uid);
+      const frame = framesRef.current.find((f) => f.id === selectedFrameId) ?? framesRef.current[0];
+      const size = sizeOf(item, widthsRef.current);
+      const at = frame
+        ? { x: frame.x + PHONE_MARGIN, y: frame.y + PHONE_MARGIN }
+        : (() => {
+            const r = canvasRect();
+            const v = viewRef.current;
+            return {
+              x: Math.round(((r?.width ?? 800) / 2 - v.x) / v.z - size.w / 2),
+              y: Math.round(((r?.height ?? 600) / 2 - v.y) / v.z - size.h / 2),
+            };
+          })();
+      snapshot();
+      setGroups((cur) => [...cur, { id: uid(), x: at.x, y: at.y, axis: "x", items: [item] }]);
+      setSelectedIds([item.id]);
+      setSelectedFrameId(frame?.id ?? null);
+    },
+    [snapshot, selectedFrameId],
+  );
+
+  /** 从市场面板里把一个组件拖到画布上 */
+  const onMyPartPointerDown = useCallback(
+    (e: React.PointerEvent, part: CustomPart) => startPartDrag(e, compositeInstance(part, uid)),
+    [startPartDrag],
+  );
+
+  /** 删掉一个「我的组件」：后端删完，本地清单也随之少一条 */
+  const removeMyPart = useCallback(
+    (component: MyComponent) => {
+      void deleteMyComponent(component.id)
+        .then(() => {
+          setMyParts((cur) => cur.filter((c) => c.id !== component.id));
+          setMarketKey((n) => n + 1);
+          showToast(t("myPartDeleted", lang), 1600, "delete");
+        })
+        .catch((err) => showToast(err instanceof Error ? err.message : t("marketFailed", lang), 2400, "error"));
+    },
+    [lang],
+  );
+
+  /** 加入我的组件之后：市场列表的下载量刷新一次 */
+  const onMarketPartAdded = useCallback(() => {
+    setMarketKey((n) => n + 1);
+  }, []);
+
   const duplicateFrame = (id: string) => {
     const f = framesRef.current.find((x) => x.id === id);
     if (!f) return;
@@ -3268,102 +3362,40 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       const el = document.querySelector<HTMLElement>(`[data-export="${f.id}"]`);
       if (!el) return;
       const { w, h } = frameSizeOf(f);
-      const url = await toPng(el, { pixelRatio: 2, cacheBust: true, width: w, height: h });
+      /* 与市场缩略图同一套：关掉字体内联（跨域的 Google Fonts 读 cssRules 会抛
+         SecurityError，开发模式下弹成红色浮层），只把本站的图标字体单独嵌进去，
+         否则导出的 PNG 里图标会退化成 "menu" 这样的连字文字。 */
+      const url = await toPng(el, thumbCaptureOptions(w, h, await iconFontEmbedCss()));
       const a = document.createElement("a");
       a.href = url;
       a.download = `${f.name || "screen"}.png`;
       a.click();
+    } catch (err) {
+      /* 屏幕里放了跨域图片时画布会被污染：说清楚是哪个原因，别让按钮看起来没反应 */
+      console.warn("导出屏幕图片失败：", err);
+      showToast(t("exportFailed", lang), 2600, "error");
     } finally {
       setExportFrame(null);
     }
   };
 
-  /** the runs of one screen drawn with plain divs: the export layer */
-  /** a container's children as the plain, deterministic renderer needs them */
-  const staticChildren = (parent: Item): React.ReactNode =>
-    (parent.children ?? []).filter((c, i) => childDrawn(parent, c, i)).sort(byLayer).map((c) => (
-      <div key={c.id} style={{ ...PLACED, left: c.x + foldPlace(c, widths).dx, top: c.y + foldPlace(c, widths).dy }}>
-        <M3Static
-          item={c}
-          palette={p}
-          overlay={
-            <>
-              {staticChildren(c)}
-              {parent.kind === "invGrid" && <GridCellMarks grid={parent} cell={c} checked={!!c.checked} p={p} />}
-            </>
-          }
-        />
-      </div>
-    ));
-
   const renderExport = (f: Frame) => {
     const gs = shownGroups.filter((g) => frameOfGroup(g, frames, widths)?.id === f.id);
     const { w, h } = frameSizeOf(f);
+    /* 一帧的内容交给 StaticFrame：导出 PNG 与市场里的「屏幕」因此和画布完全一致 */
     return (
-      <div
-        data-export={f.id}
-        style={{
-          position: "relative",
-          width: w,
-          height: h,
-          background: fillColor(f.bg, p, "surface"),
-          overflow: "hidden",
-        }}
-      >
-        {gs.map((g) =>
-          g.free ? (
-            ((corners) =>
-            layoutOf(g, widths).map((pl) => (
-              <div key={pl.item.id} style={{ ...PLACED, left: pl.x - f.x, top: pl.y - f.y, zIndex: modalRailOf(g) ? 2 : undefined }}>
-                <M3Static
-                  item={pl.item}
-                  palette={p}
-                  radii={corners.get(pl.item.id)}
-                  style={MEASURED.includes(pl.item.kind) ? undefined : { width: pl.w, height: pl.h }}
-                  overlay={staticChildren(pl.item)}
-                />
-              </div>
-            )))(freeRadii(g, widths))
-          ) : (
-          <div
-            key={g.id}
-            style={{
-              position: "absolute",
-              left: g.x - f.x,
-              top: g.y - f.y,
-              zIndex: modalRailOf(g) ? 2 : undefined,
-              display: "flex",
-              flexDirection: g.axis === "x" ? "row" : "column",
-              alignItems: g.axis === "x" ? "center" : "stretch",
-              gap: GAP,
-            }}
-          >
-            {g.items.map((it, i) => {
-              const conn = connectSpecOf(it);
-              const n = g.items.length;
-              const radii =
-                conn && n > 1
-                  ? runRadii(g.axis, i === 0, i === n - 1, false, false, 0, conn.outer, conn.inner)
-                  : conn
-                    ? uniformRadii(conn.outer)
-                    : baseRadii(it);
-              return (
-                <M3Static
-                  key={it.id}
-                  item={it}
-                  palette={p}
-                  radii={radii}
-                  style={{ ...(MEASURED.includes(it.kind) ? {} : { width: sizeOf(it, widths).w, height: sizeOf(it, widths).h }), ...foldMargins(it, widths) }}
-                  overlay={staticChildren(it)}
-                />
-              );
-            })}
-          </div>
-          ),
-        )}
-        {gs.some((g) => modalRailOf(g)) && (
-          <div aria-hidden style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.32)", pointerEvents: "none", zIndex: 1 }} />
-        )}
+      <div data-export={f.id} style={{ position: "relative" }}>
+        <StaticScreen
+          groups={gs.map((g) => ({ ...g, x: g.x - f.x, y: g.y - f.y }))}
+          widths={widths}
+          palette={p}
+          theme={theme}
+          lang={lang}
+          w={w}
+          h={h}
+          bg={f.bg}
+          clip={frameRadius(f)}
+        />
       </div>
     );
   };
@@ -3393,6 +3425,11 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
    *  transitions drawn there are the ones on the canvas. */
   const openFlow = () => {
     window.location.href = `${BASE_PATH}/flow/`;
+  };
+
+  /** 打开市场组件页：整页分页浏览全部已公开的组件 */
+  const openMarketPage = () => {
+    window.location.href = `${BASE_PATH}/market/`;
   };
 
   const openPreview = (startId?: string | null) => {
@@ -4525,6 +4562,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
               <div style={{ flex: 1 }} onClick={() => !leftOpen && setLeftOpen(true)} />
               <span aria-hidden style={{ width: 24, height: 1, background: p.outlineVariant }} />
               <LangMenu p={p} onLang={changeLanguage} side="right" size={44} />
+              {/* 左下角：点头像登录，登录后在这里退出 */}
+              <AvatarMenu p={p} size={44} />
             </div>
             {leftOpen && (
             <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
@@ -4565,12 +4604,24 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                     }
                     onPartPointerDown={onPartPointerDown}
                     customParts={customParts}
+                    myParts={myParts}
                     onCompositePointerDown={onCompositePointerDown}
+                    onMyPartPointerDown={onMyPartPointerDown}
+                    onMyPartDelete={removeMyPart}
                     onEditComposite={(part) => setRenameAsk({ id: part.id, name: part.name })}
                     onDeleteComposite={(part) => {
                       setCustomParts((cur) => cur.filter((x) => x.id !== part.id));
                       showToast(t("deleteComposite", lang), 1400, "delete");
                     }}
+                  />
+                ) : leftTab === "market" ? (
+                  <MarketPanel
+                    p={p}
+                    theme={theme}
+                    refreshKey={marketKey}
+                    onAddPart={addMarketPart}
+                    onToast={showToast}
+                    onOpenMarketPage={openMarketPage}
                   />
                 ) : leftTab === "audit" ? (
                   <AuditPanel p={p} doc={doc} issues={auditReport} onLocate={locateIssue} />
@@ -5227,6 +5278,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   onChange={(patch) => patchFrame(selectedFrame.id, patch)}
                   onDelete={() => deleteFrame(selectedFrame.id)}
                   onDuplicate={() => duplicateFrame(selectedFrame.id)}
+                  onUploadMarket={() => setUploadOpen(true)}
                   onPreview={() => openPreview(selectedFrame.id)}
                   prompt={buildPrompt(doc, widths, selectedFrame.id, lang)}
                   onSaveImage={() => saveFrameImage(selectedFrame)}
@@ -5446,6 +5498,18 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           p={p}
           onCancel={() => setConfirmClear(false)}
           onConfirm={clearAll}
+        />
+
+        {/* 上传到市场组件：从屏幕的复制按钮旁边进来 */}
+        <UploadMarketDialog
+          p={p}
+          open={uploadOpen}
+          onClose={() => setUploadOpen(false)}
+          doc={{ groups, frames, widths }}
+          theme={theme}
+          /* 上传的是面板正在处理的那一屏，没有选中就退回第一屏 */
+          frame={screenInPlay ?? frames[0] ?? null}
+          onToast={showToast}
         />
       </div>
 
