@@ -10,7 +10,9 @@
     "build": "next build",
     "start": "npx serve out",
     "typecheck": "tsc --noEmit -p .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "harden": "node scripts/harden-out.mjs",
+    "build:hardened": "next build && node scripts/harden-out.mjs --deter"
   },
   "dependencies": {
     "html-to-image": "^1.11.13",

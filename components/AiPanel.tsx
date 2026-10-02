@@ -3,7 +3,7 @@
 import { useRef } from "react";
 import { Palette } from "@/lib/tokens";
 import { t, useLang } from "@/lib/i18n";
-import { AiSettings, PROVIDERS, Provider, providerSpec } from "@/lib/ai";
+import { AiSettings, PROVIDERS, Provider, baseUrlInUse, configOf, providerSpec, withConfig } from "@/lib/ai";
 import { Icon } from "./M3Node";
 import { inputBox } from "./ui";
 
@@ -163,10 +163,9 @@ function ProviderGroup({ value, onChange, p }: { value: Provider; onChange: (k: 
 export function AiPanel({ p, settings, onSettings }: { p: Palette; settings: AiSettings; onSettings: (s: AiSettings) => void }) {
   const lang = useLang();
   const spec = providerSpec(settings.provider);
-  const pick = (k: Provider) => {
-    const s = providerSpec(k);
-    onSettings({ ...settings, provider: k, baseUrl: s.baseUrl, model: s.model });
-  };
+  const mine = configOf(settings);
+  /* 换服务商只是换"当前用哪一家"：三样设置各存一份，所以换回来还是原来的样子 */
+  const pick = (k: Provider) => onSettings({ ...settings, provider: k });
   return (
     <div className="no-scrollbar" style={{ height: "100%", overflowY: "auto", padding: "12px 12px 20px" }}>
       <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.4, color: p.onSurfaceVariant, padding: "8px 6px 12px" }}>{t("aiSettings", lang)}</div>
@@ -178,11 +177,20 @@ export function AiPanel({ p, settings, onSettings }: { p: Palette; settings: AiS
           </div>
           <div>
             <Label p={p}>{t("aiModel", lang)}</Label>
-            <Input label={t("aiModel", lang)} value={settings.model} onChange={(model) => onSettings({ ...settings, model })} placeholder={spec.model || "model"} p={p} />
+            <Input
+              label={t("aiModel", lang)}
+              value={mine.model}
+              onChange={(model) => onSettings(withConfig(settings, { model }))}
+              placeholder={spec.model || "model"}
+              p={p}
+            />
+            <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant, marginTop: 8, padding: "0 4px" }}>
+              {t("aiModelHint", lang).replace("{model}", spec.model)}
+            </div>
           </div>
           <div>
             <Label p={p}>{t("aiBaseUrl", lang)}</Label>
-            <Input label={t("aiBaseUrl", lang)} value={settings.baseUrl} onChange={(baseUrl) => onSettings({ ...settings, baseUrl })} placeholder={spec.baseUrl} p={p} />
+            <Input label={t("aiBaseUrl", lang)} value={mine.baseUrl} onChange={(baseUrl) => onSettings(withConfig(settings, { baseUrl }))} placeholder={spec.baseUrl} p={p} />
           </div>
           <div>
             <Label
@@ -197,7 +205,7 @@ export function AiPanel({ p, settings, onSettings }: { p: Palette; settings: AiS
             >
               {t("aiKey", lang)}
             </Label>
-            <Input label={t("aiKey", lang)} value={settings.key} onChange={(key) => onSettings({ ...settings, key })} placeholder="sk-…" p={p} type="password" />
+            <Input label={t("aiKey", lang)} value={mine.key} onChange={(key) => onSettings(withConfig(settings, { key }))} placeholder="sk-…" p={p} type="password" />
             <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant, marginTop: 8, padding: "0 4px" }}>{t("aiKeyHint", lang)}</div>
           </div>
         </div>

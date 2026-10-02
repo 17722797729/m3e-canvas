@@ -1256,7 +1256,7 @@ export function Pick<K extends string>({
  * 组件类型、审核状态这类「一次只能选一个」的筛选都走它 ——
  * 排成一行可横向拖动的分类条，在窄面板里既占地方又不好点。
  */
-export function TypeSelect<T extends number>({
+export function TypeSelect<T extends number | string>({
   p,
   value,
   options,

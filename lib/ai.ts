@@ -8,42 +8,121 @@ import { Lang } from "./i18n";
  * prompt and a fixed JSON answer shape, and the result is only applied after the
  * author has looked at it. Coordinates are never touched by the model. */
 
-export type Provider = "claude" | "openai" | "gemini" | "deepseek";
+export type Provider = "claude" | "openai" | "gemini" | "deepseek" | "zhipu";
 
-export type AiSettings = {
-  provider: Provider;
-  baseUrl: string;
-  model: string;
-  key: string;
-};
-
+/**
+ * 服务商与各自的当前模型
+ *
+ * `model` 是各家**当前**的主推型号，也是"留空时发哪个"的答案。
+ * 模型名由使用者在 AI 设置里填：填了就以他填的为准（一个字符都不改），
+ * 留空就落到这里。厂商改名的速度比发版快，所以设置里那一栏默认留白，
+ * 想换型号随时填，不必等我们更新这张表。
+ *
+ * 最近核对（含来源）：
+ *   OpenAI   gpt-6 代      https://developers.openai.com/api/docs/guides/latest-model
+ *   Claude   5 代无日期 ID  https://platform.claude.com/docs/en/about-claude/models/model-ids-and-versions
+ *   Gemini   3.8 Flash     https://ai.google.dev/gemini-api/docs/models
+ *   DeepSeek V4.1-Flash    https://api-docs.deepseek.com/news/news260910   （模型名是 deepseek-flash）
+ *   智谱     GLM-5.3       https://docs.bigmodel.cn/cn/guide/models/text/glm-5.3
+ */
 export const PROVIDERS: { key: Provider; label: string; baseUrl: string; model: string; keysUrl?: string }[] = [
-  { key: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-5.6-luna", keysUrl: "https://platform.openai.com/api-keys" },
+  { key: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-6.1-sol", keysUrl: "https://platform.openai.com/api-keys" },
   { key: "claude", label: "Claude", baseUrl: "https://api.anthropic.com", model: "claude-sonnet-5", keysUrl: "https://console.anthropic.com/settings/keys" },
   { key: "gemini", label: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-3.8-flash", keysUrl: "https://aistudio.google.com/apikey" },
-  { key: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-v4-flash", keysUrl: "https://platform.deepseek.com/api_keys" },
+  { key: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-flash", keysUrl: "https://platform.deepseek.com/api_keys" },
+  /* 智谱走 OpenAI 兼容接口，所以只要换 baseUrl 与模型名即可（Bearer 鉴权） */
+  { key: "zhipu", label: "智谱 GLM", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-5.3", keysUrl: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys" },
 ];
 
 export const providerSpec = (k: Provider) => PROVIDERS.find((p) => p.key === k) ?? PROVIDERS[0];
 
-export const DEFAULT_AI: AiSettings = { provider: PROVIDERS[0].key, baseUrl: PROVIDERS[0].baseUrl, model: PROVIDERS[0].model, key: "" };
+/**
+ * 每一家自己的连接信息
+ *
+ * 三样（地址、型号、密钥）**按服务商各存一份**：不然在 DeepSeek 填的东西会跑到智谱上，
+ * 轻则型号不对，重则把一家的密钥发到另一家的服务器上。
+ */
+export type ProviderConfig = {
+  /** 基础 URL；留空用这一家的默认 */
+  baseUrl: string;
+  /** 模型 ID；留空用这一家当前的默认 */
+  model: string;
+  /** API 密钥 */
+  key: string;
+};
+
+export type AiSettings = {
+  /** 当前用哪一家 */
+  provider: Provider;
+  /** 各家自己的设置 */
+  providers: Record<Provider, ProviderConfig>;
+};
+
+/** 空设置：每一家都是「留空即默认」 */
+const emptyProviders = (): Record<Provider, ProviderConfig> =>
+  PROVIDERS.reduce((acc, p) => {
+    acc[p.key] = { baseUrl: p.baseUrl, model: "", key: "" };
+    return acc;
+  }, {} as Record<Provider, ProviderConfig>);
+
+export const DEFAULT_AI: AiSettings = { provider: PROVIDERS[0].key, providers: emptyProviders() };
 
 const STORE_KEY = "m3e:ai";
 
+/** 当前这一家的设置（读） */
+export const configOf = (s: AiSettings): ProviderConfig =>
+  s.providers[s.provider] ?? { baseUrl: providerSpec(s.provider).baseUrl, model: "", key: "" };
+
+/** 当前这一家的设置（写）；只改这一家，别家的原样保留 */
+export function withConfig(s: AiSettings, patch: Partial<ProviderConfig>): AiSettings {
+  const now = configOf(s);
+  return { ...s, providers: { ...s.providers, [s.provider]: { ...now, ...patch } } };
+}
+
+/** 实际发出去的基础 URL：填了用填的，留空用默认 */
+export const baseUrlInUse = (s: AiSettings): string => configOf(s).baseUrl.trim() || providerSpec(s.provider).baseUrl;
+
+/** 这一家当前会用哪个模型：填了用填的，留空用默认 */
+export const modelInUse = (s: AiSettings): string => configOf(s).model.trim() || providerSpec(s.provider).model;
+
+/** 这一家的密钥 */
+export const keyInUse = (s: AiSettings): string => configOf(s).key;
+
 export function loadAiSettings(): AiSettings {
-  const s = { ...DEFAULT_AI };
+  const s: AiSettings = { provider: DEFAULT_AI.provider, providers: emptyProviders() };
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) {
-      const v = JSON.parse(raw) as Partial<AiSettings>;
-      if (PROVIDERS.some((p) => p.key === v.provider)) s.provider = v.provider as Provider;
-      if (typeof v.baseUrl === "string") s.baseUrl = v.baseUrl;
-      if (typeof v.model === "string") s.model = v.model;
-      if (typeof v.key === "string") s.key = v.key;
+    if (!raw) return s;
+    const v = JSON.parse(raw) as Record<string, unknown>;
+    if (typeof v.provider === "string" && PROVIDERS.some((p) => p.key === v.provider)) s.provider = v.provider as Provider;
+
+    if (v.providers && typeof v.providers === "object") {
+      /* 现在的形态：逐家读回来，缺哪家就用空设置补上 */
+      const saved = v.providers as Record<string, Partial<ProviderConfig>>;
+      for (const p of PROVIDERS) {
+        const one = saved[p.key];
+        if (!one) continue;
+        s.providers[p.key] = {
+          baseUrl: typeof one.baseUrl === "string" && one.baseUrl.trim() ? one.baseUrl : p.baseUrl,
+          model: typeof one.model === "string" ? one.model : "",
+          key: typeof one.key === "string" ? one.key : "",
+        };
+      }
+      return s;
     }
+
+    /* 老形态：三样是扁平的、全服务商共用。全部记到当时选中的那一家名下，
+       别家的留空 —— 那份密钥多半也只属于它。 */
+    const one = s.providers[s.provider];
+    if (typeof v.baseUrl === "string" && v.baseUrl.trim()) one.baseUrl = v.baseUrl;
+    if (typeof v.model === "string" && v.model.trim()) one.model = v.model;
+    if (typeof v.key === "string") one.key = v.key;
   } catch {}
   return s;
 }
+
+/** 「留空即默认」意味着不能因为没填型号就把 AI 判成不可用 */
+export const aiConfigured = (s: AiSettings): boolean => hasKey(s) && isSecureUrl(baseUrlInUse(s));
 
 /** Settings live in this browser only, like the document itself. */
 export function saveAiSettings(s: AiSettings) {
@@ -55,7 +134,7 @@ export function saveAiSettings(s: AiSettings) {
 const isLocal = (u: string) => /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(u.trim());
 
 /** a hosted endpoint needs a key; a server on this machine may run without one */
-export const hasKey = (s: AiSettings) => s.key.trim().length > 0 || isLocal(s.baseUrl);
+export const hasKey = (s: AiSettings) => keyInUse(s).trim().length > 0 || isLocal(baseUrlInUse(s));
 
 /** the key must not travel over plain http, except to this machine */
 export const isSecureUrl = (u: string) => /^https:\/\//i.test(u.trim()) || isLocal(u);
@@ -75,10 +154,47 @@ async function readError(res: Response): Promise<string> {
   return `${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 300)}` : ""}`;
 }
 
+/**
+ * 一条对话消息
+ *
+ * `content` 在只有文字时就是字符串；带附件（图片）时是内容块数组，
+ * 与 OpenAI 的 `messages[].content` 形状一致 —— 智谱、DeepSeek、Gemini 的兼容层都认这个。
+ */
+export type ChatMessage = {
+  role: "system" | "user" | "assistant";
+  content: string | ChatContentPart[];
+};
+
+export type ChatContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+
+/** 把「历史 + 这一轮」拼成消息数组；用户只给文字时不必构造内容块 */
+export const userMessage = (text: string, images: string[] = []): ChatMessage =>
+  images.length === 0
+    ? { role: "user", content: text }
+    : {
+        role: "user",
+        content: [
+          ...(text.trim() ? [{ type: "text" as const, text }] : []),
+          ...images.map((url) => ({ type: "image_url" as const, image_url: { url } })),
+        ],
+      };
+
 /** one round trip: a system prompt and a user message in, the model's text out */
 export async function complete(s: AiSettings, system: string, user: string, signal?: AbortSignal, maxTokens = 4096): Promise<string> {
-  const base = trimSlash(s.baseUrl);
-  const model = s.model.trim();
+  return completeChat(s, system, [{ role: "user", content: user }], signal, maxTokens);
+}
+
+/**
+ * 一轮多轮对话：system + 完整历史进，模型这一次的文本出
+ *
+ * 与 `complete` 共用同一套请求构造，差别只在消息数组 ——
+ * 「让 AI 画」的对话面板靠它把之前几轮一起发上去。
+ */
+export async function completeChat(s: AiSettings, system: string, messages: ChatMessage[], signal?: AbortSignal, maxTokens = 4096): Promise<string> {
+  const base = trimSlash(baseUrlInUse(s));
+  /* 型号留空就用这一家当前的默认：设置里写的是"你要用哪个"，不写就跟着默认走 */
+  const model = modelInUse(s);
+  const key = keyInUse(s).trim();
   if (!model) throw new Error("model");
   if (!isSecureUrl(base)) throw new Error("insecure");
   if (s.provider === "claude") {
@@ -87,11 +203,11 @@ export async function complete(s: AiSettings, system: string, user: string, sign
       signal,
       headers: {
         "content-type": "application/json",
-        "x-api-key": s.key.trim(),
+        "x-api-key": key,
         "anthropic-version": "2023-06-01",
         "anthropic-dangerous-direct-browser-access": "true",
       },
-      body: JSON.stringify({ model, max_tokens: Math.min(maxTokens, 8192), system, messages: [{ role: "user", content: user }] }),
+      body: JSON.stringify({ model, max_tokens: Math.min(maxTokens, 8192), system, messages }),
     });
     if (!res.ok) throw new Error(await readError(res));
     const j = await res.json();
@@ -103,7 +219,7 @@ export async function complete(s: AiSettings, system: string, user: string, sign
       .join("");
   }
   const headers: Record<string, string> = { "content-type": "application/json" };
-  if (s.key.trim()) headers.authorization = `Bearer ${s.key.trim()}`;
+  if (key) headers.authorization = `Bearer ${key}`;
   const res = await fetch(`${base}/chat/completions`, {
     method: "POST",
     signal,
@@ -113,10 +229,7 @@ export async function complete(s: AiSettings, system: string, user: string, sign
       /* OpenAI's newer models refuse `max_tokens` and default generously, so they get no budget;
          the other compatible endpoints cap around 8k */
       ...(s.provider === "openai" ? {} : { max_tokens: Math.min(maxTokens, 8192) }),
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
+      messages: [{ role: "system", content: system }, ...messages],
     }),
   });
   if (!res.ok) throw new Error(await readError(res));
@@ -252,3 +365,124 @@ export async function draftDesign(s: AiSettings, guide: string, idea: string, la
   return j;
 }
 
+
+/* ---------- 让 AI 画：对话式 Agent ---------- */
+
+/** 面板里的一条消息；`design` 是这一轮带回的一整份设计 */
+export type ChatTurn = {
+  id: string;
+  role: "user" | "assistant" | "error";
+  text: string;
+  /** 用户这一轮带上的附件（图片显示缩略图，项目文件只记名字） */
+  attachments?: ChatAttachment[];
+  /** 助手带回的设计；面板据此显示「已放到画布」 */
+  design?: Doc;
+};
+
+export type ChatAttachment = {
+  name: string;
+  kind: "image" | "project";
+  /** 图片是 data URL；项目文件不带，直接用它的 JSON */
+  dataUrl?: string;
+};
+
+/** 一轮里模型给的东西：一段话，外加（可选的）一份设计 */
+export type ChatReply = { text: string; design?: Doc };
+
+/** 一份设计在对话里这样交给画布：模型把文档包在 ```json 里，人只看到前面那段话 */
+const DESIGN_FENCE = /```(?:json|m3e)\s*\n([\s\S]*?)```/i;
+
+/**
+ * 从模型的回答里分出「话」和「设计」
+ *
+ * 约定两条路都认：
+ *   1. 回答里带一个 ```json 代码块，且内容是一份合法的设计 —— 那就是要画的东西；
+ *   2. 整段就是一个 JSON 对象 —— 也算（有些模型不爱加围栏）。
+ * 除此外就是普通回话（追问、说明、拒绝），不碰画布。
+ */
+export function readReply(raw: string): ChatReply {
+  const text = (raw ?? "").trim();
+  if (!text) throw new Error("empty");
+
+  const fenced = DESIGN_FENCE.exec(text);
+  if (fenced) {
+    const design = tryDesign(fenced[1]);
+    /* 围栏里的东西不是设计：那它就是段普通代码，整段当回话 */
+    if (design) return { text: text.replace(fenced[0], "").trim(), design };
+  }
+  const whole = tryDesign(text);
+  if (whole) return { text: "", design: whole };
+  return { text };
+}
+
+/** 解析一份设计；不是合法设计就返回 undefined，不抛 */
+export function tryDesign(json: string): Doc | undefined {
+  try {
+    const value: unknown = JSON.parse(json);
+    return isProject(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** agent.md 是「怎么画」的说明书：整段给模型读，所以只取前这么多字符，别把上下文撑爆 */
+const GUIDE_LIMIT = 24000;
+
+/**
+ * 让 AI 画：把整段对话交给模型，它要么接着聊，要么直接画一份设计出来
+ *
+ * 与旧的一条龙 `draftDesign` 的区别：这里是**多轮**的 ——
+ * 作者的每一句话、模型的每一次回答、路上传的文件都在历史里，
+ * 所以「再改一下」「第三个屏幕去掉」这种追问才接得上。
+ */
+export async function draftInConversation(
+  s: AiSettings,
+  guide: string,
+  turns: ChatTurn[],
+  lang: Lang,
+  signal?: AbortSignal,
+): Promise<ChatReply> {
+  const system = [
+    "你是 M3E Canvas 里的设计助手。M3E Canvas 是画 Material 3 Expressive 界面的草图工具。",
+    "",
+    "两种回答方式，按情况选一种：",
+    "1. 需要澄清、或者只是回答问题：直接用一两句话回答，不要画。",
+    "2. 要出图/改图：先写一两句说明你改了什么，然后给一个 ```json 代码块，里面是完整的画布文档。",
+    "   文档必须是完整的（不是补丁）：一次给全，作者会整份替换。",
+    "   不要输出分享链接，不要在代码块外再写文档。",
+    "",
+    `所有标签、标题、说明都用${LANG_NAME[lang]}书写。`,
+    "",
+    "=== 画布规格（必须遵守）===",
+    guide.slice(0, GUIDE_LIMIT),
+  ].join("\n");
+
+  const messages: ChatMessage[] = turns
+    .filter((t) => t.role !== "error" && (t.text.trim() || t.attachments?.length))
+    .map((t) => {
+      const images = (t.attachments ?? []).filter((a) => a.kind === "image" && a.dataUrl).map((a) => a.dataUrl as string);
+      const files = (t.attachments ?? []).filter((a) => a.kind === "project").map((a) => a.name);
+      const note = files.length ? `${t.text}${t.text ? "\n\n" : ""}[附带了画布文件：${files.join("、")}]` : t.text;
+      return t.role === "user" ? userMessage(note, images) : { role: "assistant" as const, content: note };
+    });
+
+  if (messages.length === 0) throw new Error("empty");
+  /* 文档可以很长，给足预算；别的路径仍然是 4096 */
+  return readReply(await completeChat(s, system, messages, signal, 16000));
+}
+
+/** 把上传的图片读成 data URL，好当附件发给模型 */
+export function readImageFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(new Error("file"));
+    reader.readAsDataURL(file);
+  });
+}
+
+/** 一份设计里最容易看出「这是不是本工具的文档」的几个字段 */
+export const looksLikeProject = (value: unknown): boolean => isProject(value);
+
+/** 附件大小上限：图片当 base64 发，太大又慢又贵；画布文件本来就是文本 */
+export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;

@@ -86,6 +86,28 @@ npm run build      # static export to ./out
 
 The app is a static Next.js export. To host it under a sub-path (for example a GitHub Pages project site), set `NEXT_PUBLIC_BASE_PATH=/your-repo` at build time. `.github/workflows/deploy.yml` does this automatically and publishes `out/` to GitHub Pages on every push to `main`.
 
+## Hardening the build
+
+```bash
+npm run build            # plain static export to ./out
+npm run build:hardened   # same, plus drop source maps and inject the deterrent layer
+npm run harden           # apply those two steps to an existing ./out
+```
+
+`scripts/harden-out.mjs` does exactly two things:
+
+1. **Drops source maps.** This is the only step that hides real source. A published `.map` hands over your original files to anyone with DevTools; Next's production export does not emit them, so this is a guard against a future config or toolchain change.
+2. **Injects `out/deter.js`** (`--deter`) — a standalone file that blocks the context menu, F12 and Ctrl/Cmd+Shift+I/J/C, and runs a `debugger` interval. Delete that file and the `<script>` tag pointing at it and the app is exactly as before.
+
+What this layer is *not*: a security boundary. Turning off JavaScript, opening DevTools from the browser menu, or reading the network tab all walk straight past it. Treat it as friction against casual copying, nothing more.
+
+**Code obfuscation is deliberately not used here.** Measured with `javascript-obfuscator` 5.8.1 on this export: renaming identifiers, and separately encoding string arrays, both break Turbopack's cross-chunk module table — the bundle still paints the UI but immediately throws `Array[...] is not a function`, so features are dead. Obfuscating a multi-chunk Next.js export is a choice between "does nothing" and "does not run".
+
+If what you actually want to protect is secrets or quota, obfuscation was never the answer anyway:
+
+- **The API key never has to reach the browser.** The AI features call the provider straight from the page with the author's own key, stored in `localStorage` and visible in the network tab. If you want the key (or the bill) to be yours and not the visitor's, put a thin proxy in front — this repo already talks to a Java backend for the market, so a `POST /ai/complete` there that adds the key server-side and rate-limits per user is the honest fix. It also gives you real enforcement: quotas, model allow-lists, abuse logging.
+- **Nothing shipped to a browser is secret.** A static export sends all of its code to every visitor. Assume it is public and keep the value in the server.
+
 ## Contributing
 
 Bug reports, part requests and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) explains the setup, the conventions (English comments, four languages for every string) and where each kind of change lives. Questions go to [Discussions](https://github.com/lnkiai/m3e-canvas/discussions).

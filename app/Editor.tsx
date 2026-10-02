@@ -25,7 +25,7 @@ import { Mode, Toolbar } from "@/components/Toolbar";
 import { LangMenu } from "@/components/Menus";
 import { AiActionKey, AiPanel, aiErrorText } from "@/components/AiPanel";
 import { Field } from "@/components/ui";
-import { AiSettings, DEFAULT_AI, hasKey, isSecureUrl, loadAiSettings, proposeBehavior, proposeDescription, pushHistory, saveAiSettings } from "@/lib/ai";
+import { AiSettings, DEFAULT_AI, aiConfigured, hasKey, isSecureUrl, loadAiSettings, proposeBehavior, proposeDescription, pushHistory, saveAiSettings } from "@/lib/ai";
 import { barSlotOf, bodyRect, carryFrame, pullInto, shiftForResize, sideFlip, spansSlot, tidyFrame } from "@/lib/tidy";
 import { constrainModalRails, modalRailOf, updateRail } from "@/lib/rail";
 import { isProject, readableGroups, readProject, saveProject } from "@/lib/project";
@@ -35,8 +35,8 @@ import { existingDialogs, holdersOf } from "@/lib/pages";
 import { layerName } from "@/lib/search";
 import { hasShareHash, readShareHash } from "@/lib/share";
 import { LoadingIndicator } from "@/components/Loading";
-import { draftDesign } from "@/lib/ai";
-import { ShareDialog } from "@/components/ShareMenu";
+import { ChatAttachment, ChatTurn, draftInConversation } from "@/lib/ai";
+import { ChatPanel } from "@/components/ChatPanel";
 import { StaticScreen } from "@/components/StaticFrame";
 import { captureOptions as thumbCaptureOptions, iconFontEmbedCss } from "@/lib/marketThumbnail";
 import { ColorPanel } from "@/components/ColorPanel";
@@ -52,6 +52,8 @@ import { bootSession, useSession } from "@/lib/session";
 import { MarketComponent, MyComponent, deleteMyComponent, myComponentList } from "@/lib/syai";
 import { categoryOf, isJoinedPart, partOf } from "@/lib/market";
 import { markFromEditor } from "@/lib/appPath";
+import { Template, allTemplates, blankScreen, captureGroups, loadTemplates, saveTemplates, screensOf, uid as templateId } from "@/lib/templates";
+import { TemplatesPanel } from "@/components/TemplatesPanel";
 
 /** the screens while a model drafts: primary, tertiary and primary container, drifting */
 const DRAFT_GRADIENT = (p: Palette) => `linear-gradient(120deg, ${p.primaryContainer}, ${p.tertiaryContainer}, ${p.primary}, ${p.secondaryContainer}, ${p.primaryContainer})`;
@@ -303,9 +305,11 @@ function ThinkingRing({ p, frame }: { p: Palette; frame: Frame }) {
   );
 }
 
-type LeftTab = "parts" | "layers" | "audit" | "color" | "shape" | "type" | "motion" | "ai" | "market";
+type LeftTab = "parts" | "layers" | "audit" | "color" | "shape" | "type" | "motion" | "ai" | "market" | "templates";
 /** the left rail: what the document is made of, what is wrong with it, then its four theme axes */
-const LEFT_TABS: { key: LeftTab; icon: string; title: "parts" | "layers" | "audit" | "colors" | "shape" | "typography" | "motion" | "ai" | "marketPanel" }[] = [
+const LEFT_TABS: { key: LeftTab; icon: string; title: "parts" | "layers" | "audit" | "colors" | "shape" | "typography" | "motion" | "ai" | "marketPanel" | "templatePanel" }[] = [
+  /* 「模板」放第一位：一整套屏幕是画东西之前先要决定的事，比逐个部件更靠前 */
+  { key: "templates", icon: "dashboard_customize", title: "templatePanel" },
   { key: "parts", icon: "add_box", title: "parts" },
   { key: "layers", icon: "layers", title: "layers" },
   { key: "audit", icon: "fact_check", title: "audit" },
@@ -361,7 +365,18 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const [pendingImport, setPendingImport] = useState<Doc | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   /** the idea typed into the "ask an AI" dialog; kept here so a failed draft does not lose it */
-  const [ideaText, setIdeaText] = useState("");
+  /** 模板：内置的 + 自己建的（存在浏览器里） */
+  const [myTemplates, setMyTemplates] = useState<Template[]>([]);
+  /** 「新增模板」的命名框 */
+  const [templateAsk, setTemplateAsk] = useState<string | null>(null);
+  /** 铺模板前先问一句：画布上有东西才会问 */
+  const [templateConfirm, setTemplateConfirm] = useState<Template | null>(null);
+  /** 「保存」要覆盖哪一条；确认之后才动 */
+  const [templateSaveAsk, setTemplateSaveAsk] = useState<Template | null>(null);
+
+  /** 「让 AI 画」的整段对话：关掉面板再打开还在 */
+  const [chatTurns, setChatTurns] = useState<ChatTurn[]>([]);
+  const chatAbortRef = useRef<AbortController | null>(null);
   /** a model is drafting a design right now */
   const [draftBusy, setDraftBusy] = useState(false);
   /** the design a draft replaced, kept until the author keeps or undoes the draft */
@@ -683,6 +698,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
         if (isProject(value)) setDraftBefore(value);
         else localStorage.removeItem(BEFORE_KEY);
       }
+      setMyTemplates(loadTemplates());
       const u = localStorage.getItem(UI_KEY);
       if (u) {
         const ui = JSON.parse(u);
@@ -2895,24 +2911,48 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     } catch {}
   };
 
-  const startDraft = async (idea: string) => {
-    setShareOpen(false);
+  /**
+   * 对话面板的一次往返
+   *
+   * 把「历史 + 这一轮（含附件）」整段交给模型：
+   * · 它带回设计，就先把这一轮记进对话，等作者按「放到画布」；
+   * · 它只是回话（追问/说明），就只进对话，不碰画布。
+   */
+  const sendChat = async (text: string, attachments: ChatAttachment[]) => {
+    const userTurn: ChatTurn = { id: uid(), role: "user", text, ...(attachments.length ? { attachments } : undefined) };
+    const history = [...chatTurns, userTurn];
+    setChatTurns(history);
     setDraftBusy(true);
+    const controller = new AbortController();
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = controller;
     try {
       if (guideRef.current === null) {
         const res = await fetch(`${BASE_PATH}/agent.md`);
         if (!res.ok) throw new Error("guide");
         guideRef.current = await res.text();
       }
-      const next = await draftDesign(aiSettings, guideRef.current, idea, lang);
-      arrive(next);
+      const reply = await draftInConversation(aiSettings, guideRef.current, history, lang, controller.signal);
+      setChatTurns((cur) => [...cur, { id: uid(), role: "assistant", text: reply.text, ...(reply.design ? { design: reply.design } : undefined) }]);
     } catch (e) {
+      /* 作者自己按的取消：不当成错误 */
+      if (controller.signal.aborted) return;
       const m = e instanceof Error ? e.message : "";
-      showToast(m === "json" ? t("aiErrorJson", lang) : m === "refusal" ? t("aiErrorRefusal", lang) : m === "long" ? t("aiErrorLong", lang) : t("aiError", lang), 3200, "error");
+      const text2 = m === "json" ? t("aiErrorJson", lang) : m === "refusal" ? t("aiErrorRefusal", lang) : m === "long" ? t("aiErrorLong", lang) : m === "empty" ? t("aiErrorJson", lang) : t("aiError", lang);
+      setChatTurns((cur) => [...cur, { id: uid(), role: "error", text: text2 }]);
     } finally {
+      if (chatAbortRef.current === controller) chatAbortRef.current = null;
       setDraftBusy(false);
     }
   };
+
+  /** 助手画好的那一版：作者按了才放到画布上，放上去仍然可以撤销重来 */
+  const applyChatDesign = (design: Doc) => {
+    arrive(design);
+    setShareOpen(false);
+    showToast(t("chatApplied", lang), 2000, "wallpaper");
+  };
+
   /** true after a kept draft until the author undoes something, so the header's undo also sits by the opener */
   const [quickUndo, setQuickUndo] = useState(false);
   const keepDraft = () => {
@@ -3161,12 +3201,102 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     toastTimer.current = window.setTimeout(() => setToast(null), ms);
   };
 
+  /**
+   * 套用一份模板：画布上的屏幕换成它那一整套
+   *
+   * 走 importDoc，所以这一步是可撤销的（和打开文件、清空画布同一条路）。
+   * 屏幕之外的设置（配色、形状、字体、动效）留着不动：模板给的是屏幕，不是整套外观。
+   */
+  const applyTemplate = (tpl: Template) => {
+    const taken = screensOf(tpl, templateId);
+    const next: Doc = {
+      ...docRef.current,
+      frames: taken.frames,
+      groups: taken.groups,
+      frame: "phone",
+      customParts: docRef.current.customParts,
+    };
+    arrive(next);
+    setTemplateConfirm(null);
+    setLeftTab("templates");
+    showToast(t("templateApplied", lang).replace("{name}", tpl.name), 2400, "dashboard_customize");
+  };
+
+  /** 画布上还有东西才值得先问一句；空画布直接换 */
+  const askTemplate = (tpl: Template) => {
+    if (docRef.current.groups.length === 0) applyTemplate(tpl);
+    else setTemplateConfirm(tpl);
+  };
+
+  /**
+   * 「新增模板」：把当前画布存成一条新模板，然后从一张空白屏幕重新开始
+   *
+   * 「不再显示 QQ 农场的屏幕」就是这一步：模板存的是**当前**那套屏幕，
+   * 存完画布回到空白，于是农场的五个页面不会留在新模板里。
+   */
+  const createTemplate = (name: string) => {
+    const label = name.trim() || t("templateDefaultName", lang);
+    const mine: Template[] = [
+      { id: templateId(), name: label, at: Date.now(), screens: { frames: docRef.current.frames, groups: captureGroups(docRef.current.groups) } },
+      ...myTemplates,
+    ];
+    setMyTemplates(mine);
+    saveTemplates(mine);
+    setTemplateAsk(null);
+    /* 全新的空白屏幕：一屏、没有部件 */
+    const fresh = blankScreen(templateId);
+    arrive({ ...docRef.current, frames: fresh.frames, groups: fresh.groups, frame: "phone" });
+    setLeftTab("templates");
+    showToast(t("templateCreated", lang).replace("{name}", label), 2600, "check");
+  };
+
+  /**
+   * 用当前画布更新一条模板（「保存」）
+   *
+   * 内置模板也能存：存下来的是一条**同 id 的本地覆盖**（见 allTemplates），
+   * 所以内置那一套屏幕不会被改坏，换台机器/清掉浏览器数据就恢复原样。
+   */
+  const saveTemplate = (tpl: Template) => {
+    const next: Template = {
+      id: tpl.id,
+      name: tpl.name,
+      at: Date.now(),
+      custom: true,
+      screens: { frames: docRef.current.frames, groups: captureGroups(docRef.current.groups) },
+    };
+    const mine = [next, ...myTemplates.filter((t) => t.id !== tpl.id)];
+    setMyTemplates(mine);
+    saveTemplates(mine);
+    setTemplateSaveAsk(null);
+    showToast(t("templateSaved", lang).replace("{name}", tpl.name), 2400, "save");
+  };
+
+  const deleteTemplate = (tpl: Template) => {
+    const mine = myTemplates.filter((x) => x.id !== tpl.id);
+    setMyTemplates(mine);
+    saveTemplates(mine);
+    showToast(t("templateDeleted", lang), 2200, "delete");
+  };
+
+  /**
+   * 打开 AI 设置（左侧 AI 页签）
+   *
+   * 不关对话面板：以前这里会顺手把面板关掉，于是"点模型名看设置"变成"面板消失"，
+   * 而设置又被面板挡着看不见 —— 两头都落空。面板留着自己关（右上角的叉或 Esc）。
+   */
+  const openAiSettings = () => {
+    setLeftOpen(true);
+    setLeftTab("ai");
+    showToast(t("aiSettingsOpened", lang), 2600, "tune");
+  };
+
   const updateAiSettings = (s: AiSettings) => {
     setAiSettings(s);
     saveAiSettings(s);
   };
 
-  const aiReady = hasKey(aiSettings) && aiSettings.model.trim().length > 0 && isSecureUrl(aiSettings.baseUrl);
+  /* 型号留空也算配好了：那时用的是这一家当前的默认（见 modelInUse） */
+  const aiReady = aiConfigured(aiSettings);
   const aiReason = !aiReady ? t("aiNoKey", lang) : !screenInPlay ? t("aiSelectScreen", lang) : undefined;
 
   /** Writes one field with the model: a part's behavior note, or a screen's description.
@@ -4653,6 +4783,16 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   <MotionPanel p={p} theme={theme} onChange={patchTheme} />
                 ) : leftTab === "ai" ? (
                   <AiPanel p={p} settings={aiSettings} onSettings={updateAiSettings} />
+                ) : leftTab === "templates" ? (
+                  <TemplatesPanel
+                    p={p}
+                    theme={theme}
+                    templates={allTemplates(myTemplates)}
+                    onApply={askTemplate}
+                    onDelete={(tpl) => deleteTemplate(tpl)}
+                    onNew={() => setTemplateAsk(doc.title.trim() || t("templateDefaultName", lang))}
+                    onSave={setTemplateSaveAsk}
+                  />
                 ) : (
                   <LayersPanel
                     p={p}
@@ -5429,6 +5569,74 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           }}
         />
 
+        {/* 新增模板：给模板起个名字。确认之后当前画布存成这一条，并从空白屏幕重新开始 */}
+        {templateAsk !== null && (
+          <div
+            role="dialog"
+            aria-label={t("templateNewTitle", lang)}
+            style={{ position: "fixed", inset: 0, zIndex: 82, display: "grid", placeItems: "center", background: "rgba(0,0,0,0.38)" }}
+            onPointerDown={(e) => {
+              if (e.target === e.currentTarget) setTemplateAsk(null);
+            }}
+          >
+            <div style={{ width: "min(420px, 92vw)", display: "flex", flexDirection: "column", gap: 12, padding: 18, borderRadius: 28, background: p.surfaceContainerHigh, color: p.onSurface, boxShadow: "0 8px 30px rgba(0,0,0,0.30)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <Icon name="dashboard_customize" size={22} />
+                <span style={{ fontSize: 15, fontWeight: 700 }}>{t("templateNewTitle", lang)}</span>
+              </div>
+              <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant }}>{t("templateNewHint", lang)}</div>
+              <div style={{ border: `1px solid ${p.outline}`, borderRadius: 14, padding: 2 }}>
+                <Field
+                  value={templateAsk}
+                  onChange={setTemplateAsk}
+                  placeholder={t("templateNamePlaceholder", lang)}
+                  p={p}
+                  icon="label"
+                  height={44}
+                />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <button onClick={() => setTemplateAsk(null)} className="m3-press" style={{ height: 40, padding: "0 18px", borderRadius: 20, border: `1px solid ${p.outline}`, background: "transparent", color: p.primary, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+                  {t("cancel", lang)}
+                </button>
+                <button
+                  onClick={() => createTemplate(templateAsk)}
+                  className="m3-press"
+                  style={{ height: 40, padding: "0 18px", borderRadius: 20, border: "none", background: p.primary, color: p.onPrimary, fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+                >
+                  {t("templateCreate", lang)}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 「保存」会盖掉模板里原来的屏幕：先问一句 */}
+        <ConfirmDialog
+          open={!!templateSaveAsk}
+          title={t("templateSaveTitle", lang).replace("{name}", templateSaveAsk?.name ?? "")}
+          body={
+            templateSaveAsk?.builtin
+              ? t("templateSaveBuiltinBody", lang).replace("{name}", templateSaveAsk.name)
+              : t("templateSaveBody", lang)
+          }
+          icon="save"
+          p={p}
+          onCancel={() => setTemplateSaveAsk(null)}
+          onConfirm={() => templateSaveAsk && saveTemplate(templateSaveAsk)}
+        />
+
+        {/* 模板会顶掉现在的设计：先问一句，换了之后仍然可以撤销 */}
+        <ConfirmDialog
+          open={!!templateConfirm}
+          title={t("templateApply", lang)}
+          body={t("templateReplaces", lang).replace("{name}", templateConfirm?.name ?? "")}
+          icon="dashboard_customize"
+          p={p}
+          onCancel={() => setTemplateConfirm(null)}
+          onConfirm={() => templateConfirm && applyTemplate(templateConfirm)}
+        />
+
         {/* renaming a saved composite, and nothing else: the set keeps its parts, its size and its
             look, because a rename writes the name over the same entry */}
         {renameAsk && (
@@ -5482,20 +5690,23 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           </div>
         )}
 
-        <ShareDialog
+        <ChatPanel
           p={p}
-          doc={doc}
-          aiReady={aiReady}
-          idea={ideaText}
-          onIdea={setIdeaText}
           open={shareOpen}
           onClose={() => setShareOpen(false)}
-          onDraft={(idea) => void startDraft(idea)}
-          onSetupAi={() => {
-            setShareOpen(false);
-            setLeftOpen(true);
-            setLeftTab("ai");
+          turns={chatTurns}
+          busy={draftBusy}
+          aiReady={aiReady}
+          onSend={(text, attachments) => void sendChat(text, attachments)}
+          onCancel={() => chatAbortRef.current?.abort()}
+          onApply={applyChatDesign}
+          settings={aiSettings}
+          currentDoc={doc}
+          onOpenProject={(design) => {
+            arrive(design);
+            showToast(t("chatProjectOpened", lang), 2200, "folder_open");
           }}
+          onSetupAi={openAiSettings}
         />
 
 
