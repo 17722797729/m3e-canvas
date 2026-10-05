@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
-import { COLOR_TOKENS, CardLayout, ColorToken, Palette, R_INNER, TEXT_TOKENS, TextToken, clamp, TRANSPARENT, type FillToken } from "@/lib/tokens";
+import { COLOR_TOKENS, CardLayout, ColorToken, Palette, R_INNER, TEXT_TOKENS, TextColor, clamp, TRANSPARENT, type FillToken } from "@/lib/tokens";
 import { AnimatePresence, motion } from "motion/react";
 import { COLOR_TOKEN_TEXT, TEXT_TOKEN_TEXT, t, useLang } from "@/lib/i18n";
 import { Icon } from "./M3Node";
@@ -616,6 +616,7 @@ export function Section({
   children,
   right,
   defaultOpen = true,
+  bare = false,
   onToggle,
 }: {
   id: string;
@@ -625,6 +626,9 @@ export function Section({
   children: React.ReactNode;
   right?: React.ReactNode;
   defaultOpen?: boolean;
+  /** the controls stand on their own: no title row, and so nothing to fold away (the heading a kind
+   *  does not need — an item cell's look and order, whose controls say what they are) */
+  bare?: boolean;
   /** called after the user opens or collapses the section by hand */
   onToggle?: (open: boolean) => void;
 }) {
@@ -643,6 +647,7 @@ export function Section({
     setOpen(next);
     onToggle?.(next);
   };
+  if (bare) return <div style={{ marginBottom: 10, padding: "6px 4px 14px" }}>{children}</div>;
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, height: 36 }}>
@@ -837,10 +842,15 @@ export function TokenChips({
   noneTextColor,
   noneIcon = "block",
   noneLabel,
+  custom,
 }: {
   value: FillToken;
   onChange: (t: FillToken) => void;
   p: Palette;
+  /** gives the row the free colour disc at its end, for a background of the author's own (#rrggbb):
+   *  the same disc the part-colour row carries, so a colour of their own is one chip among the rest
+   *  rather than a control of its own on another line */
+  custom?: (color: string) => void;
   /** offer a "no background" chip */
   none?: boolean;
   noneOn?: boolean;
@@ -863,6 +873,7 @@ export function TokenChips({
       {COLOR_TOKENS.map((tk) => (
         <TokenDisc key={tk.key} color={p[tk.key]} label={lang === "en" ? tk.label : COLOR_TOKEN_TEXT[lang][tk.key]} on={!noneOn && tk.key === value} onClick={() => onChange(tk.key)} p={p} />
       ))}
+      {custom && <CustomColorDisc value={value} onChange={(c) => c && custom(c)} p={p} />}
     </div>
   );
 }
@@ -925,7 +936,21 @@ export function ItemColorChips({ value, onChange, p }: { value?: string; onChang
 
 /** Chips for a text color role, drawn like the background chips: color discs led by an
  *  automatic chip in the color the card would pick on its own. */
-export function TextTokenChips({ value, auto, onChange, p }: { value?: TextToken; auto: string; onChange: (t?: TextToken) => void; p: Palette }) {
+export function TextTokenChips({
+  value,
+  auto,
+  onChange,
+  p,
+  custom,
+}: {
+  value?: TextColor;
+  auto: string;
+  onChange: (t?: TextColor) => void;
+  p: Palette;
+  /** the author may pick a colour of their own, the way `Item.color` and `fill` already allow: the
+   *  disc comes last, one chip among the roles (see `CustomColorDisc`) */
+  custom?: (color: string) => void;
+}) {
   const lang = useLang();
   return (
     <div role="group" aria-label={t("textColor", lang)} style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -933,6 +958,7 @@ export function TextTokenChips({ value, auto, onChange, p }: { value?: TextToken
       {TEXT_TOKENS.map((tk) => (
         <TokenDisc key={tk.key} color={p[tk.key]} label={lang === "en" ? tk.label : TEXT_TOKEN_TEXT[lang][tk.key]} on={value === tk.key} onClick={() => onChange(tk.key)} p={p} />
       ))}
+      {custom && <CustomColorDisc value={typeof value === "string" && value.startsWith("#") ? value : undefined} onChange={(c) => c && custom(c)} p={p} />}
     </div>
   );
 }
@@ -1006,6 +1032,7 @@ export function ConfirmDialog({
   title,
   body,
   icon = "delete_sweep",
+  danger = false,
   p,
   onCancel,
   onConfirm,
@@ -1014,6 +1041,8 @@ export function ConfirmDialog({
   title: string;
   body: string;
   icon?: string;
+  /** 破坏性动作：确认键用错误色 */
+  danger?: boolean;
   p: Palette;
   onCancel: () => void;
   onConfirm: () => void;
@@ -1043,8 +1072,8 @@ export function ConfirmDialog({
         padding: "0 16px",
         borderRadius: 20,
         border: "none",
-        background: primary ? p.primary : "transparent",
-        color: primary ? p.onPrimary : p.primary,
+        background: primary ? (danger ? p.error : p.primary) : "transparent",
+        color: primary ? (danger ? p.onError : p.onPrimary) : p.primary,
         fontSize: 14,
         fontWeight: 600,
         cursor: "pointer",
@@ -1102,6 +1131,141 @@ export function ConfirmDialog({
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               {btn(t("cancel", lang), false, onCancel)}
               {btn(t("ok", lang), true, onConfirm)}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/**
+ * 一个只有一行输入的小弹框：改名用
+ *
+ * 与 `ConfirmDialog` 是同一套外壳，只是中间换成输入框。回车确认、Esc 取消，
+ * 打开时自动聚焦并选中原来的名字 —— 改名这件事不该要按三次键。
+ */
+export function PromptDialog({
+  open,
+  title,
+  label,
+  value,
+  placeholder,
+  icon = "edit",
+  p,
+  onCancel,
+  onConfirm,
+}: {
+  open: boolean;
+  title: string;
+  /** 输入框上方的说明；不给就只画输入框 */
+  label?: string;
+  /** 打开时的初值 */
+  value: string;
+  placeholder?: string;
+  icon?: string;
+  p: Palette;
+  onCancel: () => void;
+  onConfirm: (text: string) => void;
+}) {
+  const lang = useLang();
+  const [text, setText] = useState(value);
+  const inputRef = useRef<HTMLInputElement>(null);
+  /* 每次打开都回到初值并选中，接着输入就是替换 */
+  useEffect(() => {
+    if (!open) return;
+    setText(value);
+    const id = window.setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }, 30);
+    return () => window.clearTimeout(id);
+  }, [open, value]);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onCancel();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open, onCancel]);
+  const btn = (text: string, primary: boolean, onClick: () => void) => (
+    <button
+      onClick={onClick}
+      className="m3-press"
+      style={{
+        height: 40,
+        padding: "0 16px",
+        borderRadius: 20,
+        border: "none",
+        background: primary ? p.primary : "transparent",
+        color: primary ? p.onPrimary : p.primary,
+        fontSize: 14,
+        fontWeight: 600,
+        cursor: "pointer",
+      }}
+    >
+      {text}
+    </button>
+  );
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          key="scrim"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.16 }}
+          onClick={onCancel}
+          style={{ position: "fixed", inset: 0, zIndex: 600, background: "rgba(0,0,0,0.32)", display: "grid", placeItems: "center", padding: 24 }}
+        >
+          <motion.div
+            role="dialog"
+            aria-modal
+            aria-label={title}
+            initial={{ scale: 0.92, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.96, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 520, damping: 34, mass: 0.7 }}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "min(100%, 360px)",
+              padding: 24,
+              borderRadius: 28,
+              background: p.surfaceContainerHigh,
+              color: p.onSurface,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.10)",
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+            }}
+          >
+            <div style={{ textAlign: "center", color: p.primary }}>
+              <Icon name={icon} size={28} />
+            </div>
+            <div style={{ fontSize: 22, textAlign: "center" }}>{title}</div>
+            {label && <div style={{ fontSize: 13, color: p.onSurfaceVariant }}>{label}</div>}
+            <input
+              ref={inputRef}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  onConfirm(text);
+                }
+              }}
+              placeholder={placeholder}
+              aria-label={title}
+              style={{ ...inputBox(p, 12), height: 44, padding: "0 12px", color: p.onSurface, fontSize: 15, outline: "none" }}
+            />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              {btn(t("cancel", lang), false, onCancel)}
+              {btn(t("ok", lang), true, () => onConfirm(text))}
             </div>
           </motion.div>
         </motion.div>

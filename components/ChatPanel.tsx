@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { isProject } from "@/lib/project";
+import { readDoc } from "@/lib/project";
 import { Doc, Palette } from "@/lib/tokens";
 import { t, useLang } from "@/lib/i18n";
 import { AiSettings, ChatAttachment, ChatTurn, MAX_IMAGE_BYTES, modelInUse } from "@/lib/ai";
@@ -211,8 +211,10 @@ export function ChatPanel({
             transition={{ type: "spring", stiffness: 480, damping: 34, mass: 0.7 }}
             onClick={(e) => e.stopPropagation()}
             style={{
-              width: "min(100%, 720px)",
-              height: "min(86dvh, 720px)",
+              width: "min(100%, 760px)",
+              /* 文字一多，矮框里只能看见一两行，改起来很难受：给它更多高度，
+                 并用 dvh 跟着窗口走，小窗口也不溢出。 */
+              height: "min(94dvh, 1000px)",
               display: "flex",
               flexDirection: "column",
               borderRadius: 28,
@@ -230,35 +232,6 @@ export function ChatPanel({
                 {t("chatAgent", lang)}
               </span>
               <span style={{ flex: 1, minWidth: 8 }} />
-              {/* 模型名同时也是去 AI 设置的入口：那里是模型、地址、密钥唯一的来源，面板不另设一套。
-                  没有单独的齿轮按钮 —— 同一个动作放两个按钮只会让人以为它们不一样。 */}
-              <button
-                onClick={onSetupAi}
-                title={t("chatModelHint", lang)}
-                className="m3-press"
-                style={{
-                  maxWidth: 240,
-                  minWidth: 0,
-                  height: 36,
-                  padding: "0 12px",
-                  borderRadius: 18,
-                  border: "none",
-                  background: p.surfaceContainerHighest,
-                  color: p.onSurfaceVariant,
-                  fontSize: 12,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  flex: "0 0 auto",
-                }}
-              >
-                <Icon name="tune" size={16} />
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {modelInUse(settings)}
-                </span>
-              </button>
               {roundBtn(linkCopied ? "check" : "link", t("shareLinkHint", lang), copyLink)}
               {roundBtn("close", t("closeBtn", lang), onClose)}
             </header>
@@ -343,27 +316,18 @@ export function ChatPanel({
               </div>
             )}
 
-            {/* 输入区 */}
-            <footer style={{ padding: "10px 18px 16px", display: "grid", gap: 8 }}>
+            {/* 输入区：一个整体的框，里面是"写东西"和"底部一排动作" —— 参考常见的对话式输入条。
+                附件、模型、发送都在这一排里，长句也有足够的高度去改。 */}
+            <footer style={{ padding: "4px 18px 16px", display: "grid", gap: 8 }}>
               <div
                 style={{
-                  display: "flex",
-                  alignItems: "flex-end",
-                  gap: 8,
-                  padding: 6,
-                  borderRadius: 22,
-                  ...inputBox(p, 22),
+                  display: "grid",
+                  gap: 4,
+                  padding: "12px 12px 10px",
+                  borderRadius: 26,
+                  ...inputBox(p, 26),
                 }}
               >
-                <input
-                  ref={fileRef}
-                  type="file"
-                  multiple
-                  accept="image/*,.json,application/json"
-                  onChange={(e) => void attach(e.target.files)}
-                  style={{ display: "none" }}
-                />
-                {roundBtn("attach_file", t("chatAttach", lang), () => fileRef.current?.click())}
                 <textarea
                   ref={inputRef}
                   value={text}
@@ -376,29 +340,91 @@ export function ChatPanel({
                     }
                   }}
                   placeholder={t("chatPlaceholder", lang)}
-                  rows={1}
+                  rows={2}
                   spellCheck={false}
                   style={{
-                    flex: 1,
-                    minWidth: 0,
-                    minHeight: 40,
-                    maxHeight: 132,
-                    padding: "10px 4px",
+                    width: "100%",
+                    minHeight: 56,
+                    maxHeight: 260,
+                    padding: "2px 6px",
                     border: "none",
                     background: "transparent",
                     color: p.onSurface,
                     font: "inherit",
-                    fontSize: 14,
-                    lineHeight: 1.45,
+                    fontSize: 14.5,
+                    lineHeight: 1.5,
                     outline: "none",
                     resize: "none",
+                    boxSizing: "border-box",
                   }}
                 />
-                {busy
-                  ? roundBtn("stop_circle", t("cancel", lang), onCancel, { danger: true })
-                  : aiReady
-                    ? roundBtn("arrow_upward", t("chatSend", lang), send, { primary: true, disabled: !text.trim() && files.length === 0 })
-                    : roundBtn("key", t("aiSetup", lang), onSetupAi, { primary: true })}
+
+                {/* 底部一排：左边是加东西的地方，右边是"用哪个模型"和发送 */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    multiple
+                    accept="image/*,.json,application/json"
+                    onChange={(e) => void attach(e.target.files)}
+                    style={{ display: "none" }}
+                  />
+                  <button
+                    onClick={() => fileRef.current?.click()}
+                    title={t("chatAttach", lang)}
+                    aria-label={t("chatAttach", lang)}
+                    className="m3-press"
+                    style={{
+                      width: 34,
+                      height: 34,
+                      flex: "0 0 auto",
+                      borderRadius: 17,
+                      border: "none",
+                      background: p.surfaceContainerHigh,
+                      color: p.onSurface,
+                      cursor: "pointer",
+                      display: "grid",
+                      placeItems: "center",
+                    }}
+                  >
+                    <Icon name="add" size={20} />
+                  </button>
+
+                  <span style={{ flex: 1, minWidth: 0 }} />
+
+                  {/* 当前用的模型：面板里只显示，改它去 AI 设置（那里是唯一的来源） */}
+                  <button
+                    onClick={onSetupAi}
+                    title={t("chatModelHint", lang)}
+                    className="m3-press"
+                    style={{
+                      maxWidth: 230,
+                      minWidth: 0,
+                      height: 30,
+                      padding: "0 4px",
+                      border: "none",
+                      background: "transparent",
+                      color: p.onSurfaceVariant,
+                      fontSize: 12.5,
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      flex: "0 0 auto",
+                    }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {modelInUse(settings)}
+                    </span>
+                    <Icon name="expand_more" size={16} />
+                  </button>
+
+                  {busy
+                    ? roundBtn("stop_circle", t("cancel", lang), onCancel, { danger: true })
+                    : aiReady
+                      ? roundBtn("arrow_upward", t("chatSend", lang), send, { primary: true, disabled: !text.trim() && files.length === 0 })
+                      : roundBtn("key", t("aiSetup", lang), onSetupAi, { primary: true })}
+                </div>
               </div>
 
               <div style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 18, fontSize: 12, color: p.onSurfaceVariant }}>
@@ -509,7 +535,7 @@ const readText = (file: File): Promise<string> =>
 function tryParseDoc(json: string): Doc | undefined {
   try {
     const value: unknown = JSON.parse(json);
-    return isProject(value) ? value : undefined;
+    return readDoc(value) ?? undefined;
   } catch {
     return undefined;
   }

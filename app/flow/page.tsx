@@ -3,9 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toPng } from "html-to-image";
 import { buildFlow, flowMarkdown, overlayLevelName, FLOW_TEXT, type Flow, type FlowNode } from "@/lib/flow";
-import { isProject } from "@/lib/project";
+import { FlowBoard, boardFromFlow, loadBoard, mergeBoard, saveBoard } from "@/lib/flowchart";
+import { FlowCanvas } from "@/components/FlowCanvas";
+import { Icon } from "@/components/M3Node";
+import { readDoc as readStoredDoc } from "@/lib/project";
 import { paletteOf, type Doc, type Palette } from "@/lib/tokens";
-import { isLang, setGlobalLang, t, type Lang } from "@/lib/i18n";
+import { LangContext, isLang, setGlobalLang, t, type Lang } from "@/lib/i18n";
 import { goToEditor } from "@/lib/appPath";
 
 /* The flow page: the screens of the saved document as a layered diagram. It reads
@@ -87,7 +90,8 @@ function initialLanguage(): Lang {
 function readDoc(): Doc | null {
   try {
     const value: unknown = JSON.parse(localStorage.getItem("m3e:doc") ?? "null");
-    return isProject(value) ? value : null;
+    /* 读回来的文档先过归一化：超范围的倒计时收进 120，而不是把整份文档丢掉 */
+    return readStoredDoc(value);
   } catch {
     return null;
   }
@@ -106,10 +110,16 @@ export default function FlowPage() {
   const [lang, setLang] = useState<Lang | null>(null);
   const [doc, setDoc] = useState<Doc | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** 能改的那张图；null 表示"还没建，按屏幕推导" */
+  const [board, setBoard] = useState<FlowBoard | null>(null);
   const [busy, setBusy] = useState(false);
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    /* 语言只有一处来源：编辑器存在 `m3e:ui` 里的那个。
+       流程图原来只在读不到时才看浏览器语言，于是中文界面的机器上
+       可能整页日语文案（图形面板、常用部件全是日文）。这里改成：
+       读到就用它，并且把浏览器语言作为最后兜底。 */
     const initial = initialLanguage();
     document.documentElement.lang = initial;
     setGlobalLang(initial);
@@ -126,7 +136,24 @@ export default function FlowPage() {
   );
   const flow = useMemo(() => (doc ? buildFlow(doc, ui) : null), [doc, ui]);
   const layout = useMemo(() => (flow ? layoutFlow(flow) : null), [flow]);
-  const selected = flow?.nodes.find((n) => n.id === selectedId) ?? null;
+
+  /* 图从哪来：按屏幕现算一张，再把本机存下的改动（位置、形状、自己加的节点）贴上去。
+     这样图上的文字永远跟着界面语言，而拖过的位置、换过的形状仍然留着。 */
+  useEffect(() => {
+    if (board || !flow || !layout) return;
+    const fresh = boardFromFlow(flow, layout.at);
+    const saved = loadBoard(window.localStorage);
+    setBoard(saved ? mergeBoard(fresh, saved) : fresh);
+  }, [board, flow, layout]);
+
+  /* 改了就存：流程图是"你在图上做的改动"，不跟着屏幕文档一起走 */
+  const changeBoard = useCallback((next: FlowBoard) => {
+    setBoard(next);
+    saveBoard(window.localStorage, next);
+  }, []);
+
+  const selected = board?.boxes.find((b) => b.id === selectedId) ?? null;
+  const selectedNode = flow?.nodes.find((n) => n.id === selectedId) ?? null;
 
   const savePng = useCallback(async () => {
     const el = canvasRef.current;
@@ -184,7 +211,10 @@ export default function FlowPage() {
     return <div style={{ minHeight: "100vh", background: p.surface }} />;
   }
 
+  /* 页面里的组件（图形面板、常用部件…）走 useLang()，它读的是 context。
+     只 setGlobalLang 是不够的：context 会落在默认值（日语）上，于是中日混排。 */
   return (
+    <LangContext.Provider value={ui}>
     <div style={{ minHeight: "100vh", background: p.surface, color: p.onSurface, fontFamily: "Roboto, system-ui, sans-serif" }}>
       <header
         style={{
@@ -219,76 +249,9 @@ export default function FlowPage() {
       ) : (
         <div style={{ display: "flex", alignItems: "flex-start", gap: 20, padding: 20, flexWrap: "wrap" }}>
           <div style={{ flex: 1, minWidth: 320 }}>
-            {flow && layout && (
-              <div style={{ position: "relative", overflow: "auto", borderRadius: 24, border: `1px solid ${p.outlineVariant}`, background: p.surfaceContainerLow }}>
-                <div
-                  ref={canvasRef}
-                  style={{
-                    position: "relative",
-                    width: layout.width,
-                    height: Math.max(layout.height, 320),
-                    background: p.surfaceContainerLow,
-                  }}
-                >
-                  <svg width={layout.width} height={Math.max(layout.height, 320)} style={{ position: "absolute", inset: 0 }}>
-                    <defs>
-                      <marker id="m3e-flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                        <path d="M 0 0 L 10 5 L 0 10 z" fill={p.primary} />
-                      </marker>
-                    </defs>
-                    {flow.edges.map((e) => {
-                      const a = layout.at.get(e.from);
-                      const b = layout.at.get(e.to);
-                      if (!a || !b) return null;
-                      const path = edgePath(a, b);
-                      const i = flow.edges.filter((o) => o.from === e.from && o.to === e.to).indexOf(e);
-                      const lx = path.mx + (i - 0.5) * 10;
-                      const ly = path.my + (i - 0.5) * 18;
-                      const w = Math.max(40, e.label.length * 7 + 12);
-                      return (
-                        <g key={e.id}>
-                          <path d={path.d} fill="none" stroke={p.outline} strokeWidth={2} markerEnd="url(#m3e-flow-arrow)" />
-                          <rect x={lx - w / 2} y={ly - 9} width={w} height={18} rx={9} fill={p.surfaceContainerHighest} opacity={0.92} />
-                          <text x={lx} y={ly} textAnchor="middle" dominantBaseline="middle" style={{ font: "500 11px Roboto, system-ui, sans-serif", fill: p.onSurfaceVariant }}>
-                            {e.label}
-                          </text>
-                        </g>
-                      );
-                    })}
-                  </svg>
-                  {layout.placed.map(({ node, x, y }) => {
-                    const on = node.id === selectedId;
-                    return (
-                      <button
-                        key={node.id}
-                        className="m3-press"
-                        onClick={() => setSelectedId(node.id)}
-                        style={{
-                          position: "absolute",
-                          left: x,
-                          top: y,
-                          width: NODE_W,
-                          height: NODE_H,
-                          textAlign: "start",
-                          padding: "10px 14px",
-                          borderRadius: 18,
-                          border: `2px solid ${on ? p.primary : p.outlineVariant}`,
-                          background: on ? p.secondaryContainer : p.surface,
-                          color: on ? p.onSecondaryContainer : p.onSurface,
-                          cursor: "pointer",
-                          overflow: "hidden",
-                        }}
-                      >
-                        <div style={{ font: "500 14px Roboto, system-ui, sans-serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{node.label}</div>
-                        <div style={{ font: "400 11px Roboto, system-ui, sans-serif", color: on ? p.onSecondaryContainer : p.onSurfaceVariant, marginTop: 2 }}>
-                          {node.overlay ? overlayLevelName(node.overlay, ui) : node.kind === "popup" ? text.popup : text.screen} · {text.itemCount(node.rules.length)}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+            {board ? (
+              <FlowCanvas p={p} board={board} selectedId={selectedId} onBoard={changeBoard} onSelect={setSelectedId} />
+            ) : null}
           </div>
 
           <aside style={{ width: 320, flex: "0 0 320px", padding: 20, borderRadius: 24, background: p.surfaceContainerLow, border: `1px solid ${p.outlineVariant}` }}>
@@ -296,14 +259,20 @@ export default function FlowPage() {
               <>
                 <div style={{ font: "500 18px Roboto, system-ui, sans-serif" }}>{selected.label}</div>
                 <div style={{ font: "400 12px Roboto, system-ui, sans-serif", color: p.onSurfaceVariant, margin: "2px 0 12px" }}>
-                  {selected.overlay ? overlayLevelName(selected.overlay, ui) : selected.kind === "popup" ? text.popup : text.screen} · depth {selected.depth}
+                  {selectedNode
+                    ? `${selectedNode.overlay ? overlayLevelName(selectedNode.overlay, ui) : selectedNode.kind === "popup" ? text.popup : text.screen} · depth ${selectedNode.depth}`
+                    : t("flowPartStep", ui)}
                 </div>
-                <p style={{ font: "400 13px Roboto, system-ui, sans-serif", color: p.onSurfaceVariant, margin: "0 0 16px" }}>{selected.description}</p>
-                {selected.rules.length === 0 ? (
+                {!selectedNode ? (
+                  <p style={{ font: "400 13px Roboto, system-ui, sans-serif", color: p.onSurfaceVariant, margin: "0 0 16px" }}>{t("flowDragHint", ui)}</p>
+                ) : (
+                  <>
+                    <p style={{ font: "400 13px Roboto, system-ui, sans-serif", color: p.onSurfaceVariant, margin: "0 0 16px" }}>{selectedNode.description}</p>
+                {selectedNode.rules.length === 0 ? (
                   <div style={{ font: "400 13px Roboto, system-ui, sans-serif", color: p.onSurfaceVariant }}>{text.noRules}</div>
                 ) : (
                   <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 10 }}>
-                    {selected.rules.map((r, i) => (
+                    {selectedNode.rules.map((r, i) => (
                       <li key={`${r.itemId}-${i}`} style={{ padding: 12, borderRadius: 14, background: p.surfaceContainer, font: "400 13px Roboto, system-ui, sans-serif" }}>
                         <div style={{ font: "500 12px Roboto, system-ui, sans-serif", color: p.primary, marginBottom: 4 }}>
                           {r.kind === "jump" ? `${r.itemLabel} → ${flow?.nodes.find((n) => n.id === r.toFrameId)?.label ?? r.toFrameId}` : `${text.tap} · ${r.itemLabel}`}
@@ -312,19 +281,49 @@ export default function FlowPage() {
                       </li>
                     ))}
                   </ul>
+                    )}
+                  </>
                 )}
               </>
             ) : (
               <div style={{ font: "400 13px Roboto, system-ui, sans-serif", color: p.onSurfaceVariant }}>
                 {text.note}
                 <div style={{ marginTop: 12 }}>
-                  {flow?.nodes.length ?? 0} {text.screen} · {flow?.edges.length ?? 0} {text.transitions}
+                  {(board?.boxes.length ?? 0)} {text.boxes} · {(board?.links.length ?? 0)} {text.transitions}
                 </div>
+                {/* 图可以随便改；改乱了就从屏幕重新推导一张 */}
+                <button
+                  onClick={() => {
+                    if (!flow || !layout) return;
+                    if (!window.confirm(t("flowResetAsk", ui))) return;
+                    changeBoard(boardFromFlow(flow, layout.at));
+                    setSelectedId(null);
+                  }}
+                  className="m3-press"
+                  style={{
+                    marginTop: 16,
+                    height: 38,
+                    padding: "0 16px",
+                    borderRadius: 19,
+                    border: `1px solid ${p.outline}`,
+                    background: "transparent",
+                    color: p.primary,
+                    font: "500 13px Roboto, system-ui, sans-serif",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <Icon name="restart_alt" size={16} />
+                  {t("flowReset", ui)}
+                </button>
               </div>
             )}
           </aside>
         </div>
       )}
     </div>
+    </LangContext.Provider>
   );
 }

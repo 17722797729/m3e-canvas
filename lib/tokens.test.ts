@@ -367,7 +367,8 @@ describe("a button's shape", () => {
     /* and a round button is a pill at the height its author gave it, not at M3's medium one */
     expect(baseRadii({ ...makeItem("button"), shape: "round", size2: 40 }).tl).toBe(20);
     expect(baseRadii({ ...makeItem("button"), shape: "round", size2: 96 }).tl).toBe(48);
-    expect(SHAPED).toEqual(["button", "iconButton", "fab", "extendedFab"]);
+    /* the function button joined the kinds the shape switch controls, as a circle by nature */
+    expect(SHAPED).toEqual(["button", "iconButton", "fab", "extendedFab", "fnButton"]);
   });
 
   it("is one shape holding one icon, with no words of its own", () => {

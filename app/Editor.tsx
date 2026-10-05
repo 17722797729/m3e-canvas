@@ -28,7 +28,7 @@ import { Field } from "@/components/ui";
 import { AiSettings, DEFAULT_AI, aiConfigured, hasKey, isSecureUrl, loadAiSettings, proposeBehavior, proposeDescription, pushHistory, saveAiSettings } from "@/lib/ai";
 import { barSlotOf, bodyRect, carryFrame, pullInto, shiftForResize, sideFlip, spansSlot, tidyFrame } from "@/lib/tidy";
 import { constrainModalRails, modalRailOf, updateRail } from "@/lib/rail";
-import { isProject, readableGroups, readProject, saveProject } from "@/lib/project";
+import { readDoc, readableGroups, readProject, saveProject } from "@/lib/project";
 import { audit, type AuditIssue } from "@/lib/audit";
 import { magnifyView, revealPadding, revealView, type CanvasView } from "@/lib/view";
 import { existingDialogs, holdersOf } from "@/lib/pages";
@@ -43,7 +43,7 @@ import { ColorPanel } from "@/components/ColorPanel";
 import { MotionPanel, ShapePanel, TypePanel } from "@/components/ThemePanel";
 import { ThemeContext, ensureFontLoaded, ensureLangFontLoaded } from "@/lib/theme";
 import { BottomSheet, MobileActionBar, MobileInspector, MobileLang, MobileSettings } from "@/components/Mobile";
-import { ConfirmDialog, FoldButton, IconBtn, Segmented } from "@/components/ui";
+import { ConfirmDialog, FoldButton, IconBtn, PromptDialog, Segmented } from "@/components/ui";
 import { KIND_TEXT, Lang, LangContext, SEED_TEXT, adoptDoc, getLang, overlayLevelText, setGlobalLang, t, translateDoc } from "@/lib/i18n";
 import { MarketPanel } from "@/components/MarketPanel";
 import { UploadMarketDialog } from "@/components/UploadMarketDialog";
@@ -52,8 +52,23 @@ import { bootSession, useSession } from "@/lib/session";
 import { MarketComponent, MyComponent, deleteMyComponent, myComponentList } from "@/lib/syai";
 import { categoryOf, isJoinedPart, partOf } from "@/lib/market";
 import { markFromEditor } from "@/lib/appPath";
-import { Template, allTemplates, blankScreen, captureGroups, loadTemplates, saveTemplates, screensOf, uid as templateId } from "@/lib/templates";
-import { TemplatesPanel } from "@/components/TemplatesPanel";
+import { BUILTIN_CANVAS_DOC, BUILTIN_CANVAS_ID, BUILTIN_CANVAS_NAME } from "@/lib/builtinCanvas";
+import {
+  CanvasState as CanvasTabs,
+  activeCanvas,
+  canvasBlank,
+  canvasClosed,
+  canvasCopy,
+  canvasLabel,
+  ensureBuiltin,
+  isBuiltinCanvas,
+  loadCanvases,
+  saveCanvases,
+  switchTo,
+  withDoc,
+  withName,
+} from "@/lib/canvases";
+import { WorkspacePanel } from "@/components/WorkspacePanel";
 
 /** the screens while a model drafts: primary, tertiary and primary container, drifting */
 const DRAFT_GRADIENT = (p: Palette) => `linear-gradient(120deg, ${p.primaryContainer}, ${p.tertiaryContainer}, ${p.primary}, ${p.secondaryContainer}, ${p.primaryContainer})`;
@@ -305,11 +320,11 @@ function ThinkingRing({ p, frame }: { p: Palette; frame: Frame }) {
   );
 }
 
-type LeftTab = "parts" | "layers" | "audit" | "color" | "shape" | "type" | "motion" | "ai" | "market" | "templates";
+type LeftTab = "workspace" | "parts" | "layers" | "audit" | "color" | "shape" | "type" | "motion" | "ai" | "market";
 /** the left rail: what the document is made of, what is wrong with it, then its four theme axes */
-const LEFT_TABS: { key: LeftTab; icon: string; title: "parts" | "layers" | "audit" | "colors" | "shape" | "typography" | "motion" | "ai" | "marketPanel" | "templatePanel" }[] = [
-  /* 「模板」放第一位：一整套屏幕是画东西之前先要决定的事，比逐个部件更靠前 */
-  { key: "templates", icon: "dashboard_customize", title: "templatePanel" },
+const LEFT_TABS: { key: LeftTab; icon: string; title: "workspace" | "parts" | "layers" | "audit" | "colors" | "shape" | "typography" | "motion" | "ai" | "marketPanel" }[] = [
+  /* 头三位是"从哪开始动手"：先看自己在哪一屏（工作区）、再摆部件（组件）、一整套屏幕从模板来 */
+  { key: "workspace", icon: "space_dashboard", title: "workspace" },
   { key: "parts", icon: "add_box", title: "parts" },
   { key: "layers", icon: "layers", title: "layers" },
   { key: "audit", icon: "fact_check", title: "audit" },
@@ -365,14 +380,17 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const [pendingImport, setPendingImport] = useState<Doc | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   /** the idea typed into the "ask an AI" dialog; kept here so a failed draft does not lose it */
-  /** 模板：内置的 + 自己建的（存在浏览器里） */
-  const [myTemplates, setMyTemplates] = useState<Template[]>([]);
-  /** 「新增模板」的命名框 */
-  const [templateAsk, setTemplateAsk] = useState<string | null>(null);
-  /** 铺模板前先问一句：画布上有东西才会问 */
-  const [templateConfirm, setTemplateConfirm] = useState<Template | null>(null);
-  /** 「保存」要覆盖哪一条；确认之后才动 */
-  const [templateSaveAsk, setTemplateSaveAsk] = useState<Template | null>(null);
+  /** 模板功能已去掉：几套画布由 canvases 承担 */
+  /**
+   * 打开的画布（标签页）
+   *
+   * 「工作区」对着其中的当前那一个。从模板开一套就是新加一个标签页，
+   * 所以几套画布是并存的，谁也不顶掉谁。
+   */
+  const [canvases, setCanvases] = useState<CanvasTabs>({ list: [], activeId: "", docs: {} });
+  /** 给当前画布改名 */
+  const [canvasRename, setCanvasRename] = useState<string | null>(null);
+
 
   /** 「让 AI 画」的整段对话：关掉面板再打开还在 */
   const [chatTurns, setChatTurns] = useState<ChatTurn[]>([]);
@@ -404,7 +422,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
   const [leftW, setLeftW] = useState(RAIL_W + 268);
-  const [leftTab, setLeftTab] = useState<LeftTab>("parts");
+  const [leftTab, setLeftTab] = useState<LeftTab>("workspace");
   /** pointer over the collapsed rail: the logo becomes the open button */
   const [railHover, setRailHover] = useState(false);
   /** the screen whose layers are listed when nothing on a screen is selected */
@@ -685,20 +703,32 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     // React's development double-run would otherwise read back its own first save
     if (loadedRef.current) return;
     try {
+      /* 画布清单先读：没有 `m3e:doc` 时要靠它决定"打开时该显示哪一份" */
+      const tabs = ensureBuiltin(loadCanvases(window.localStorage), BUILTIN_CANVAS_DOC);
+      setCanvases(tabs);
       const d = localStorage.getItem(DOC_KEY);
+      const saved = tabs.docs[tabs.activeId];
       if (d) {
         hadDocRef.current = true;
-        applyDoc(JSON.parse(d) as Partial<Doc>, false);
+        /* 每一份存下来的文档都走同一个读取器（见 readDoc）：读不出来的部件丢掉，坏字段就地修好，
+           而不是把整份画布判为无效 */
+        const stored = readDoc(JSON.parse(d));
+        if (stored) applyDoc(stored, false);
         // frame mode is decided by the device (media-query effect), not restored
+      } else if (saved) {
+        /* 当前画布是内置那份（或换过机器）：它存在清单里，就从那儿装进编辑器 */
+        hadDocRef.current = true;
+        const stored = readDoc(saved);
+        if (stored) applyDoc(stored, true);
       }
       const before = d ? localStorage.getItem(BEFORE_KEY) : null;
       if (!d) localStorage.removeItem(BEFORE_KEY);
       if (before) {
         const value: unknown = JSON.parse(before);
-        if (isProject(value)) setDraftBefore(value);
+        const draft = readDoc(value);
+        if (draft) setDraftBefore(draft);
         else localStorage.removeItem(BEFORE_KEY);
       }
-      setMyTemplates(loadTemplates());
       const u = localStorage.getItem(UI_KEY);
       if (u) {
         const ui = JSON.parse(u);
@@ -716,7 +746,9 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       }
       setGlobalLang(initialLang);
       initialLangRef.current = initialLang;
-      if (!d) {
+      /* 只有"既没有自己的存档、当前画布也没有内容"才铺那几张示例屏：
+         内置画布（QQ 农场）第一次打开时 `m3e:doc` 是空的，但它有内容要显示 */
+      if (!d && !saved) {
         setGroups(seed(initialLang));
         setFrames([{ ...SEED_FRAMES[0], name: t("home", initialLang) }]);
       }
@@ -813,6 +845,15 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       /* The very document the prompt and the export read, so a field added there — the variables,
          say — cannot be left out of the saved file by a second list that has to be kept in step. */
       localStorage.setItem(DOC_KEY, JSON.stringify(docRef.current));
+      /* 这一份同时记进当前标签页：切走再切回来时取的就是它。
+         名字只跟着**非空**标题走：从模板开的那一份叫"QQ 农场"，不该被空标题盖掉。 */
+      setCanvases((cur) => {
+        if (!cur.activeId) return cur;
+        const stamped = { ...withDoc(cur, docRef.current), list: cur.list.map((c) => (c.id === cur.activeId ? { ...c, at: Date.now() } : c)) };
+        const next = withName(stamped, docRef.current.title);
+        saveCanvases(window.localStorage, next);
+        return next;
+      });
     } catch {}
   }, [editAccess, groups, frames, paletteKey, frame, title, brief, promptEdit, platform, customPalette, dynamicColor, theme, customParts]);
 
@@ -2051,7 +2092,17 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     [itemRects],
   );
 
-  const deleteSelected = useCallback(() => {
+  /**
+   * 待确认的一次删除
+   *
+   * 所有删除都走这里：先登记"要删什么、删了会怎样"，由同一个确认框问一句，
+   * 点确定才真的执行。这样不会出现某个入口忘了确认的情况。
+   */
+  const [confirmAsk, setConfirmAsk] = useState<{ title: string; body: string; icon: string; run: () => void } | null>(null);
+  const askConfirm = (title: string, body: string, run: () => void, icon = "delete") => setConfirmAsk({ title, body, icon, run });
+
+  /** 真的删（已经确认过）：选中项连同容器里的东西一起走 */
+  const deleteSelectedNow = useCallback(() => {
     if (selectedIds.length === 0) return;
     const ids = new Set(selectedIds);
     /* deleting a container takes everything inside it along, however deep the container sits */
@@ -2819,7 +2870,21 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     [selectedIds, selectedFrameId, snapshotFor],
   );
 
+  /** 删掉选中的部件：先问一句，再说清删掉几个 */
+  const deleteSelected = useCallback(() => {
+    if (selectedIds.length === 0) return;
+    askConfirm(
+      t("deleteSelection", lang),
+      t("deleteSelectionAsk", lang).replace("{n}", String(selectedIds.length)),
+      () => deleteSelectedNow(),
+    );
+  }, [selectedIds, deleteSelectedNow, lang]);
+
   const clearAll = () => {
+    askConfirm(t("clearAllTitle", lang), t("clearAllAsk", lang), () => clearAllNow());
+  };
+
+  const clearAllNow = () => {
     setConfirmClear(false);
     if (groupsRef.current.length === 0 && framesRef.current.length === 0)
       return;
@@ -3183,101 +3248,6 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     setGroups(laid.groups);
   };
 
-  const toastTimer = useRef<number | null>(null);
-  /** the desktop's message pill under the header; the phone keeps its centered toast */
-  const showAiNote = (text: string, icon = "check", ms = 2200) => {
-    setAiNote({ text, icon });
-    if (aiNoteTimer.current) window.clearTimeout(aiNoteTimer.current);
-    aiNoteTimer.current = window.setTimeout(() => setAiNote(null), ms);
-  };
-
-  const showToast = (msg: string, ms = 2200, icon = "info") => {
-    if (!mobileRef.current) {
-      showAiNote(msg, icon, ms);
-      return;
-    }
-    setToast(msg);
-    if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), ms);
-  };
-
-  /**
-   * 套用一份模板：画布上的屏幕换成它那一整套
-   *
-   * 走 importDoc，所以这一步是可撤销的（和打开文件、清空画布同一条路）。
-   * 屏幕之外的设置（配色、形状、字体、动效）留着不动：模板给的是屏幕，不是整套外观。
-   */
-  const applyTemplate = (tpl: Template) => {
-    const taken = screensOf(tpl, templateId);
-    const next: Doc = {
-      ...docRef.current,
-      frames: taken.frames,
-      groups: taken.groups,
-      frame: "phone",
-      customParts: docRef.current.customParts,
-    };
-    arrive(next);
-    setTemplateConfirm(null);
-    setLeftTab("templates");
-    showToast(t("templateApplied", lang).replace("{name}", tpl.name), 2400, "dashboard_customize");
-  };
-
-  /** 画布上还有东西才值得先问一句；空画布直接换 */
-  const askTemplate = (tpl: Template) => {
-    if (docRef.current.groups.length === 0) applyTemplate(tpl);
-    else setTemplateConfirm(tpl);
-  };
-
-  /**
-   * 「新增模板」：把当前画布存成一条新模板，然后从一张空白屏幕重新开始
-   *
-   * 「不再显示 QQ 农场的屏幕」就是这一步：模板存的是**当前**那套屏幕，
-   * 存完画布回到空白，于是农场的五个页面不会留在新模板里。
-   */
-  const createTemplate = (name: string) => {
-    const label = name.trim() || t("templateDefaultName", lang);
-    const mine: Template[] = [
-      { id: templateId(), name: label, at: Date.now(), screens: { frames: docRef.current.frames, groups: captureGroups(docRef.current.groups) } },
-      ...myTemplates,
-    ];
-    setMyTemplates(mine);
-    saveTemplates(mine);
-    setTemplateAsk(null);
-    /* 全新的空白屏幕：一屏、没有部件 */
-    const fresh = blankScreen(templateId);
-    arrive({ ...docRef.current, frames: fresh.frames, groups: fresh.groups, frame: "phone" });
-    setLeftTab("templates");
-    showToast(t("templateCreated", lang).replace("{name}", label), 2600, "check");
-  };
-
-  /**
-   * 用当前画布更新一条模板（「保存」）
-   *
-   * 内置模板也能存：存下来的是一条**同 id 的本地覆盖**（见 allTemplates），
-   * 所以内置那一套屏幕不会被改坏，换台机器/清掉浏览器数据就恢复原样。
-   */
-  const saveTemplate = (tpl: Template) => {
-    const next: Template = {
-      id: tpl.id,
-      name: tpl.name,
-      at: Date.now(),
-      custom: true,
-      screens: { frames: docRef.current.frames, groups: captureGroups(docRef.current.groups) },
-    };
-    const mine = [next, ...myTemplates.filter((t) => t.id !== tpl.id)];
-    setMyTemplates(mine);
-    saveTemplates(mine);
-    setTemplateSaveAsk(null);
-    showToast(t("templateSaved", lang).replace("{name}", tpl.name), 2400, "save");
-  };
-
-  const deleteTemplate = (tpl: Template) => {
-    const mine = myTemplates.filter((x) => x.id !== tpl.id);
-    setMyTemplates(mine);
-    saveTemplates(mine);
-    showToast(t("templateDeleted", lang), 2200, "delete");
-  };
-
   /**
    * 打开 AI 设置（左侧 AI 页签）
    *
@@ -3357,6 +3327,115 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     },
     [],
   );
+  /** Writes one field with the model: a part's behavior note, or a screen's description.
+   *  The result goes straight in; the field remembers what it said so the rewrite can be undone. */
+
+  const toastTimer = useRef<number | null>(null);
+  /** the desktop's message pill under the header; the phone keeps its centered toast */
+  const showAiNote = (text: string, icon = "check", ms = 2200) => {
+    setAiNote({ text, icon });
+    if (aiNoteTimer.current) window.clearTimeout(aiNoteTimer.current);
+    aiNoteTimer.current = window.setTimeout(() => setAiNote(null), ms);
+  };
+
+  const showToast = (msg: string, ms = 2200, icon = "info") => {
+    if (!mobileRef.current) {
+      showAiNote(msg, icon, ms);
+      return;
+    }
+    setToast(msg);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), ms);
+  };
+
+  /**
+   * 套用一份模板：画布上的屏幕换成它那一整套
+   *
+   * 走 importDoc，所以这一步是可撤销的（和打开文件、清空画布同一条路）。
+   * 屏幕之外的设置（配色、形状、字体、动效）留着不动：模板给的是屏幕，不是整套外观。
+   */
+  /** 一份空白的画布：一屏、没有部件，外观设置沿用现在这份 */
+  const emptyDoc = (): Doc => ({
+    ...docRef.current,
+    title: "",
+    brief: "",
+    frames: [{ id: `f${Date.now().toString(36)}`, name: t("home", lang), x: 0, y: 0, w: 412, h: 892 }],
+    groups: [],
+    customParts: docRef.current.customParts,
+  });
+
+  /**
+   * 切到另一个画布
+   *
+   * 手上这一份先交给标签页（并存的关键），再把目标那一份铺到画布上。
+   * 目标还没写过文档（刚建的空标签页）就现给一屏空白。
+   */
+  const switchCanvas = (id: string) => {
+    const { state, doc: target } = switchTo(canvases, id, docRef.current, emptyDoc());
+    if (state === canvases) return;
+    setCanvases(state);
+    saveCanvases(window.localStorage, state);
+    importDoc(target);
+    const label = state.list.find((c) => c.id === id)?.name;
+    if (label) showToast(t("canvasSwitched", lang).replace("{name}", label), 2000, "switch_access_shortcut");
+  };
+
+  /** 给当前画布改名 */
+  const renameCanvas = (name: string) => {
+    const label = name.trim();
+    setCanvasRename(null);
+    if (!label || !canvases.activeId) return;
+    const state = { ...canvases, list: canvases.list.map((c) => (c.id === canvases.activeId ? { ...c, name: label } : c)) };
+    setCanvases(state);
+    saveCanvases(window.localStorage, state);
+    showToast(t("canvasRenamed", lang), 1800, "edit");
+  };
+
+  /** 删掉当前画布：先问一句；只剩一份时不让删（编辑器不能没有画布） */
+  const requestDeleteCanvas = () => {
+    const cur = activeCanvas(canvases);
+    if (!cur) return;
+    if (canvases.list.length <= 1) {
+      showToast(t("canvasDeleteLast", lang), 2400, "info");
+      return;
+    }
+    askConfirm(
+      t("canvasDelete", lang),
+      t("canvasDeleteAsk", lang).replace("{name}", canvasLabel(cur, doc.title) || t("canvasUntitled", lang)),
+      () => {
+        const state = canvasClosed(canvases, cur.id, emptyDoc());
+        setCanvases(state);
+        saveCanvases(window.localStorage, state);
+        importDoc(state.docs[state.activeId] ?? emptyDoc());
+        showToast(t("canvasDeleted", lang), 2200, "delete");
+      },
+      "delete_forever",
+    );
+  };
+
+  /** 关掉一个标签页：关掉正开着的那个就落到剩下的第一个上 */
+  const closeCanvas = (id: string) => {
+    const closed = canvasClosed(canvases, id, emptyDoc());
+    const state = withDoc(closed, docRef.current);
+    setCanvases(state);
+    saveCanvases(window.localStorage, state);
+    if (state.activeId !== canvases.activeId) importDoc(state.docs[state.activeId] ?? emptyDoc());
+  };
+
+  /**
+   * 新开一个空白画布
+   *
+   * 「工作区」上的「新建画布」：手上这一份留着，旁边多一个空的。
+   */
+  const addCanvas = () => {
+    const fresh = emptyDoc();
+    const state = canvasBlank(canvases, t("canvasUntitled", lang), fresh);
+    setCanvases(state);
+    saveCanvases(window.localStorage, state);
+    importDoc(fresh);
+    showToast(t("canvasAdded", lang), 2000, "add");
+  };
+
 
   /** a screen takes everything on it along, and links into it are dropped */
   const deleteFrame = useCallback(
@@ -3398,31 +3477,6 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     [snapshot],
   );
 
-  /* ---------- 市场组件 ---------- */
-
-  /**
-   * 把一个市场组件收进组件面板（「加入我的组件」真正要做的事）
-   *
-   * 只进面板、不往画布上乱放：作者要的是「这个组件以后我能一直用」，
-   * 想放到屏幕上时从组件面板里拖出来即可（也可以拖拽直接落）。
-   * 与前一份同名时按来源覆盖，不会把作者自己存的组合组件顶掉。
-   */
-  const addMarketPart = useCallback(
-    (part: CustomPart) => {
-      setCustomParts((cur) => {
-        const taken = cur.find(
-          (c) => isJoinedPart(c) && (c.source === part.source || c.name.trim() === part.name.trim()),
-        );
-        return taken ? cur.map((c) => (c.id === taken.id ? { ...part, id: taken.id } : c)) : [...cur, part];
-      });
-      /* 切到组件面板，让它就在眼前 */
-      setLeftTab("parts");
-      setLeftOpen(true);
-      setMarketKey((n) => n + 1);
-    },
-    [],
-  );
-
   /** 从市场面板里把一个组件拖到画布上 */
   const onMyPartPointerDown = useCallback(
     (e: React.PointerEvent, part: CustomPart) => startPartDrag(e, compositeInstance(part, uid)),
@@ -3442,11 +3496,6 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     },
     [lang],
   );
-
-  /** 加入我的组件之后：市场列表的下载量刷新一次 */
-  const onMarketPartAdded = useCallback(() => {
-    setMarketKey((n) => n + 1);
-  }, []);
 
   const duplicateFrame = (id: string) => {
     const f = framesRef.current.find((x) => x.id === id);
@@ -3486,6 +3535,42 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   };
   const duplicateFrameRef = useRef(duplicateFrame);
   duplicateFrameRef.current = duplicateFrame;
+
+  /**
+   * 把一个市场组件收进组件面板（「加入我的组件」真正要做的事）
+   *
+   * 只进面板、不往画布上乱放：想放到屏幕上时从组件面板里拖出来。
+   */
+  const addMarketPart = useCallback(
+    (part: CustomPart) => {
+      setCustomParts((cur) => {
+        const taken = cur.find(
+          (c) => isJoinedPart(c) && (c.source === part.source || c.name.trim() === part.name.trim()),
+        );
+        return taken ? cur.map((c) => (c.id === taken.id ? { ...part, id: taken.id } : c)) : [...cur, part];
+      });
+      /* 切到组件面板，让它就在眼前 */
+      setLeftTab("parts");
+      setLeftOpen(true);
+      setMarketKey((n) => n + 1);
+    },
+    [],
+  );
+
+
+  /** 从组件面板删掉一份自己存的组合组件：先问一句 */
+  const requestRemoveMyPart = useCallback(
+    (part: MyComponent) => {
+      askConfirm(t("myPartDeleteTitle", lang), t("deletePartAsk", lang).replace("{name}", part.name), () => removeMyPart(part));
+    },
+    [lang, removeMyPart],
+  );
+
+  /** 加入我的组件之后：市场列表的下载量刷新一次 */
+  const onMarketPartAdded = useCallback(() => {
+    setMarketKey((n) => n + 1);
+  }, []);
+
 
   /** The screen is re-rendered offscreen at 1:1 with static parts, so the
    *  canvas zoom, selection outlines and in-flight animations never leak into the PNG. */
@@ -3559,13 +3644,35 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   /** Opens the flow diagram: the page reads the same autosaved document, so the
    *  transitions drawn there are the ones on the canvas. */
   const openFlow = () => {
+    /* 跳页之前先落盘：流程图读的是这份存档 */
+    flushDoc();
     markFromEditor();
     window.location.href = `${BASE_PATH}/flow/`;
   };
 
+  /** 打开使用文档：和流程图一样，先落盘（文档里要列出当前这份画布的内容） */
+  const openDocs = () => {
+    flushDoc();
+    markFromEditor();
+    window.location.href = `${BASE_PATH}/docs/`;
+  };
+
+  /**
+   * 把当前画布立刻写进存储
+   *
+   * 自动保存有 300ms 的延迟；"去流程图"这种**跳页**的动作等不了它 ——
+   * 流程图读的就是 `m3e:doc`，没落盘就会看到"画布上还没有页面"。
+   */
+  const flushDoc = useCallback(() => {
+    try {
+      localStorage.setItem(DOC_KEY, JSON.stringify(docRef.current));
+    } catch {}
+  }, []);
+
   /** 打开市场组件页：整页分页浏览全部已公开的组件 */
   const openMarketPage = () => {
     /* 留个记号：市场页的「返回编辑器」据此走历史返回，而不是重新加载编辑器 */
+    flushDoc();
     markFromEditor();
     window.location.href = `${BASE_PATH}/market/`;
   };
@@ -4006,7 +4113,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           tx,
           ty,
           ang: rightward ? 0 : 180,
-          t: action.transition,
+          t: action.transition ?? "none",
         });
         }
       }
@@ -4039,7 +4146,12 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     snapshotFor("link:" + linkId);
     patchLink(linkId, (a) => ({ ...a, transition }));
   };
+  /** 解除一条连线：先问一句（两个屏幕都留着） */
   const removeLink = (linkId: string) => {
+    askConfirm(t("removeLink", lang), t("deleteLinkAsk", lang), () => removeLinkNow(linkId));
+  };
+
+  const removeLinkNow = (linkId: string) => {
     snapshot();
     patchLink(linkId, () => undefined);
     setSelectedLinkId(null);
@@ -4634,6 +4746,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                 // a click on the rail's empty background opens the panel
                 if (!leftOpen && e.target === e.currentTarget) setLeftOpen(true);
               }}
+              className="no-scrollbar"
               style={{
                 width: RAIL_W,
                 flex: "0 0 auto",
@@ -4644,6 +4757,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                 padding: "12px 0",
                 background: p.surfaceContainerLow,
                 cursor: leftOpen ? undefined : "pointer",
+                /* 十个入口在矮屏上放不下：这里自己滚，别把底下的语言/头像挤出可视区 */
+                overflowY: "auto",
               }}
             >
               {!leftOpen && railHover ? (
@@ -4745,7 +4860,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                     myParts={myParts}
                     onCompositePointerDown={onCompositePointerDown}
                     onMyPartPointerDown={onMyPartPointerDown}
-                    onMyPartDelete={removeMyPart}
+                    onMyPartDelete={requestRemoveMyPart}
                     onEditComposite={(part) => setRenameAsk({ id: part.id, name: part.name })}
                     onDeleteComposite={(part) => {
                       setCustomParts((cur) => cur.filter((x) => x.id !== part.id));
@@ -4759,6 +4874,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                     refreshKey={marketKey}
                     onAddPart={addMarketPart}
                     onToast={showToast}
+                    onConfirmDelete={askConfirm}
                     onOpenMarketPage={openMarketPage}
                   />
                 ) : leftTab === "audit" ? (
@@ -4783,15 +4899,18 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   <MotionPanel p={p} theme={theme} onChange={patchTheme} />
                 ) : leftTab === "ai" ? (
                   <AiPanel p={p} settings={aiSettings} onSettings={updateAiSettings} />
-                ) : leftTab === "templates" ? (
-                  <TemplatesPanel
+                ) : leftTab === "workspace" ? (
+                  <WorkspacePanel
                     p={p}
                     theme={theme}
-                    templates={allTemplates(myTemplates)}
-                    onApply={askTemplate}
-                    onDelete={(tpl) => deleteTemplate(tpl)}
-                    onNew={() => setTemplateAsk(doc.title.trim() || t("templateDefaultName", lang))}
-                    onSave={setTemplateSaveAsk}
+                    canvases={canvases}
+                    currentName={doc.title}
+                    onNewCanvas={addCanvas}
+                    onParts={() => setLeftTab("parts")}
+                    onFlow={openFlow}
+                    onSwitch={(id) => switchCanvas(id)}
+                    onRename={() => setCanvasRename(activeCanvas(canvases)?.name ?? "")}
+                    onDelete={() => requestDeleteCanvas()}
                   />
                 ) : (
                   <LayersPanel
@@ -4871,6 +4990,8 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
             flex: 1,
             position: "relative",
             minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
             padding: isMobile ? 6 : 8,
           }}
         >
@@ -5227,6 +5348,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
             onSaveProject={() => saveProject(doc)}
             onOpenProject={() => projectFileRef.current?.click()}
             onFlow={() => openFlow()}
+            onDocs={() => openDocs()}
             onShare={!isMobile ? () => setShareOpen(true) : undefined}
             shareState={draftBusy ? "busy" : draftBefore ? "review" : "idle"}
             onDraftKeep={keepDraft}
@@ -5569,72 +5691,20 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           }}
         />
 
-        {/* 新增模板：给模板起个名字。确认之后当前画布存成这一条，并从空白屏幕重新开始 */}
-        {templateAsk !== null && (
-          <div
-            role="dialog"
-            aria-label={t("templateNewTitle", lang)}
-            style={{ position: "fixed", inset: 0, zIndex: 82, display: "grid", placeItems: "center", background: "rgba(0,0,0,0.38)" }}
-            onPointerDown={(e) => {
-              if (e.target === e.currentTarget) setTemplateAsk(null);
-            }}
-          >
-            <div style={{ width: "min(420px, 92vw)", display: "flex", flexDirection: "column", gap: 12, padding: 18, borderRadius: 28, background: p.surfaceContainerHigh, color: p.onSurface, boxShadow: "0 8px 30px rgba(0,0,0,0.30)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <Icon name="dashboard_customize" size={22} />
-                <span style={{ fontSize: 15, fontWeight: 700 }}>{t("templateNewTitle", lang)}</span>
-              </div>
-              <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant }}>{t("templateNewHint", lang)}</div>
-              <div style={{ border: `1px solid ${p.outline}`, borderRadius: 14, padding: 2 }}>
-                <Field
-                  value={templateAsk}
-                  onChange={setTemplateAsk}
-                  placeholder={t("templateNamePlaceholder", lang)}
-                  p={p}
-                  icon="label"
-                  height={44}
-                />
-              </div>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                <button onClick={() => setTemplateAsk(null)} className="m3-press" style={{ height: 40, padding: "0 18px", borderRadius: 20, border: `1px solid ${p.outline}`, background: "transparent", color: p.primary, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
-                  {t("cancel", lang)}
-                </button>
-                <button
-                  onClick={() => createTemplate(templateAsk)}
-                  className="m3-press"
-                  style={{ height: 40, padding: "0 18px", borderRadius: 20, border: "none", background: p.primary, color: p.onPrimary, fontSize: 14, fontWeight: 600, cursor: "pointer" }}
-                >
-                  {t("templateCreate", lang)}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* 「保存」会盖掉模板里原来的屏幕：先问一句 */}
+        {/* 所有删除共用这一个确认框：谁要删东西就往 confirmAsk 里登记 */}
         <ConfirmDialog
-          open={!!templateSaveAsk}
-          title={t("templateSaveTitle", lang).replace("{name}", templateSaveAsk?.name ?? "")}
-          body={
-            templateSaveAsk?.builtin
-              ? t("templateSaveBuiltinBody", lang).replace("{name}", templateSaveAsk.name)
-              : t("templateSaveBody", lang)
-          }
-          icon="save"
+          open={!!confirmAsk}
+          title={confirmAsk?.title ?? ""}
+          body={confirmAsk?.body ?? ""}
+          icon={confirmAsk?.icon ?? "delete"}
+          danger
           p={p}
-          onCancel={() => setTemplateSaveAsk(null)}
-          onConfirm={() => templateSaveAsk && saveTemplate(templateSaveAsk)}
-        />
-
-        {/* 模板会顶掉现在的设计：先问一句，换了之后仍然可以撤销 */}
-        <ConfirmDialog
-          open={!!templateConfirm}
-          title={t("templateApply", lang)}
-          body={t("templateReplaces", lang).replace("{name}", templateConfirm?.name ?? "")}
-          icon="dashboard_customize"
-          p={p}
-          onCancel={() => setTemplateConfirm(null)}
-          onConfirm={() => templateConfirm && applyTemplate(templateConfirm)}
+          onCancel={() => setConfirmAsk(null)}
+          onConfirm={() => {
+            const run = confirmAsk?.run;
+            setConfirmAsk(null);
+            run?.();
+          }}
         />
 
         {/* renaming a saved composite, and nothing else: the set keeps its parts, its size and its
@@ -5709,6 +5779,17 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           onSetupAi={openAiSettings}
         />
 
+
+        {/* 画布改名：工作区面板上那颗「重命名画布」 */}
+        <PromptDialog
+          p={p}
+          open={canvasRename !== null}
+          title={t("canvasRename", lang)}
+          value={canvasRename ?? ""}
+          placeholder={t("canvasUntitled", lang)}
+          onCancel={() => setCanvasRename(null)}
+          onConfirm={renameCanvas}
+        />
 
         <ConfirmDialog
           open={confirmClear}

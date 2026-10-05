@@ -18,7 +18,7 @@ import {
   layoutOf,
   sizeOf,
 } from "./tokens";
-import { isPlacedItem } from "./project";
+import { readItem } from "./project";
 import type { ComponentTypeCode, MarketComponent, MyComponent } from "./syai";
 
 /** 组件类型编码 ↔ 本地组件面板分类。顺序与后端 MarketComponentTypeEnum 一致。 */
@@ -154,7 +154,7 @@ function readGroups(value: unknown): Group[] {
     if (!Array.isArray(raw.items) || raw.items.length === 0) return;
     if (raw.axis !== "x" && raw.axis !== "y") return;
     if (!Number.isFinite(raw.x) || !Number.isFinite(raw.y)) return;
-    const items = raw.items.filter(isPlacedItem) as PlacedItem[];
+    const items = raw.items.map(readItem).filter((it): it is PlacedItem => !!it) as PlacedItem[];
     if (items.length === 0) return;
     const pos: Record<string, { x: number; y: number }> = {};
     if (isRecord(raw.pos)) {
@@ -226,7 +226,7 @@ export function parseMarketData(data: string | undefined | null): MarketPart | n
 
   /* 新形态是一组组存的（连排组因此还在）；老形态只有一个扁平的 items */
   const groups = readGroups(raw.groups);
-  const items = Array.isArray(raw.items) ? (raw.items.filter(isPlacedItem) as PlacedItem[]) : [];
+  const items = Array.isArray(raw.items) ? (raw.items.map(readItem).filter((it): it is PlacedItem => !!it) as PlacedItem[]) : [];
   if (groups.length === 0 && items.length === 0) return null;
 
   /* 实测宽度表是可选的：它只影响测量部件的宽度，读不出来就当没有 */

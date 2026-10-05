@@ -13,6 +13,7 @@ import {
   prizeLabel,
   CALENDAR_DAYS,
   JOYSTICK_TRAVEL,
+  JOYSTICK_MAX,
   joystickAngle,
   defaultPrizes,
   pickPrize,
@@ -544,7 +545,8 @@ function Tappable({
     const dx = e.clientX - (r.left + r.width / 2);
     const dy = e.clientY - (r.top + r.height / 2);
     const travel = Math.max(1, Math.min(r.width, r.height) * JOYSTICK_TRAVEL);
-    onValue(Math.hypot(dx, dy) < travel * 0.22 ? 0 : clampValue(joystickAngle(dx, dy), maxOf(item)));
+    /* the pad's own turn, not a part maximum: it has no value of its own to be bounded by */
+    onValue(Math.hypot(dx, dy) < travel * 0.22 ? 0 : clampValue(joystickAngle(dx, dy), JOYSTICK_MAX));
   };
   const isPad = item.kind === "joystick";
   const dragPart = (e: React.PointerEvent) => (isPad ? dragPad(e) : dragValue(e));
@@ -623,11 +625,6 @@ function Tappable({
   if (onSlot && item.kind === "toolbar") {
     const n = item.tabs?.length ?? 0;
     for (let i = 0; i < n; i++) slots.push({ key: `tab:${i}`, style: { left: 8 + i * 52, width: 48, top: 8, height: 48, borderRadius: 24 } });
-  }
-  if (onSlot && item.kind === "fabMenu") {
-    /* the pills hug their text on the right; the hit area covers the right part of the row */
-    const n = item.tabs?.length ?? 0;
-    for (let i = 0; i < n; i++) slots.push({ key: `tab:${i}`, style: { right: 0, width: "70%", top: i * 64, height: 56, borderRadius: 28 } });
   }
 
 
@@ -2369,6 +2366,8 @@ export function Preview({
                    whatever its rule said, so "slide up from the bottom" on a dialog did nothing.
                    The dim stays a fade of its own, and no animation means no animation. */
                 const entry = layerEntry(l.t, w, h, frameW, frameH, spring, !!still);
+                // TEMP-DEBUG
+                if (typeof window !== "undefined") (window as unknown as { __entry?: unknown[] }).__entry = [...(((window as unknown as { __entry?: unknown[] }).__entry) ?? []), { t: l.t, level: l.level, w, h, frameW, frameH, initial: entry.initial }];
                 return (
                   <motion.div
                     key={l.frameId}

@@ -7,16 +7,8 @@ import { AiSettings, PROVIDERS, Provider, baseUrlInUse, configOf, providerSpec, 
 import { Icon } from "./M3Node";
 import { inputBox } from "./ui";
 
-/** the message shown for a failed request, mapped from the error codes lib/ai throws */
-export function aiErrorText(e: unknown, lang: ReturnType<typeof useLang>): string {
-  const m = e instanceof Error ? e.message : String(e);
-  if (m === "refusal") return t("aiErrorRefusal", lang);
-  if (m === "json" || m === "empty") return t("aiErrorJson", lang);
-  if (m === "model") return t("aiErrorModel", lang);
-  if (m === "insecure") return t("aiErrorInsecure", lang);
-  if (/failed to fetch|networkerror|load failed/i.test(m)) return t("aiErrorNetwork", lang);
-  return `${t("aiError", lang)}: ${m}`;
-}
+/* 失败时那句话搬到 lib/ai.ts 了（两个面板共用，见 aiErrorText） */
+export { aiErrorText } from "@/lib/ai";
 
 export type AiActionKey = "behavior" | "describe";
 
@@ -207,6 +199,18 @@ export function AiPanel({ p, settings, onSettings }: { p: Palette; settings: AiS
             </Label>
             <Input label={t("aiKey", lang)} value={mine.key} onChange={(key) => onSettings(withConfig(settings, { key }))} placeholder="sk-…" p={p} type="password" />
             <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant, marginTop: 8, padding: "0 4px" }}>{t("aiKeyHint", lang)}</div>
+
+            {/* 推理型模型先把一大段推理写进 reasoning_content，正文要等推理结束才出现；
+                推理把这一次的额度吃光时，正文就是空的。关掉它，正文直接产出。 */}
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, padding: "0 4px", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={mine.noThinking === true}
+                onChange={(e) => onSettings(withConfig(settings, { noThinking: e.target.checked }))}
+              />
+              <span style={{ fontSize: 13, color: p.onSurface }}>{t("aiNoThinking", lang)}</span>
+            </label>
+            <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant, marginTop: 6, padding: "0 4px" }}>{t("aiNoThinkingHint", lang)}</div>
           </div>
         </div>
       </div>

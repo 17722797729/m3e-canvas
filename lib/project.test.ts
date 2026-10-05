@@ -68,7 +68,8 @@ describe("isProject", () => {
   it.each([
     { id: 1 }, { x: NaN }, { x: Infinity }, { x: "0" }, { y: -Infinity }, { y: null },
     { axis: "z" }, { axis: undefined }, { items: [] }, { items: null }, { items: {} }, { items: [null] },
-    { locked: "yes" }, { locked: 1 }, { locked: null },
+    /* `null` 不在这一列：旧构建导出的"没锁"就是它，判非法会把整份文档丢掉 */
+    { locked: "yes" }, { locked: 1 },
   ])("rejects invalid group fields %# %o", (patch) => {
     const value = doc();
     expect(isProject({ ...value, groups: [{ ...value.groups[0], ...patch }] })).toBe(false);
@@ -189,9 +190,14 @@ describe("readProject", () => {
     await expect(readProject(new File([JSON.stringify(value)], "progress.json"))).resolves.toEqual(value);
   });
 
-  it.each([0, 1, 17, 4.5, -8, "8", null])("rejects invalid progress thickness %j", async (trackThickness) => {
+  it.each([0, 1, 17, 4.5, -8, "8", null])("lets an unreadable progress thickness %j go, keeping the part", async (trackThickness) => {
+    /* best effort: the field is dropped rather than the screen — the ring falls back to its own 4dp */
     const value = withItem({ kind: "circularProgress", trackThickness });
-    await expect(readProject(new File([JSON.stringify(value)], "progress.json"))).resolves.toBeNull();
+    const saved = await readProject(new File([JSON.stringify(value)], "progress.json"));
+    expect(saved).not.toBeNull();
+    expect(saved!.groups[0].items).toHaveLength(1);
+    expect(saved!.groups[0].items[0]).not.toHaveProperty("trackThickness");
+    expect(saved!.groups[0].items[0]).toMatchObject({ kind: "circularProgress", label: "Save" });
   });
 
   it("reads a real File as JSON without relying on its name or MIME type", async () => {
@@ -201,15 +207,25 @@ describe("readProject", () => {
 
   it("preserves a legacy file and unknown fields for the editor's migration step", async () => {
     const legacy = { groups: [], frames: [], futureField: { keep: true } };
-    await expect(readProject(new File([JSON.stringify(legacy)], "old.json"))).resolves.toEqual(legacy);
+    const saved = await readProject(new File([JSON.stringify(legacy)], "old.json"));
+    /* a field another build wrote is kept exactly as it was… */
+    expect(saved).toMatchObject({ futureField: { keep: true } });
+    /* …and the fields a document needs are filled in, so every reader downstream has a document */
+    expect(saved).toMatchObject({ groups: [], frames: [], title: "", brief: "", paletteKey: "purple", frame: "phone" });
   });
 
   it.each(["", "{", "null", "[]", '{"groups":[],"frames":{}}'])("returns null for invalid file contents %j", async (text) => {
     await expect(readProject(new File([text], "bad.json"))).resolves.toBeNull();
   });
 
-  it("returns null for valid JSON with an invalid nested item", async () => {
-    await expect(readProject(new File([JSON.stringify(withItem({ kind: "unknown" }))], "bad.json"))).resolves.toBeNull();
+  it("keeps a document whose part nothing can draw, and leaves that part out", async () => {
+    /* the one thing that used to take the whole canvas down was one unreadable part */
+    const value = withItem({ kind: "unknown" });
+    const saved = await readProject(new File([JSON.stringify(value)], "bad.json"));
+    expect(saved).not.toBeNull();
+    expect(saved!.groups).toEqual([]);
+    expect(saved!.title).toBe("Sketch");
+    expect(saved!.frames).toEqual(value.frames);
   });
 
   it("returns null when reading the File fails", async () => {
@@ -304,12 +320,12 @@ describe("the machine a part runs", () => {
 });
 
 describe("readableGroups", () => {
-  it("keeps a readable document exactly as it is", () => {
+  it("keeps a readable document, read one part at a time", () => {
+    /* the reader rebuilds as it reads (every field is made safe on the way in), so a run that needed
+       no correction comes back equal rather than identical */
     const value = doc();
     const out = readableGroups(value.groups);
     expect(out).toEqual(value.groups);
-    expect(out[0]).toBe(value.groups[0]);
-    expect(out[0].items[0]).toBe(value.groups[0].items[0]);
   });
 
   it("leaves out an unknown part and keeps the order of the parts that survive", () => {

@@ -1,5 +1,5 @@
 import { Doc, Item } from "./tokens";
-import { isProject } from "./project";
+import { readDoc } from "./project";
 
 /* A design travels in a link: the document as JSON, deflated and base64url-encoded
  * after `#docz=`, or plain JSON after `#doc=` for tools that cannot compress. The
@@ -72,7 +72,7 @@ export async function readShareHash(hash: string): Promise<Doc | null> {
     }
     if (!json) return null;
     const value: unknown = JSON.parse(json);
-    return isProject(value) ? value : null;
+    return readDoc(value);
   } catch {
     return null;
   }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { isProject } from "@/lib/project";
+import { readDoc as readStoredDoc } from "@/lib/project";
 import { CATEGORIES, DEFAULT_THEME, Doc, Palette, paletteOf } from "@/lib/tokens";
 import { LangContext, isLang, setGlobalLang, t, type Lang } from "@/lib/i18n";
 import { bootSession } from "@/lib/session";
@@ -38,7 +38,8 @@ function initialLanguage(): Lang {
 function readDoc(): Doc | null {
   try {
     const value: unknown = JSON.parse(localStorage.getItem("m3e:doc") ?? "null");
-    return isProject(value) ? value : null;
+    /* 读回来的文档先过归一化：超范围的倒计时收进 120，而不是把整份文档丢掉 */
+    return readStoredDoc(value);
   } catch {
     return null;
   }

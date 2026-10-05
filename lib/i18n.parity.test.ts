@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  COLOR_TOKEN_TEXT, FAB_MENU_TABS, KIND_TEXT, KO, LANGS, NAV_TABS, SEED_TEXT, TEXT_TOKEN_TEXT,
+  COLOR_TOKEN_TEXT, KIND_TEXT, KO, LANGS, NAV_TABS, SEED_TEXT, TEXT_TOKEN_TEXT,
   SWIPE_TEXT, TAB_LABELS, TRANSITION_TEXT, UI, t, type UIKey,
 } from "./i18n";
 import { KIND_ORDER, LANG_FONT, SWIPE_DIRS, TRANSITIONS } from "./tokens";
@@ -69,7 +69,7 @@ describe("UI dictionary parity", () => {
   });
 });
 
-const dictionaries = { KIND_TEXT, SEED_TEXT, TAB_LABELS, FAB_MENU_TABS, NAV_TABS, TRANSITION_TEXT, SWIPE_TEXT };
+const dictionaries = { KIND_TEXT, SEED_TEXT, TAB_LABELS, NAV_TABS, TRANSITION_TEXT, SWIPE_TEXT };
 for (const [name, table] of Object.entries(dictionaries)) {
   describe(`${name} parity`, () => {
     it("covers exactly the offered languages", () => {
@@ -103,10 +103,8 @@ describe("dictionary coverage of editor tokens", () => {
     }
   });
 
-  it("keeps navigation and FAB icons aligned by translation index", () => {
-    for (const table of [NAV_TABS, FAB_MENU_TABS]) {
-      for (const lang of languages) expect(table[lang].map(({ icon }) => icon), lang).toEqual(table.en.map(({ icon }) => icon));
-    }
+  it("keeps navigation icons aligned by translation index", () => {
+    for (const lang of languages) expect(NAV_TABS[lang].map(({ icon }) => icon), lang).toEqual(NAV_TABS.en.map(({ icon }) => icon));
   });
 });
 

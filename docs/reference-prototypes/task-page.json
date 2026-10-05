@@ -1,0 +1,652 @@
+{
+  "title": "参考原型 · 任务页",
+  "brief": "根据一张参考截图重建的任务页布局；视觉全部用本工具的组件与配色。",
+  "paletteKey": "purple",
+  "frame": "phone",
+  "frames": [
+    {
+      "id": "f-test",
+      "name": "测试屏幕",
+      "x": 0,
+      "y": 0,
+      "w": 412,
+      "h": 892
+    }
+  ],
+  "groups": [
+    {
+      "id": "g0",
+      "frameId": "f-test",
+      "x": 0,
+      "y": 0,
+      "axis": "x",
+      "items": [
+        {
+          "id": "appbar",
+          "kind": "topAppBar",
+          "label": "任务",
+          "icon": "arrow_back",
+          "icon2": "more_vert",
+          "variant": "filled",
+          "x": 0,
+          "y": 0,
+          "size": 412
+        }
+      ]
+    },
+    {
+      "id": "g1",
+      "frameId": "f-test",
+      "x": 0,
+      "y": 88,
+      "axis": "x",
+      "items": [
+        {
+          "id": "tabs1",
+          "kind": "tabs",
+          "label": "",
+          "icon": null,
+          "variant": "filled",
+          "x": 0,
+          "y": 0,
+          "size": 412,
+          "selected": 0,
+          "tabs": [
+            {
+              "icon": "",
+              "label": "每日"
+            },
+            {
+              "icon": "",
+              "label": "每周"
+            },
+            {
+              "icon": "",
+              "label": "密约"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "g2",
+      "frameId": "f-test",
+      "x": 24,
+      "y": 152,
+      "axis": "x",
+      "items": [
+        {
+          "id": "tm0",
+          "kind": "text",
+          "label": "完成可得：100/100",
+          "icon": null,
+          "variant": "filled",
+          "x": 0,
+          "y": 0,
+          "size": 15
+        }
+      ]
+    },
+    {
+      "id": "g3",
+      "frameId": "f-test",
+      "x": 16,
+      "y": 186,
+      "axis": "x",
+      "items": [
+        {
+          "id": "track",
+          "kind": "linearProgress",
+          "label": "",
+          "icon": null,
+          "variant": "filled",
+          "x": 0,
+          "y": 0,
+          "size": 380,
+          "value": 60
+        }
+      ]
+    },
+    {
+      "id": "g4",
+      "frameId": "f-test",
+      "x": 40,
+      "y": 206,
+      "axis": "x",
+      "items": [
+        {
+          "id": "tmk0",
+          "kind": "text",
+          "label": "20",
+          "icon": null,
+          "variant": "filled",
+          "x": 0,
+          "y": 0,
+          "size": 12
+        }
+      ]
+    },
+    {
+      "id": "g5",
+      "frameId": "f-test",
+      "x": 118,
+      "y": 206,
+      "axis": "x",
+      "items": [
+        {
+          "id": "tmk1",
+          "kind": "text",
+          "label": "40",
+          "icon": null,
+          "variant": "filled",
+          "x": 0,
+          "y": 0,
+          "size": 12
+        }
+      ]
+    },
+    {
+      "id": "g6",
+      "frameId": "f-test",
+      "x": 196,
+      "y": 206,
+      "axis": "x",
+      "items": [
+        {
+          "id": "tmk2",
+          "kind": "text",
+          "label": "60",
+          "icon": null,
+          "variant": "filled",
+          "x": 0,
+          "y": 0,
+          "size": 12
+        }
+      ]
+    },
+    {
+      "id": "g7",
+      "frameId": "f-test",
+      "x": 274,
+      "y": 206,
+      "axis": "x",
+      "items": [
+        {
+          "id": "tmk3",
+          "kind": "text",
+          "label": "80",
+          "icon": null,
+          "variant": "filled",
+          "x": 0,
+          "y": 0,
+          "size": 12
+        }
+      ]
+    },
+    {
+      "id": "g8",
+      "frameId": "f-test",
+      "x": 352,
+      "y": 206,
+      "axis": "x",
+      "items": [
+        {
+          "id": "tmk4",
+          "kind": "text",
+          "label": "100",
+          "icon": null,
+          "variant": "filled",
+          "x": 0,
+          "y": 0,
+          "size": 12
+        }
+      ]
+    },
+    {
+      "id": "g9",
+      "frameId": "f-test",
+      "x": 16,
+      "y": 266,
+      "axis": "x",
+      "items": [
+        {
+          "id": "row0",
+          "kind": "box",
+          "label": "",
+          "icon": null,
+          "variant": "filled",
+          "x": 0,
+          "y": 0,
+          "size": 380,
+          "size2": 76,
+          "radiusTop": 14,
+          "radiusBottom": 14,
+          "fill": "surfaceContainerHigh",
+          "strokeWidth": 1,
+          "strokeColor": "outlineVariant",
+          "children": [
+            {
+              "id": "t0a",
+              "kind": "text",
+              "label": "消耗100体力",
+              "icon": null,
+              "variant": "filled",
+              "x": 16,
+              "y": 12,
+              "size": 15
+            },
+            {
+              "id": "t0b",
+              "kind": "text",
+              "label": "100/100",
+              "icon": null,
+              "variant": "filled",
+              "x": 296,
+              "y": 12,
+              "size": 15
+            },
+            {
+              "id": "t0c",
+              "kind": "text",
+              "label": "奖励 ★20",
+              "icon": null,
+              "variant": "filled",
+              "x": 16,
+              "y": 44,
+              "size": 14
+            },
+            {
+              "id": "b0d",
+              "kind": "button",
+              "label": "领取",
+              "icon": null,
+              "variant": "filled",
+              "x": 262,
+              "y": 38,
+              "size": 102,
+              "size2": 34
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "g10",
+      "frameId": "f-test",
+      "x": 16,
+      "y": 350,
+      "axis": "x",
+      "items": [
+        {
+          "id": "row1",
+          "kind": "box",
+          "label": "",
+          "icon": null,
+          "variant": "filled",
+          "x": 0,
+          "y": 0,
+          "size": 380,
+          "size2": 76,
+          "radiusTop": 14,
+          "radiusBottom": 14,
+          "fill": "surfaceContainerHigh",
+          "strokeWidth": 1,
+          "strokeColor": "outlineVariant",
+          "children": [
+            {
+              "id": "t1a",
+              "kind": "text",
+              "label": "消耗300体力",
+              "icon": null,
+              "variant": "filled",
+              "x": 16,
+              "y": 12,
+              "size": 15
+            },
+            {
+              "id": "t1b",
+              "kind": "text",
+              "label": "300/300",
+              "icon": null,
+              "variant": "filled",
+              "x": 296,
+              "y": 12,
+              "size": 15
+            },
+            {
+              "id": "t1c",
+              "kind": "text",
+              "label": "奖励 ★20",
+              "icon": null,
+              "variant": "filled",
+              "x": 16,
+              "y": 44,
+              "size": 14
+            },
+            {
+              "id": "b1d",
+              "kind": "button",
+              "label": "领取",
+              "icon": null,
+              "variant": "filled",
+              "x": 262,
+              "y": 38,
+              "size": 102,
+              "size2": 34
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "g11",
+      "frameId": "f-test",
+      "x": 16,
+      "y": 434,
+      "axis": "x",
+      "items": [
+        {
+          "id": "row2",
+          "kind": "box",
+          "label": "",
+          "icon": null,
+          "variant": "filled",
+          "x": 0,
+          "y": 0,
+          "size": 380,
+          "size2": 76,
+          "radiusTop": 14,
+          "radiusBottom": 14,
+          "fill": "surfaceContainerHigh",
+          "strokeWidth": 1,
+          "strokeColor": "outlineVariant",
+          "children": [
+            {
+              "id": "t2a",
+              "kind": "text",
+              "label": "通关芯核狩猎1次",
+              "icon": null,
+              "variant": "filled",
+              "x": 16,
+              "y": 12,
+              "size": 15
+            },
+            {
+              "id": "t2b",
+              "kind": "text",
+              "label": "0/1",
+              "icon": null,
+              "variant": "filled",
+              "x": 296,
+              "y": 12,
+              "size": 15
+            },
+            {
+              "id": "t2c",
+              "kind": "text",
+              "label": "奖励 ★10",
+              "icon": null,
+              "variant": "filled",
+              "x": 16,
+              "y": 44,
+              "size": 14
+            },
+            {
+              "id": "b2d",
+              "kind": "button",
+              "label": "前往",
+              "icon": null,
+              "variant": "outlined",
+              "x": 262,
+              "y": 38,
+              "size": 102,
+              "size2": 34
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "g12",
+      "frameId": "f-test",
+      "x": 16,
+      "y": 518,
+      "axis": "x",
+      "items": [
+        {
+          "id": "row3",
+          "kind": "box",
+          "label": "",
+          "icon": null,
+          "variant": "filled",
+          "x": 0,
+          "y": 0,
+          "size": 380,
+          "size2": 76,
+          "radiusTop": 14,
+          "radiusBottom": 14,
+          "fill": "surfaceContainerHigh",
+          "strokeWidth": 1,
+          "strokeColor": "outlineVariant",
+          "children": [
+            {
+              "id": "t3a",
+              "kind": "text",
+              "label": "挑战深空试炼1次",
+              "icon": null,
+              "variant": "filled",
+              "x": 16,
+              "y": 12,
+              "size": 15
+            },
+            {
+              "id": "t3b",
+              "kind": "text",
+              "label": "0/1",
+              "icon": null,
+              "variant": "filled",
+              "x": 296,
+              "y": 12,
+              "size": 15
+            },
+            {
+              "id": "t3c",
+              "kind": "text",
+              "label": "奖励 ★10",
+              "icon": null,
+              "variant": "filled",
+              "x": 16,
+              "y": 44,
+              "size": 14
+            },
+            {
+              "id": "b3d",
+              "kind": "button",
+              "label": "前往",
+              "icon": null,
+              "variant": "outlined",
+              "x": 262,
+              "y": 38,
+              "size": 102,
+              "size2": 34
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "g13",
+      "frameId": "f-test",
+      "x": 16,
+      "y": 602,
+      "axis": "x",
+      "items": [
+        {
+          "id": "row4",
+          "kind": "box",
+          "label": "",
+          "icon": null,
+          "variant": "filled",
+          "x": 0,
+          "y": 0,
+          "size": 380,
+          "size2": 76,
+          "radiusTop": 14,
+          "radiusBottom": 14,
+          "fill": "surfaceContainerHigh",
+          "strokeWidth": 1,
+          "strokeColor": "outlineVariant",
+          "children": [
+            {
+              "id": "t4a",
+              "kind": "text",
+              "label": "在主界面和他互动1次",
+              "icon": null,
+              "variant": "filled",
+              "x": 16,
+              "y": 12,
+              "size": 15
+            },
+            {
+              "id": "t4b",
+              "kind": "text",
+              "label": "0/1",
+              "icon": null,
+              "variant": "filled",
+              "x": 296,
+              "y": 12,
+              "size": 15
+            },
+            {
+              "id": "t4c",
+              "kind": "text",
+              "label": "奖励 ★10",
+              "icon": null,
+              "variant": "filled",
+              "x": 16,
+              "y": 44,
+              "size": 14
+            },
+            {
+              "id": "b4d",
+              "kind": "button",
+              "label": "前往",
+              "icon": null,
+              "variant": "outlined",
+              "x": 262,
+              "y": 38,
+              "size": 102,
+              "size2": 34
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "g14",
+      "frameId": "f-test",
+      "x": 16,
+      "y": 686,
+      "axis": "x",
+      "items": [
+        {
+          "id": "row5",
+          "kind": "box",
+          "label": "",
+          "icon": null,
+          "variant": "filled",
+          "x": 0,
+          "y": 0,
+          "size": 380,
+          "size2": 76,
+          "radiusTop": 14,
+          "radiusBottom": 14,
+          "fill": "surfaceContainerHigh",
+          "strokeWidth": 1,
+          "strokeColor": "outlineVariant",
+          "children": [
+            {
+              "id": "t5a",
+              "kind": "text",
+              "label": "完成一次超过5分钟的陪伴",
+              "icon": null,
+              "variant": "filled",
+              "x": 16,
+              "y": 12,
+              "size": 15
+            },
+            {
+              "id": "t5b",
+              "kind": "text",
+              "label": "0/1",
+              "icon": null,
+              "variant": "filled",
+              "x": 296,
+              "y": 12,
+              "size": 15
+            },
+            {
+              "id": "t5c",
+              "kind": "text",
+              "label": "奖励 ★10",
+              "icon": null,
+              "variant": "filled",
+              "x": 16,
+              "y": 44,
+              "size": 14
+            },
+            {
+              "id": "b5d",
+              "kind": "button",
+              "label": "一键领取",
+              "icon": null,
+              "variant": "tonal",
+              "x": 262,
+              "y": 38,
+              "size": 102,
+              "size2": 34
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "g15",
+      "frameId": "f-test",
+      "x": 0,
+      "y": 788,
+      "axis": "x",
+      "items": [
+        {
+          "id": "nav1",
+          "kind": "bottomNav",
+          "label": "",
+          "icon": null,
+          "variant": "filled",
+          "x": 0,
+          "y": 0,
+          "size": 412,
+          "selected": 0,
+          "tabs": [
+            {
+              "icon": "assignment",
+              "label": "任务"
+            },
+            {
+              "icon": "favorite",
+              "label": "密约"
+            },
+            {
+              "icon": "check_circle",
+              "label": "签到"
+            },
+            {
+              "icon": "redeem",
+              "label": "补给"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

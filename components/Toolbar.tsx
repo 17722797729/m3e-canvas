@@ -84,6 +84,7 @@ export function Toolbar({
   onSaveProject,
   onOpenProject,
   onFlow,
+  onDocs,
   onShare,
   shareState = "idle",
   onDraftKeep,
@@ -119,6 +120,8 @@ export function Toolbar({
   onOpenProject?: () => void;
   /** opens the flow diagram page, beside the project buttons */
   onFlow?: () => void;
+  /** opens the how-to documentation, next to the flow diagram */
+  onDocs?: () => void;
   /** opens the "ask an AI" dialog from the left end of the zoom row */
   onShare?: () => void;
   /** busy while a model drafts; review while the draft waits to be kept or undone */
@@ -448,10 +451,11 @@ export function Toolbar({
           )}
         </Pill>
 
-        {/* the flow diagram sits right of the upload button, as the screen's own map */}
-        {onFlow && (
+        {/* 流程图与使用文档，就在项目那几个按钮旁边 */}
+        {(onFlow || onDocs) && (
           <Pill p={p}>
-            <IconBtn icon="account_tree" p={p} onClick={onFlow} title={t("viewFlow", lang)} size={40} />
+            {onFlow && <IconBtn icon="account_tree" p={p} onClick={onFlow} title={t("viewFlow", lang)} size={40} />}
+            {onDocs && <IconBtn icon="menu_book" p={p} onClick={onDocs} title={t("docsPanel", lang)} size={40} />}
           </Pill>
         )}
       </div>

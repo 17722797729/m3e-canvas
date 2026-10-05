@@ -41,6 +41,7 @@ export function MarketPanel({
   theme,
   onAddPart,
   onToast,
+  onConfirmDelete,
   onOpenMarketPage,
   refreshKey = 0,
 }: {
@@ -49,6 +50,8 @@ export function MarketPanel({
   /** 把组件摆到当前屏幕上 */
   onAddPart?: (part: CustomPart) => void;
   onToast?: (text: string, ms?: number, icon?: string) => void;
+  /** 删除前先问一句：面板把这件事交给编辑器同一个确认框 */
+  onConfirmDelete?: (title: string, body: string, run: () => void) => void;
   /** 打开独立的市场组件页（分页浏览全部） */
   onOpenMarketPage?: () => void;
   /** 变了就重拉，例如刚上传或刚加入 */
@@ -277,7 +280,9 @@ export function MarketPanel({
                           const part = partOf(component.data, `joined-${component.id}`, component.name, component.id);
                           if (part) onAddPart?.(part);
                         }}
-                        onDelete={() => void removeJoined(component)}
+                        onDelete={() =>
+                          onConfirmDelete?.(t("myPartDeleteTitle", lang), t("deleteJoinedAsk", lang).replace("{name}", component.name), () => void removeJoined(component))
+                        }
                       />
                     ))}
                   </div>
@@ -320,7 +325,9 @@ export function MarketPanel({
                         p={p}
                         component={component}
                         onOpen={() => setOpened(component)}
-                        onDelete={() => void removeUpload(component)}
+                        onDelete={() =>
+                          onConfirmDelete?.(t("myUploadDeleteTitle", lang), t("deleteUploadAsk", lang).replace("{name}", component.name), () => void removeUpload(component))
+                        }
                       />
                     ))}
                   </div>

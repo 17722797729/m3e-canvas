@@ -49,6 +49,10 @@ import {
   slotGrid,
   cellOf,
   isScrollableTabs,
+  /* the corner an asset frame is drawn with */
+  assetPillRadius,
+  /* the two lines a function button says */
+  countdownLine,
 } from "./tokens";
 
 const VARIANT_TEXT: Record<Lang, Record<Variant, string>> = {
@@ -188,6 +192,26 @@ function itemJa(it: Item): string {
       return `${it.icon ?? "空"} アイコンの${v} FAB${it.size && it.size >= 96 ? "（大サイズ）" : it.size && it.size <= 40 ? "（小サイズ）" : ""}`;
     case "extendedFab":
       return `${q(it.label)}${it.icon ? `と ${it.icon} アイコン` : ""}の拡張 FAB（${v}）`;
+    case "itemCell": {
+      /* 一つの格子が言うこと：中のアイコン、数、左上と右上のバッジ、下の名前 */
+      const mark = (on: boolean | undefined, words: string | undefined) => (on ? `「${words?.trim() ?? ""}」` : "なし");
+      return `${q(it.label)}という名前の${v}アイテム（アイコン ${it.icon ?? "なし"}、数量 ${q(it.supporting ?? "")}、左上のバッジ ${mark(it.badge2, it.badge2Text)}、右上のバッジ ${mark(it.badge, it.badgeText)}）`;
+    }
+    case "joystick":
+      /* 四方のキーは無い：円盤そのものが操作部で、中央のつまみを好きな方向へ引く */
+      return `${noun}（丸いプレートの中央のつまみを好きな方向へドラッグ。角度は 0〜360°、四方のキーはありません）`;
+    case "assetPill":
+      /* 資産の額：丸いアイコンと数字が、角を丸めた帯の上に並ぶ */
+      return `${q(it.label)}の${v}資産バー（角の半径 ${assetPillRadius(it)}dp（指定がなければ直角の長方形）。中身は左右中央${it.icon ? `。左に ${it.icon}` : ""}${it.icon2 ? `、右に ${it.icon2}` : ""}${it.icon || it.icon2 ? " のアイコン" : ""}）`;
+    case "fnButton": {
+      /* 名前と、タイマーが入っていればその残り時間: この部品が言う2行をそのまま渡す */
+      const left = countdownLine(it, "ja");
+      const mark = it.badge ? `、右上に${it.badgeText?.trim() ? `${q(it.badgeText)}と書いた` : "点だけの"}バッジ` : "";
+      const form = it.shape === "square" ? "角丸の四角い" : "円形の";
+      /* 1行目（機能名）だけ色を指定できる。指定がなければ今までどおりの色。 */
+      const ink = it.textColor ? `、1行目の文字色は ${it.textColor}` : "";
+      return `${q(it.label)}と書かれた${v}の${form}機能ボタン${it.icon ? `（${it.icon} アイコン）` : ""}${mark}${ink}${left ? `。下に残り時間 ${left}` : "。タイマーなし"}`;
+    }
     case "chip":
       return `${q(it.label)}のチップ${it.checked ? "（選択状態）" : ""}${it.icon && !it.checked ? `（${it.icon} アイコン付き）` : ""}`;
     case "topAppBar":
@@ -255,10 +279,6 @@ function itemJa(it: Item): string {
       return `${it.wavy ? "波形の" : ""}サーキュラープログレス（${it.value === undefined ? "不確定" : `${it.value}%`}${progressThickness(it) !== 4 ? `、トラックの太さ ${progressThickness(it)}dp` : ""}）`;
     case "splitButton":
       return `${q(it.label)}${it.icon ? `（${it.icon} アイコン付き）` : ""}の${v}スプリットボタン（右側にメニューを開く矢印のセグメント）`;
-    case "fabMenu": {
-      const items = (it.tabs ?? []).map((t) => `${q(t.label || "ラベルなし")}(${t.icon || "アイコンなし"})`);
-      return `${v} FAB から開く FAB メニュー（開いた状態で描き、上に ${items.join("、")} の ${items.length} 項目が縦に並ぶ）`;
-    }
     case "toolbar": {
       const icons = (it.tabs ?? []).map((t) => t.icon || "空").join("・");
       return `${it.variant === "filled" ? "ビブラント（primaryContainer）" : "スタンダード"}のフローティングツールバー（${icons} のアイコンボタン）`;
@@ -293,6 +313,23 @@ function itemEn(it: Item): string {
       return `a ${it.size && it.size >= 96 ? "large " : it.size && it.size <= 40 ? "small " : ""}${v} FAB with the ${it.icon ?? "empty"} icon`;
     case "extendedFab":
       return `a ${v} extended FAB ${q(it.label)}${it.icon ? ` with a ${it.icon} icon` : ""}`;
+    case "itemCell": {
+      const mark = (on: boolean | undefined, words: string | undefined) => (on ? `"${words?.trim() ?? ""}"` : "none");
+      return `a ${v} item named ${q(it.label)} (icon ${it.icon ?? "none"}, count ${q(it.supporting ?? "")}, top-left badge ${mark(it.badge2, it.badge2Text)}, top-right badge ${mark(it.badge, it.badgeText)})`;
+    }
+    case "joystick":
+      /* no direction keys: the plate itself is the control, and its knob is dragged from the middle */
+      return `${noun} (a round plate whose centre knob is dragged in any direction; 0–360°, and it has no direction keys)`;
+    case "assetPill":
+      return `an ${v} asset pill reading ${q(it.label)}${it.icon ? ` with the ${it.icon} icon on its left` : ""}${it.icon2 ? ` and the ${it.icon2} icon on its right` : ""} (corner radius ${assetPillRadius(it)}dp, a sharp rectangle unless the author set one; contents centred)`;
+    case "fnButton": {
+      const left = countdownLine(it, "en");
+      const mark = it.badge ? `, with a badge at its top right${it.badgeText?.trim() ? ` reading ${q(it.badgeText)}` : ""}` : "";
+      const form = it.shape === "square" ? "rounded-square" : "circular";
+      /* only the name line takes a colour of its own; unset keeps the ink it has always had */
+      const ink = it.textColor ? `, its name in ${it.textColor}` : "";
+      return `a ${form} ${v} function button labelled ${q(it.label)}${it.icon ? ` with a ${it.icon} icon` : ""}${mark}${ink}${left ? `, counting down ${left} under it` : ", with no countdown"}`;
+    }
     case "chip":
       return `a chip ${q(it.label)}${it.checked ? " (selected)" : ""}${it.icon && !it.checked ? ` with a ${it.icon} icon` : ""}`;
     case "topAppBar":
@@ -358,10 +395,6 @@ function itemEn(it: Item): string {
       return `a ${it.wavy ? "wavy " : ""}circular progress indicator (${it.value === undefined ? "indeterminate" : `${it.value}%`}${progressThickness(it) !== 4 ? `, ${progressThickness(it)}dp track thickness` : ""})`;
     case "splitButton":
       return `a ${v} split button ${q(it.label)}${it.icon ? ` with a ${it.icon} icon` : ""} and a trailing menu segment with a down arrow`;
-    case "fabMenu": {
-      const items = (it.tabs ?? []).map((t) => `${q(t.label || "unlabeled")} (${t.icon || "no icon"})`);
-      return `a FAB menu opening from a ${v} FAB, drawn open with ${items.length} items stacked above it: ${items.join(", ")}`;
-    }
     case "toolbar": {
       const icons = (it.tabs ?? []).map((t) => t.icon || "empty").join(", ");
       return `a ${it.variant === "filled" ? "vibrant (primaryContainer)" : "standard"} floating toolbar with the icon buttons ${icons}`;
@@ -396,6 +429,23 @@ function itemZh(it: Item): string {
       return `${it.icon ?? "空"} 图标的${v} FAB${it.size && it.size >= 96 ? "（大尺寸）" : it.size && it.size <= 40 ? "（小尺寸）" : ""}`;
     case "extendedFab":
       return `${q(it.label)}${it.icon ? `和 ${it.icon} 图标` : ""}的扩展 FAB（${v}）`;
+    case "itemCell": {
+      const mark = (on: boolean | undefined, words: string | undefined) => (on ? `「${words?.trim() ?? ""}」` : "无");
+      return `名为${q(it.label)}的${v}物品格（图标 ${it.icon ?? "无"}，数量 ${q(it.supporting ?? "")}，左上徽标 ${mark(it.badge2, it.badge2Text)}，右上徽标 ${mark(it.badge, it.badgeText)}）`;
+    }
+    case "joystick":
+      /* 没有四个方向键：圆盘本身就是操作区，中间的摇杆往任意方向拖 */
+      return `${noun}（圆形底盘，中间的摇杆可以向任意方向拖动，角度 0-360°，没有四个方向键）`;
+    case "assetPill":
+      return `${q(it.label)}的${v}资产框（圆角半径 ${assetPillRadius(it)}dp，没设置时是直角长方形；内容居中${it.icon ? `，左图标 ${it.icon}` : ""}${it.icon2 ? `，右图标 ${it.icon2}` : ""}）`;
+    case "fnButton": {
+      const left = countdownLine(it, "zh");
+      const mark = it.badge ? `，右上角有一个${it.badgeText?.trim() ? `写着${q(it.badgeText)}的` : ""}徽标` : "";
+      const form = it.shape === "square" ? "方形" : "圆形";
+      /* 只有第一行（功能名）可以单独设颜色，没设就是一直以来的颜色 */
+      const ink = it.textColor ? `，第一行文字色为 ${it.textColor}` : "";
+      return `写着${q(it.label)}的${form}${v}功能按钮${it.icon ? `（带 ${it.icon} 图标）` : ""}${mark}${ink}${left ? `，下面是倒计时 ${left}` : "，没有倒计时"}`;
+    }
     case "chip":
       return `${q(it.label)}标签片${it.checked ? "（选中状态）" : ""}${it.icon && !it.checked ? `（带 ${it.icon} 图标）` : ""}`;
     case "topAppBar":
@@ -461,10 +511,6 @@ function itemZh(it: Item): string {
       return `${it.wavy ? "波浪形" : ""}圆形进度条（${it.value === undefined ? "不确定进度" : `${it.value}%`}${progressThickness(it) !== 4 ? `，轨道粗细 ${progressThickness(it)}dp` : ""}）`;
     case "splitButton":
       return `${q(it.label)}${it.icon ? `（带 ${it.icon} 图标）` : ""}的${v}拆分按钮（右侧为带向下箭头的菜单段）`;
-    case "fabMenu": {
-      const items = (it.tabs ?? []).map((t) => `${q(t.label || "无标签")}(${t.icon || "无图标"})`);
-      return `从${v} FAB 展开的 FAB 菜单（按展开状态绘制，上方纵向排列 ${items.length} 项：${items.join("、")}）`;
-    }
     case "toolbar": {
       const icons = (it.tabs ?? []).map((t) => t.icon || "空").join("、");
       return `${it.variant === "filled" ? "鲜明（primaryContainer）" : "标准"}样式的悬浮工具栏（图标按钮：${icons}）`;
@@ -495,6 +541,23 @@ function itemKo(it: Item): string {
     case "iconButton": return `${it.icon ?? "빈"} 아이콘의 ${v} 아이콘 버튼`;
     case "fab": return `${it.icon ?? "빈"} 아이콘의 ${v} FAB${it.size && it.size >= 96 ? "(대형)" : it.size && it.size <= 40 ? "(소형)" : ""}`;
     case "extendedFab": return `${q(it.label)}${it.icon ? ` 및 ${it.icon} 아이콘` : ""} 확장 FAB(${v})`;
+    case "itemCell": {
+      const mark = (on: boolean | undefined, words: string | undefined) => (on ? `"${words?.trim() ?? ""}"` : "없음");
+      return `${q(it.label)}라는 이름의 ${v} 아이템 칸(아이콘 ${it.icon ?? "없음"}, 수량 ${q(it.supporting ?? "")}, 왼쪽 위 배지 ${mark(it.badge2, it.badge2Text)}, 오른쪽 위 배지 ${mark(it.badge, it.badgeText)})`;
+    }
+    case "joystick":
+      /* 방향키는 없습니다: 원판 자체가 조작부이고 가운데 손잡이를 아무 방향으로나 끕니다 */
+      return `${noun}(둥근 원판이고 가운데 손잡이를 아무 방향으로나 끕니다. 각도 0~360°, 방향키 없음)`;
+    case "assetPill":
+      return `${q(it.label)}을 보여 주는 ${v} 자산 바(모서리 반지름 ${assetPillRadius(it)}dp, 지정하지 않으면 직각 사각형. 내용은 가운데 정렬${it.icon ? `, 왼쪽 ${it.icon}` : ""}${it.icon2 ? `, 오른쪽 ${it.icon2}` : ""})`;
+    case "fnButton": {
+      const left = countdownLine(it, "ko");
+      const mark = it.badge ? `, 오른쪽 위에 ${it.badgeText?.trim() ? `${q(it.badgeText)}라고 쓴 ` : "점 "}배지` : "";
+      const form = it.shape === "square" ? "둥근 사각형" : "원형";
+      /* 첫 줄(기능 이름)만 색을 따로 지정할 수 있습니다. 지정하지 않으면 지금까지의 색입니다. */
+      const ink = it.textColor ? `, 첫 줄 글자색 ${it.textColor}` : "";
+      return `${q(it.label)}라고 쓰인 ${form} ${v} 기능 버튼${it.icon ? `(${it.icon} 아이콘)` : ""}${mark}${ink}${left ? `, 아래에 남은 시간 ${left}` : ", 타이머 없음"}`;
+    }
     case "chip": return `${q(it.label)} 칩${it.checked ? "(선택됨)" : ""}${it.icon && !it.checked ? `(${it.icon} 아이콘 포함)` : ""}`;
     case "topAppBar": return `제목이 ${q(it.label)}인 상단 앱 바${it.icon ? `, 왼쪽 ${it.icon}` : ""}${it.icon2 ? `, 오른쪽 ${it.icon2}` : ""}${it.icon || it.icon2 ? " 아이콘 버튼" : ""}`;
     case "bottomNav": {
@@ -538,10 +601,6 @@ function itemKo(it: Item): string {
     case "progressBar": return `${it.size ?? CONTENT_W}×${sizeOf(it, {}).h}dp 진행 표시줄(${progressValue(it)}%까지 채움${hasText(it.label) ? `, 막대 안에 ${q(it.label)}` : ""})`;
     case "circularProgress": return `${it.wavy ? "물결 모양 " : ""}원형 진행 표시기(${it.value === undefined ? "불확정" : `${it.value}%`}${progressThickness(it) !== 4 ? `, 트랙 두께 ${progressThickness(it)}dp` : ""})`;
     case "splitButton": return `${q(it.label)}${it.icon ? `(${it.icon} 아이콘 포함)` : ""} ${v} 분할 버튼(오른쪽에 아래쪽 화살표가 있는 메뉴 영역)`;
-    case "fabMenu": {
-      const items = (it.tabs ?? []).map((t) => `${q(t.label || "레이블 없음")}(${t.icon || "아이콘 없음"})`);
-      return `${v} FAB에서 열리는 FAB 메뉴(열린 상태로 표시, 위쪽에 ${items.join(", ")} 항목 ${items.length}개를 세로 배치)`;
-    }
     case "toolbar": {
       const icons = (it.tabs ?? []).map((t) => t.icon || "빈 아이콘").join(", ");
       return `${it.variant === "filled" ? "비브런트(primaryContainer)" : "표준"} 플로팅 도구 모음(${icons} 아이콘 버튼)`;
@@ -1198,8 +1257,6 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind, string>>> = {
     circularProgress: "サーキュラープログレス: 指定された太さ（指定がなければ 4dp）で、端を丸くする。波形指定のときは M3 Expressive の wavy スタイルにする。",
     splitButton:
       "スプリットボタン: M3 Expressive の SplitButton。左のセグメントが主アクション、右の矢印セグメントがメニューを開く。2 つのセグメントは 2dp の隙間で並べ、外側の角は完全な丸、隣り合う内側の角は 8dp。メニューを開くと矢印が回転し、セグメントの角が丸くなる。",
-    fabMenu:
-      "FAB メニュー: M3 Expressive の FloatingActionButtonMenu。閉じているときは通常の FAB、タップすると項目が上に向かって順に現れ、FAB のアイコンが close に変わる。各項目は高さ 56dp、角は完全な丸、アイコンとラベル付きで右揃え。",
     toolbar:
       "フローティングツールバー: M3 Expressive の HorizontalFloatingToolbar。高さ 64dp、角は完全な丸、画面下端から 16dp 上に浮かせ、内容の上に重ねる。スタンダードは surfaceContainer、ビブラントは primaryContainer。中のアイコンボタンは 48dp。",
     tabs: "タブ: M3 のプライマリタブ。高さ 48dp、ラベルは titleSmall、選択中のタブは primary の文字とラベル幅の 3dp インジケータ（上の角丸）、下に outlineVariant の区切り線。タブをタップすると内容が切り替わる。",
@@ -1249,8 +1306,6 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind, string>>> = {
     circularProgress: "Circular progress: use the stated track thickness (4dp unless stated) with round caps, and the M3 Expressive wavy style when specified.",
     splitButton:
       "Split button: the M3 Expressive SplitButton. The leading segment is the main action and the trailing arrow segment opens a menu. The two segments sit 2dp apart with fully rounded outer corners and 8dp inner corners; opening the menu rotates the arrow and rounds the segment.",
-    fabMenu:
-      "FAB menu: the M3 Expressive FloatingActionButtonMenu. Closed, it is a normal FAB; tapping it reveals the items upward one after another and the FAB icon becomes close. Each item is 56dp tall, fully rounded, right-aligned with an icon and a label.",
     toolbar:
       "Floating toolbar: the M3 Expressive HorizontalFloatingToolbar. 64dp tall, fully rounded, floating 16dp above the bottom edge over the content. Standard uses surfaceContainer, vibrant uses primaryContainer. The icon buttons inside are 48dp.",
     tabs: "Tabs: M3 primary tabs. 48dp tall, labels in titleSmall; the selected tab has primary text and a 3dp label-width indicator with rounded top corners, with an outlineVariant divider underneath. Tapping a tab switches the content.",
@@ -1298,8 +1353,6 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind, string>>> = {
     circularProgress: "圆形进度条：使用指定的轨道粗细（未指定则为 4dp）和圆形端帽。指定波浪形时使用 M3 Expressive 的 wavy 样式。",
     splitButton:
       "拆分按钮：M3 Expressive 的 SplitButton。左段为主操作，右侧箭头段打开菜单。两段间距 2dp，外侧完全圆角，相邻内侧圆角 8dp。打开菜单时箭头旋转、段变为圆形。",
-    fabMenu:
-      "FAB 菜单：M3 Expressive 的 FloatingActionButtonMenu。关闭时是普通 FAB，点击后各项依次向上展开，FAB 图标变为 close。每项高 56dp，完全圆角，带图标和标签并右对齐。",
     toolbar:
       "悬浮工具栏：M3 Expressive 的 HorizontalFloatingToolbar。高 64dp，完全圆角，悬浮在距屏幕底部 16dp 处并覆盖在内容之上。标准样式用 surfaceContainer，鲜明样式用 primaryContainer。内部图标按钮 48dp。",
     tabs: "标签页：M3 的主标签页。高 48dp，标签用 titleSmall，选中项文字为 primary 并带与标签同宽的 3dp 指示条（上方圆角），下方为 outlineVariant 分割线。点击标签切换内容。",
@@ -1339,7 +1392,6 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind, string>>> = {
     progressBar: "진행 표시줄: 지정한 너비와 높이의 가느다란 막대. 끝은 높이의 절반만큼 둥글게 한다. 트랙은 배경색을 지정하지 않으면 투명하고, 지정한 경우에만 그 색으로 채운다. 채워진 부분은 primary. 텍스트가 있으면 막대 가운데에 놓고 채워진 부분과 빈 부분 모두에서 읽히도록 색을 정한다.",
     circularProgress: "원형 진행 표시기: 지정된 트랙 두께(지정이 없으면 4dp)와 둥근 끝을 사용한다. 지정된 경우 M3 Expressive 물결 스타일을 사용한다.",
     splitButton: "분할 버튼: M3 Expressive SplitButton. 왼쪽은 주 동작, 오른쪽 화살표 영역은 메뉴를 연다. 두 영역 간격 2dp, 바깥 모서리는 완전 둥글게, 안쪽은 8dp로 한다.",
-    fabMenu: "FAB 메뉴: M3 Expressive FloatingActionButtonMenu. 닫혔을 때는 일반 FAB이고 탭하면 항목이 위로 차례로 나타나며 아이콘은 close로 바뀐다. 각 항목은 높이 56dp, 완전 둥근 모서리, 아이콘과 레이블을 포함한다.",
     toolbar: "플로팅 도구 모음: M3 Expressive HorizontalFloatingToolbar. 높이 64dp, 완전 둥근 모서리로 화면 아래쪽에서 16dp 띄운다. 표준은 surfaceContainer, 비브런트는 primaryContainer, 내부 아이콘 버튼은 48dp.",
     tabs: "탭: M3 기본 탭. 높이 48dp, 레이블 titleSmall. 선택 탭은 primary 텍스트와 레이블 너비의 3dp 표시기를 사용하고 아래에 outlineVariant 구분선을 둔다.",
     radio: "라디오 버튼: 20dp 원형. 선택 시 primary 테두리와 가운데 점, 미선택 시 onSurfaceVariant 테두리. 그룹에서 하나만 선택되며 레이블은 오른쪽 bodyLarge.",

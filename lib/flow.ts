@@ -123,6 +123,8 @@ export const FLOW_TEXT: Record<
     tap: string;
     popup: string;
     screen: string;
+    /** 图上有几个节点（自己加的也算） */
+    boxes: string;
     backNote: string;
     untitled: string;
     itemCount: (n: number) => string;
@@ -170,13 +172,14 @@ export const FLOW_TEXT: Record<
     backToEditor: "エディタに戻る",
     exportPng: "PNG を書き出す",
     exportMd: "説明を書き出す",
-    note: "この図はドキュメントから自動生成されます。",
+    note: "この図はドキュメントから作られ、そのあと自由に編集できます。",
     transitions: "遷移",
     noEdges: "画面をつなぐ遷移はまだありません。",
     noRules: "この画面には操作がありません。",
     tap: "タップ",
     popup: "ポップアップ",
     screen: "画面",
+    boxes: "ノード",
     backNote: "前の画面に戻ります",
     untitled: "無題の画面",
     itemCount: (n) => `操作できる部品が ${n} 個`,
@@ -227,13 +230,14 @@ export const FLOW_TEXT: Record<
     backToEditor: "Back to editor",
     exportPng: "Export PNG",
     exportMd: "Export description",
-    note: "This diagram is generated from the document.",
+    note: "This diagram is built from the document, then yours to edit.",
     transitions: "Transitions",
     noEdges: "No transition connects the screens yet.",
     noRules: "This screen has no interactions.",
     tap: "Tap",
     popup: "popup",
     screen: "screen",
+    boxes: "nodes",
     backNote: "a part on it goes back to the previous screen",
     untitled: "Untitled screen",
     itemCount: (n) => `${n} interactive ${n === 1 ? "part" : "parts"}`,
@@ -291,6 +295,7 @@ export const FLOW_TEXT: Record<
     tap: "点击",
     popup: "弹窗",
     screen: "页面",
+    boxes: "个节点",
     backNote: "其中的部件会返回上一个页面",
     untitled: "未命名页面",
     itemCount: (n) => `${n} 个可操作组件`,
@@ -348,6 +353,7 @@ export const FLOW_TEXT: Record<
     tap: "탭",
     popup: "팝업",
     screen: "화면",
+    boxes: "개 노드",
     backNote: "일부 요소가 이전 화면으로 돌아갑니다",
     untitled: "이름 없는 화면",
     itemCount: (n) => `조작할 수 있는 요소 ${n}개`,

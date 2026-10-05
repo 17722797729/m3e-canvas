@@ -144,9 +144,13 @@ describe("shareLink and readShareHash", () => {
     await expect(readShareHash(`#other=1&${hash.slice(1)}&last=2`)).resolves.toEqual(doc());
   });
 
-  it("accepts a legacy document without adding defaults", async () => {
+  it("reads a legacy document, filling in only what a document needs", async () => {
+    /* the reader makes a document of whatever it can: the arrays it was given, and sane values for
+       the fields a document is required to have */
     const legacy = { groups: [], frames: [] };
-    await expect(readShareHash(plainHash(legacy))).resolves.toEqual(legacy);
+    await expect(readShareHash(plainHash(legacy))).resolves.toMatchObject({
+      groups: [], frames: [], title: "", brief: "", paletteKey: "purple", frame: "phone",
+    });
   });
 
   it("prefers a nonempty compressed document to a plain document", async () => {
@@ -166,11 +170,21 @@ describe("shareLink and readShareHash", () => {
     await expect(readShareHash(hash)).resolves.toBeNull();
   });
 
-  it.each([null, [], {}, { groups: [], frames: null }, { ...doc(), platform: "ios" },
-    { ...doc(), groups: [{ ...doc().groups[0], items: [] }] },
-  ].map((value) => [value]))("rejects non-project JSON in either encoding: %# %o", async (value) => {
-    await expect(readShareHash(plainHash(value))).resolves.toBeNull();
-    await expect(readShareHash(packedHash(JSON.stringify(value)))).resolves.toBeNull();
+  it.each([null, [], {}, { groups: [], frames: null }, "a string", 7].map((value) => [value]))(
+    "returns null for JSON that is not a document at all: %# %o",
+    async (value) => {
+      await expect(readShareHash(plainHash(value))).resolves.toBeNull();
+      await expect(readShareHash(packedHash(JSON.stringify(value)))).resolves.toBeNull();
+    },
+  );
+
+  it("reads a document whose bad fields and unreadable parts can be repaired", async () => {
+    /* an unknown platform is let go; a run left with no parts goes with them; the screens stay */
+    const odd = { ...doc(), platform: "ios", groups: [{ ...doc().groups[0], items: [] }] };
+    const read = await readShareHash(plainHash(odd));
+    expect(read).toMatchObject({ title: doc().title, groups: [] });
+    expect(read).not.toHaveProperty("platform");
+    await expect(readShareHash(packedHash(JSON.stringify(odd)))).resolves.toEqual(read);
   });
 
   it("returns null for valid deflate containing invalid JSON", async () => {

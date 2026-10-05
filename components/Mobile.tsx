@@ -2,12 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { motion, useDragControls } from "motion/react";
-import { CONTRASTS, Contrast, FONTS, Item, KIND_SPEC, NavTab, PALETTES, Palette, SHAPES, ShapeScale, Theme, defaultTabsFor, iconSlotsOf, isTabRow, layerOf, setIconSlot } from "@/lib/tokens";
+import { BUTTON_SHAPES, ButtonShape, CONTRASTS, Contrast, FONTS, H, Item, KIND_SPEC, NavTab, PALETTES, Palette, ROUND_SHAPES, SHAPES, ShapeScale, Theme, TIMER_UNITS, TIMER_VALUE_MAX, badge2On, badge2TextOf, badgeOn, badgeTextOf, defaultTabsFor, hasTimer, iconSlotsOf, isTabRow, layerOf, roundByNature, setIconSlot, SHAPED, timerOn, timerUnitOf, timerValueOf, variantsOf, type TimerUnit } from "@/lib/tokens";
 import { ensureFontLoaded } from "@/lib/theme";
-import { KIND_TEXT, LANGS, Lang, t, useLang } from "@/lib/i18n";
+import { KIND_TEXT, LANGS, Lang, UIKey, t, useLang } from "@/lib/i18n";
 import { IconPicker } from "./IconPicker";
 import { Icon } from "./M3Node";
-import { VariantSwatch, variantsOf } from "./Inspector";
+import { FN_UNIT_TEXT, VariantSwatch } from "./Inspector";
 import { Field, IconBtn, ItemColorChips, Segmented, Slider, Toggle } from "./ui";
 
 /** Sheet that slides up from the bottom edge; the canvas above stays usable.
@@ -159,7 +159,7 @@ export function MobileInspector({
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {spec.hasLabel && (
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <Field value={item.label} onChange={(label) => onChange({ label })} placeholder={t("label", lang)} p={p} icon="short_text" height={48} />
+                <Field value={item.label} onChange={(label) => onChange({ label })} placeholder={item.kind === "assetPill" ? t("quantity", lang) : t("label", lang)} p={p} icon="short_text" height={48} />
                 {item.kind === "text" && (
                   <IconBtn icon="format_bold" p={p} size={48} on={!!item.bold} onClick={() => onChange({ bold: !item.bold })} title={t("bold", lang)} />
                 )}
@@ -240,7 +240,7 @@ export function MobileInspector({
       )}
 
       {slots.length > 0 && activeSlot && (
-        <Row icon="emoji_symbols" label={t("icon", lang)} p={p}>
+        <Row icon="emoji_symbols" label={t(item.kind === "assetPill" ? "leftIcon" : "icon", lang)} p={p}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {slots.map((s) => {
               const on = s.key === activeSlot.key && pickerOpen;
@@ -318,6 +318,91 @@ export function MobileInspector({
         </Row>
       )}
 
+      {hasTimer(item) && (
+        <Row icon="timer" label={t("fnTimer", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <Toggle on={timerOn(item)} onChange={(timer) => onChange({ timer })} p={p} icon="timer" label={t("fnTimerOn", lang)} />
+            {timerOn(item) && (
+              <>
+                <Segmented<TimerUnit>
+                  options={TIMER_UNITS.map((u) => ({ key: u, label: t(FN_UNIT_TEXT[u], lang) }))}
+                  value={timerUnitOf(item)}
+                  onChange={(timerUnit) => onChange({ timerUnit })}
+                  p={p}
+                  height={34}
+                />
+                <Slider
+                  icon="hourglass_top"
+                  title={t(FN_UNIT_TEXT[timerUnitOf(item)], lang)}
+                  value={timerValueOf(item)}
+                  min={0}
+                  max={TIMER_VALUE_MAX}
+                  step={1}
+                  onChange={(timerValue) => onChange({ timerValue })}
+                  p={p}
+                />
+              </>
+            )}
+          </div>
+        </Row>
+      )}
+
+      {(item.kind === "fnButton" || item.kind === "itemCell") && (
+        <Row icon="notifications_unread" label={t("fnBadge", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <Toggle on={badgeOn(item)} onChange={(badge) => onChange({ badge: badge || undefined })} p={p} icon="notifications_unread" label={t("fnBadge", lang)} />
+            {badgeOn(item) && (
+              <Field value={badgeTextOf(item)} onChange={(text) => onChange({ badgeText: text || undefined })} placeholder={t("badge", lang)} p={p} icon="label" />
+            )}
+          </div>
+        </Row>
+      )}
+
+      {SHAPED.includes(item.kind) && (
+        <Row icon="category" label={t("buttonShape", lang)} p={p}>
+          {(() => {
+            /* the same switch the inspector shows, and the same shapes: a circle-by-nature part gets
+               the circle and the rounded square, a button its own pill and rectangle */
+            const round = roundByNature(item.kind);
+            const shapes = round ? ROUND_SHAPES : BUTTON_SHAPES;
+            const value: ButtonShape = round ? (item.shape === "square" ? "square" : "round") : item.shape ?? "default";
+            return (
+              <Segmented<ButtonShape>
+                options={shapes.map((sh) => ({ key: sh.key, icon: sh.icon, label: t(`shape_${sh.key}` as UIKey, lang), title: t(`shape_${sh.key}` as UIKey, lang) }))}
+                value={value}
+                /* the inspector's own rule: a round button is drawn at the medium height, so the pill
+                   it was becomes a true circle, and going back restores the width it had */
+                onChange={(shape) =>
+                  onChange(
+                    shape === "round"
+                      ? { shape, ...(round ? undefined : { size: H }) }
+                      : shape === "square"
+                        ? { shape }
+                        : { shape: undefined, ...(round ? undefined : { size: undefined }) },
+                  )
+                }
+                p={p}
+                height={34}
+              />
+            );
+          })()}
+        </Row>
+      )}
+
+      {item.kind === "itemCell" && (
+        <Row icon="sell" label={t("markLeft", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <Toggle on={badge2On(item)} onChange={(badge2) => onChange({ badge2: badge2 || undefined })} p={p} icon="sell" label={t("markLeft", lang)} />
+            {badge2On(item) && (
+              <>
+                <Field value={badge2TextOf(item)} onChange={(text) => onChange({ badge2Text: text || undefined })} placeholder={t("badge", lang)} p={p} icon="label" />
+                <ItemColorChips value={item.badge2Color} onChange={(badge2Color) => onChange({ badge2Color })} p={p} />
+              </>
+            )}
+          </div>
+        </Row>
+      )}
+
       {spec.hasChecked && (
         <Row icon="tune" label={t("state", lang)} p={p}>
           <Toggle
@@ -338,7 +423,7 @@ export function MobileInspector({
       </Row>
 
       <Row icon="bolt" label={t("behavior", lang)} p={p}>
-        <Field value={item.note ?? ""} onChange={(note) => onChange({ note })} placeholder={["button", "fab", "iconButton", "extendedFab"].includes(item.kind) ? t("whenPressed", lang) : t("whatItDoes", lang)} p={p} icon="bolt" height={48} />
+        <Field value={item.note ?? ""} onChange={(note) => onChange({ note })} placeholder={["button", "fab", "iconButton", "extendedFab", "fnButton"].includes(item.kind) ? t("whenPressed", lang) : t("whatItDoes", lang)} p={p} icon="bolt" height={48} />
       </Row>
     </div>
   );

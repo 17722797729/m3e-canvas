@@ -159,7 +159,7 @@ const isRail = (u: Unit) => u.kind === "navRail";
 const isTop = (u: Unit) => u.kind === "topAppBar" || u.kind === "tabs";
 const isBottomBar = (u: Unit) => u.kind === "bottomNav";
 const isFloatingBottom = (u: Unit) => u.kind === "toolbar" || u.kind === "snackbar";
-const isFab = (u: Unit) => u.kind === "fab" || u.kind === "extendedFab" || u.kind === "fabMenu";
+const isFab = (u: Unit) => u.kind === "fab" || u.kind === "extendedFab" || u.kind === "fnButton";
 const isOverlay = (u: Unit) => u.kind === "dialog";
 /** a line of text, and the small controls that pair with one across a row */
 const isLabel = (u: Unit) => u.kind === "text";

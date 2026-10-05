@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { FAB_MENU_TABS, GAME_NAV_TABS, KIND_TEXT,
+import { GAME_NAV_TABS, KIND_TEXT,
   PRIZE_TEXT, REWARD_TEXT, Lang, TAB_LABELS, getLang, t, SELECT_OPTIONS } from "./i18n";
 import { Contrast, isHex, isLightColor, onColorFor, schemeFromSeed } from "./color";
 
@@ -594,6 +594,57 @@ export function variantShadow(v: Variant): string {
   return "none";
 }
 
+/** The shadow a floating button wears so it reads as floating on any surface. Named once so the part
+ *  that draws one (see `shadowOf` and the function button's circle) cannot drift apart. */
+export const FAB_SHADOW = "0 3px 8px rgba(0,0,0,0.18), 0 1px 3px rgba(0,0,0,0.12)";
+
+/**
+ * 样式 set a kind offers in the inspector, with the labels the author sees. It lives here, beside the
+ * variants themselves, because it is data about kinds — and so the sets can be compared in a test.
+ *
+ * 功能按钮 takes the button kind's own set: 作者要求"增加描边和标准，参考按钮组件"，所以它不再用 FAB
+ * 的那一小套（填充/色调），而是按钮的五种。
+ */
+export function variantsOf(kind: Kind): { key: Variant; label: string }[] {
+  const variants = VARIANTS.map((v) => ({ ...v, label: t(v.key) }));
+  switch (kind) {
+    case "card":
+      return [
+        { key: "tonal", label: t("filled") },
+        { key: "elevated", label: t("elevated") },
+        { key: "outlined", label: t("outlined") },
+      ];
+    case "textField":
+    case "select":
+      return [
+        { key: "outlined", label: t("outlined") },
+        { key: "filled", label: t("filled") },
+      ];
+    case "chip":
+      return [
+        { key: "outlined", label: t("outlined") },
+        { key: "tonal", label: t("elevated") },
+      ];
+    case "fab":
+    case "extendedFab":
+      return variants.filter((v) => v.key !== "text" && v.key !== "elevated" && v.key !== "outlined");
+    case "splitButton":
+      return variants.filter((v) => v.key !== "text");
+    case "toolbar":
+      return [
+        { key: "tonal", label: t("standard") },
+        { key: "filled", label: t("vibrant") },
+      ];
+    case "iconButton":
+      return variants.filter((v) => v.key !== "elevated" && v.key !== "text").concat({
+        key: "text",
+        label: t("standard"),
+      });
+    default:
+      return variants;
+  }
+}
+
 /* ---------- component kinds ---------- */
 export type Kind =
   | "box"
@@ -602,6 +653,8 @@ export type Kind =
   | "iconButton"
   | "fab"
   | "extendedFab"
+  | "fnButton"
+  | "itemCell"
   | "chip"
   | "topAppBar"
   | "bottomNav"
@@ -630,7 +683,7 @@ export type Kind =
   | "progressBar"
   | "circularProgress"
   | "splitButton"
-  | "fabMenu"
+  | "assetPill"
   | "toolbar"
   | "tabs"
   | "sideTabs"
@@ -711,7 +764,7 @@ export type KindSpec = {
   hasSupporting: boolean;
   hasIcon: boolean;
   hasChecked?: boolean;
-  /** carries a list of icon + label entries (navigation bar, tabs, FAB menu, toolbar) */
+  /** carries a list of icon + label entries (navigation bar, tabs, toolbar) */
   hasTabs?: boolean;
   /** second dimension (height) for free-form boxes */
   size2?: SizeSpec;
@@ -730,6 +783,9 @@ export type KindSpec = {
   defLabel: string;
   defIcon: string | null;
   defSupporting?: string;
+  /** the words a fresh part's corner marks start with (see `Item.badgeText` / `Item.badge2Text`) */
+  defBadgeText?: string;
+  defBadge2Text?: string;
   defIcon2?: string;
   defSize?: number;
   defVariant?: Variant;
@@ -758,15 +814,157 @@ export const CALENDAR_COLS = 7;
 /** How far the knob of a direction wheel travels from the middle, at the pad's default size. It is
  *  a share of the pad, so a bigger pad has a bigger travel and the pad keeps its look. */
 export const JOYSTICK_TRAVEL = 0.32;
+/** The turn a pad's knob measures, in degrees: a full circle. The pad has no value of its own to set
+ *  (see its spec), so this is the geometry of the stick rather than a range an author fills in. */
+export const JOYSTICK_MAX = 360;
 
 /** The smallest a part may be dragged to. Every part allows it, whatever it is: a prototype often
  *  needs a two-character-wide button or a thumbnail of a screen, and a part smaller than its content
  *  clips the way a real one does — refusing the size would only make the author fight the editor. */
 export const SIZE_MIN = 20;
 
+/* ---------- the function button's countdown ---------- */
+
+/** The line of words under a function button's circle: its name, and the countdown below it while the
+ *  timer is on. Thirteen is a 50dp button's line, which is what makes a fresh one 50×76 — the size the
+ *  floating button with its stack of two lines has always been. */
+/* 一行文字要占多高
+ *
+ * 13 画出来的字只有 12px，作者反馈"有点小"。字要放大，行框就必须跟着长 ——
+ * 否则字会顶到行外去（行的位置是按这个值算的，见 fnButtonHeight）。 */
+export const FN_BUTTON_LINE = 18;
+/** How tall a function button is: its own width as a circle, plus a line for each line it actually
+ *  draws — an empty name and a switched-off timer take no room at all. An author who wants a different
+ *  proportion sets the height outright (`Item.size2`), which is what the inspector's height slider
+ *  writes and which wins over this. */
+export const fnButtonHeight = (size: number, lines: number) => size + FN_BUTTON_LINE * lines;
+
+/** The units a countdown counts in: a day, an hour, a minute, a second. */
+export type TimerUnit = "day" | "hour" | "minute" | "second";
+export const TIMER_UNITS: TimerUnit[] = ["day", "hour", "minute", "second"];
+export const isTimerUnit = (v: unknown): v is TimerUnit => TIMER_UNITS.some((u) => u === v);
+/** how many seconds one unit of a countdown is worth, for the ones written as a clock */
+const TIMER_SECONDS: Record<TimerUnit, number> = { day: 86400, hour: 3600, minute: 60, second: 1 };
+/** What a fresh function button counts down: three minutes, so a dropped one reads 03:00. */
+export const TIMER_DEF_VALUE = 3;
+export const TIMER_DEF_UNIT: TimerUnit = "minute";
+/** The top of a countdown, in whatever unit it counts in: two hours, or two minutes, or a hundred and
+ *  twenty days. A number the author types into the slider, and the ceiling every reader clamps to. */
+export const TIMER_VALUE_MAX = 120;
+
+/* ---------- the item cell ---------- */
+
+/** The line of words under an item cell: the item's own name. Sixteen is a 60dp cell's line, which is
+ *  what makes a fresh one 60×76 — the size the 背包格子 composite has always been. */
+export const ITEM_CELL_LINE = 16;
+/** How tall a cell is: the square itself, plus a line for the name under it when it has one. An empty
+ *  name takes no room at all, and a height the author pinned wins over this (see `sizeOf`). */
+export const itemCellHeight = (size: number, lines: number) => size + ITEM_CELL_LINE * lines;
+/** How many lines of words the cell draws under itself: its name, when it has one. */
+export const itemCellLines = (it: Item) => ((it.label ?? "").trim() ? 1 : 0);
+/** 资产框的图标与金额之间可以留多宽：编辑器的滑杆上限，读回来也按它封顶 */
+export const MARK_GAP_MAX = 24;
+
+/**
+ * 资产框的排版尺寸 —— 内容行有多高、图标多大、留白多宽、字多大。包围盒（sizeOf）和绘制（M3Node）
+ * 都从这里取，所以"盒子大小"和"画出来的样子"不会各说各话。
+ *
+ * 每一项都跟着绘制高度走：比高 28 的时候是 20dp 的圆图标、6dp 的间距、4dp 的左右留白、14dp 的字。
+ * 间距（markGap）是唯一可以由作者改的一项，未设时按高度推算，和以前的样子一致。
+ */
+export const assetPillMetrics = (it: Partial<Item>) => {
+  const h = it.size2 ?? KIND_SPEC.assetPill.h;
+  return {
+    h,
+    chip: Math.max(12, Math.round(h * 0.72)),
+    gap: it.markGap ?? Math.max(4, Math.round(h * 0.22)),
+    inset: Math.max(3, Math.round(h * 0.14)),
+    font: Math.max(9, Math.min(20, Math.round(h * 0.5))),
+  };
+};
+
+/**
+ * 资产框里文字有多宽的**估算** —— 不是测量，而是量不到时的兜底（服务端渲染、静态导出、首帧、测试）。
+ * 一个字宽约一个字号：全角（汉字、假名、谚文）算 1em，大写和数字 0.6〜0.68em，小写 0.52em，空格标点
+ * 更窄。空标签就是 0（不占位置）。
+ *
+ * 真正常用的是浏览器的量：资产框在 MEASURED 里，编辑器会把内容行隐式渲染一遍量出宽度交给 sizeOf
+ * （见 M3Node 的 AssetPillContent 与 Editor 的测量层）。估算只在量不到时顶上——它偏短时也不会把文字
+ * 挤掉：宽度由内容决定时文字不缩不省略（文字只在作者钉了宽度时才让位）。
+ */
+export const assetPillTextWidth = (text: string, font: number): number => {
+  let em = 0;
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (ch === " ") em += 0.28;
+    else if (code >= 0x2e80) em += 1; /* 汉字、假名、谚文、全角符号 */
+    else if (ch >= "0" && ch <= "9") em += 0.6;
+    else if (ch >= "A" && ch <= "Z") em += 0.68;
+    else if (ch >= "a" && ch <= "z") em += 0.52;
+    else em += 0.35; /* 小数点、逗号、币种符号…… */
+  }
+  return Math.round(em * font);
+};
+
+/**
+ * 资产框的自然宽度：留白 + 每个存在的图标 + 文字，加上相邻两块之间的间距（缺的图标既不占图标也不占
+ * 间距，所以删掉一个图标整条就变短）。文字按上面的估算算——这是量不到时的兜底；量得到时 sizeOf 用的
+ * 是浏览器给的数（见 MEASURED）。作者钉了宽度就用作者的数字。
+ */
+export const assetPillWidth = (it: Partial<Item>): number => {
+  const m = assetPillMetrics(it);
+  const text = (it.label ?? "").trim();
+  const pieces = [it.icon ? m.chip : 0, text ? assetPillTextWidth(text, m.font) : 0, it.icon2 ? m.chip : 0].filter((n) => n > 0);
+  const inner = pieces.reduce((sum, n) => sum + n, 0) + Math.max(0, pieces.length - 1) * m.gap;
+  return Math.max(SIZE_MIN, Math.round(m.inset * 2 + inner));
+};
+
+/** 资产框默认是长方形：用户明确要求"默认为长方形，可以设置圆角数值"，所以 radiusTop 未设时圆角为 0
+ *  （名字里的 pill 是历史，不是默认形状）。
+ *
+ *  The corner an asset frame is drawn with: the number the author set, held inside what its height
+ *  allows — past half the height a corner stops meaning anything (the browser distorts the shape).
+ *  Zero, the default, is a sharp rectangle; half the height makes it a capsule. The corner follows the
+ *  drawn height, so a frame the author shortened has its radius held to the new half-height rather
+ *  than losing the shape. */
+export const assetPillRadius = (it: Partial<Item>, height = sizeOf(it as Item, {}).h): number =>
+  Math.min(Math.floor(height / 2), Math.max(0, Math.round(it.radiusTop ?? 0)));
+
+/** The square a cell draws: its own width, or whatever a pinned height leaves once the name has its
+ *  line — the drawing, the corner it is given and the marks on it all measure the cell with this. */
+export const itemCellBox = (it: Item, width = it.size ?? KIND_SPEC.itemCell.defSize ?? KIND_SPEC.itemCell.w): number => {
+  const lines = itemCellLines(it);
+  return Math.max(8, Math.min(width, (it.size2 ?? itemCellHeight(width, lines)) - ITEM_CELL_LINE * lines));
+};
+/** The corner an item cell is rounded by, at the document's own shape scale. */
+export const ITEM_CELL_RADIUS = 10;
+/** The surface a fresh cell sits on, and the green a fresh quality mark is written in — the two the
+ *  背包格子 composite was drawn with. */
+export const ITEM_CELL_FILL: ColorToken = "surfaceContainerHigh";
+export const ITEM_CELL_QUALITY = "#7BAE7A";
+/** The count a value stands for: whole, never negative, never past the ceiling — the one place that
+ *  policy lives, so the slider, the formatter and the document check all agree. */
+const timerCount = (value: number | undefined) =>
+  Math.min(TIMER_VALUE_MAX, Math.max(0, Math.round(Number.isFinite(value) ? (value as number) : 0)));
+
+/** Whether the inspector gives a part a 状态 section: the ones with a state of their own to set —
+ *  checked, a value, waves, a container's grip, a scroll — and a list item's trailing switch. One
+ *  gate, so a kind that stops offering a state (a direction wheel sets no value) loses the row with
+ *  it, and every kind that has one keeps it. */
+export const hasStateRow = (it: Pick<Item, "kind">, spec: KindSpec | undefined = KIND_SPEC[it.kind]) =>
+  !!spec && (!!spec.hasChecked || !!spec.hasValue || !!spec.hasWavy || !!spec.hasContained || !!spec.hasScroll || it.kind === "listItem");
+
 /** Kinds the palette no longer offers but a document may still hold: they stay readable so an older
  *  document opens, and the editor's reader turns them into what the palette offers instead. */
 export const LEGACY_KINDS: Kind[] = ["sliderInput", "moneyTree", "eggSmash"];
+
+/** Kinds this build has dropped altogether — the part is gone, not replaced. A document stored while
+ *  they existed is still a document: the shape check accepts it (see project.ts) and the reader leaves
+ *  those parts out, along with whatever they held, so nothing an author drew throws their canvas away.
+ *  Kept by name rather than by `Kind`, because the union no longer has them. */
+export const REMOVED_KINDS: string[] = ["fabMenu"];
+export const isRemovedKind = (it: { kind?: unknown } | null | undefined): boolean =>
+  !!it && typeof it.kind === "string" && REMOVED_KINDS.includes(it.kind);
 
 /** How tall a fresh track is, and the measurements its own drawing is laid out with: the square tile
  *  a reward sits in, the room between two tiles, the bar itself, and the line of numbers under it. */
@@ -824,6 +1022,64 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     defLabel: "",
     defIcon: null,
     defSize: CONTENT_W,
+  },
+  itemCell: {
+    label: "Item cell",
+    noun: "アイテム",
+    category: "content",
+    paletteIcon: "inventory_2",
+    /* One cell of a board, with the item's picture, its count, its two corner marks and its name
+       below — the 背包格子 composite as a single draggable kind. The width is the cell's; the height
+       follows it (see itemCellHeight) unless the author pins one. */
+    w: 60,
+    h: 60 + ITEM_CELL_LINE,
+    radius: ITEM_CELL_RADIUS,
+    hasVariant: false,
+    hasLabel: true,
+    hasSupporting: true,
+    hasIcon: true,
+    hasFill: true,
+    size: { min: SIZE_MIN, max: 200, step: 2, icon: "open_in_full", presets: [40, 48, 60, 76, 96] },
+    size2: { min: SIZE_MIN, max: 300, step: 2, icon: "height", presets: [60, 60 + ITEM_CELL_LINE, 96] },
+    defLabel: "木の葉",
+    defIcon: "eco",
+    defSupporting: "23",
+    defBadgeText: "新",
+    defBadge2Text: "普通",
+    defSize: 60,
+  },
+  assetPill: {
+    label: "Asset pill",
+    noun: "資産バー",
+    category: "content",
+    paletteIcon: "paid",
+    /* An amount on a bar: the 資産框 composite as a single draggable kind — a round icon and the
+       number beside it, on the surface the composite was drawn on.
+
+       `w` is only a nominal number for anything that wants one (the catalogue, a palette tile): the
+       drawn width is the content's own — 留白 + 图标 + 文字 + 间距，见 assetPillWidth — so removing a
+       mark shortens the bar and widening the mark spacing lengthens it. A fresh one (label "1.6億" and
+       the left mark) measures 70. Nothing pins a width unless the author does (no `defSize`), and the
+       presets below are explicit overrides with the 自动宽度 chip as the way back.
+
+       用户要求：默认为长方形，可以设置圆角数值 —— 所以 radius 是 0（直角），圆角由作者用 radiusTop
+       自己设，画的时候按高度的一半封顶（见 assetPillRadius）。 */
+    w: 70,
+    h: 28,
+    radius: 0,
+    /* 两边的圆图标有样式可选（描边/标准……），用部件自己的 variant 字段：一个选择管两个图标，
+       条本身的底子是 fill，和图标各管各的（见 AssetPillContent 的 mark）。 */
+    hasVariant: true,
+    defVariant: "filled",
+    hasLabel: true,
+    hasSupporting: false,
+    hasIcon: true,
+    hasFill: true,
+    /* 80 是只放一个图标和短数字的紧凑尺寸，100 是默认，160 留给长数字 */
+    size: { min: SIZE_MIN, max: 260, step: 2, icon: "width", presets: [80, 100, 160] },
+    size2: { min: SIZE_MIN, max: 96, step: 2, icon: "height", presets: [24, 28, 36] },
+    defLabel: "1.6億",
+    defIcon: "paid",
   },
   button: {
     label: "Button",
@@ -902,6 +1158,28 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasIcon: true,
     defLabel: "作成",
     defIcon: "rocket_launch",
+    defVariant: "tonal",
+  },
+  fnButton: {
+    label: "Function Button",
+    noun: "機能ボタン",
+    category: "actions",
+    paletteIcon: "timer",
+    /* A floating button and the words under it in one part: the width is the circle's, and the height
+       follows it — the circle plus a line per thing it says (see sizeOf). It is the 悬浮按钮·时间
+       composite as a single draggable kind. */
+    w: 50,
+    h: 50 + FN_BUTTON_LINE * 2,
+    radius: 8,
+    hasVariant: true,
+    hasLabel: true,
+    hasSupporting: false,
+    hasIcon: true,
+    size: { min: SIZE_MIN, max: 128, step: 2, icon: "open_in_full", presets: [40, 50, 56, 96] },
+    size2: { min: SIZE_MIN, max: 320, step: 2, icon: "height", presets: [50 + FN_BUTTON_LINE * 2, 96] },
+    defLabel: "イベント",
+    defIcon: "bolt",
+    defSize: 50,
     defVariant: "tonal",
   },
   chip: {
@@ -1427,25 +1705,6 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     defIcon: "send",
     defVariant: "filled",
   },
-  fabMenu: {
-    label: "FAB Menu",
-    noun: "FAB メニュー",
-    category: "actions",
-    paletteIcon: "add_circle",
-    w: 220,
-    h: 56,
-    radius: 16,
-    hasVariant: true,
-    hasLabel: false,
-    hasSupporting: false,
-    hasIcon: true,
-    hasTabs: true,
-    size: { min: SIZE_MIN, max: CONTENT_W, step: 4, icon: "width", presets: [220, HALF_W, CONTENT_W] },
-    defLabel: "",
-    defIcon: "close",
-    defSize: 220,
-    defVariant: "filled",
-  },
   toolbar: {
 
     size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width" },
@@ -1560,9 +1819,12 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     hasLabel: false,
     hasSupporting: false,
     hasIcon: false,
-    hasValue: true,
-    size: { min: 64, max: 320, step: 4, icon: "width", presets: [96, 132, 180] },
-    size2: { min: 64, max: 320, step: 4, icon: "height", presets: [96, 132, 180] },
+    /* No value and no maximum: a pad is moved with the finger, it is not set to a number. Leaving the
+       flag off is what keeps the inspector's 状态 row, the plan's "adjustable" and a rule's value field
+       away from it — one capability, advertised honestly. */
+    /* One side only: the pad is a circle, so a height of its own could only stretch it out of shape.
+       The size control resizes it round. */
+    size: { min: 64, max: 320, step: 4, icon: "open_in_full", presets: [96, 132, 180] },
     defLabel: "",
     defIcon: null,
     defSize: JOYSTICK_SIZE,
@@ -1732,12 +1994,13 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
 };
 
 export const KIND_ORDER: Kind[] = [
+  /* the function button leads 操作: it is the part an author reaches for first in that category */
+  "fnButton",
   "button",
   "iconButton",
   "fab",
   "extendedFab",
   "splitButton",
-  "fabMenu",
   "chip",
   "joystick",
   "topAppBar",
@@ -1751,6 +2014,8 @@ export const KIND_ORDER: Kind[] = [
   "listItem",
   "box",
   "invGrid",
+  "itemCell",
+  "assetPill",
   "dialog",
   "snackbar",
   "textField",
@@ -1821,14 +2086,18 @@ export type Item = {
   switch?: boolean;
   /** cards: no image area; `src` puts a picture in it */
   noImage?: boolean;
+  /** 资产框：图标和金额之间的间距（dp）。未设时按绘制高度推算（见 assetPillMetrics），
+   *  设了就是作者自己的数：它决定自然宽度，间距拉长整条就跟着变长。 */
+  markGap?: number;
   /** cards: where the image area sits — the top when unset, a full-height side column, or the whole background behind the text */
   imagePos?: CardImagePos;
   /** cards: the image area's size in dp — its height on top, its width at a side; a background image fills the card */
   imageSize?: number;
   /** cards: where the text block sits vertically; unset means the top, or the bottom over a background image */
   contentAlign?: CardAlign;
-  /** cards: a color role for the headline and body instead of the automatic one */
-  textColor?: TextToken;
+  /** The colour of the words, instead of the automatic one: a card's headline and body, and (the name
+   *  line only — the countdown keeps its own ink) a function button's 功能名. A role, or a `#rrggbb`. */
+  textColor?: TextColor;
   /** on/off state for switches, checkboxes and chips */
   checked?: boolean;
   /** the words of a second button, where a part offers two ways to draw (ten at once) */
@@ -1920,6 +2189,25 @@ export type Item = {
    *  part appears: a container when its screen is shown, an overlay when it opens. A part hides, and
    *  takes its children with it; an overlay closes the way a tap outside it does. */
   autoClose?: number;
+  /** A function button only: whether the countdown line under its name is drawn. Off, the line is left
+   *  out rather than drawn empty — the part shows the button and the name, and nothing else. */
+  timer?: boolean;
+  /** How many units that countdown stands at, and which unit it counts in; unset is three minutes. */
+  timerValue?: number;
+  timerUnit?: TimerUnit;
+  /** A function button only: whether it wears a badge on the top-right of its circle. (A navigation
+   *  destination's own `badge` is a different field on a different type: that one is the words, this
+   *  one is the switch.) */
+  badge?: boolean;
+  /** What that badge says. Unset or empty draws the bare dot a "new" mark is, which is why switching
+   *  the badge on does not write any words. */
+  badgeText?: string;
+  /** An item cell only: the second mark it wears, on the top-left of the cell — the quality tag a
+   *  game brands an item with. Its own colour is a palette role or a #rrggbb literal, the same rule
+   *  `Item.color` reads by; unset leaves the mark in the theme's own role. */
+  badge2?: boolean;
+  badge2Text?: string;
+  badge2Color?: string;
   /** the background this part paints, or `transparent` to let what is behind it show */
   fill?: FillToken;
   /** containers: the axes the visitor can move the content along; unset holds still */
@@ -2409,14 +2697,19 @@ export function badgeSurface(it: Item, p: Palette): { background: string; color:
 export const takesText = (it: Item) => it.kind !== "text" && !!KIND_SPEC[it.kind]?.hasLabel;
 
 /** kinds whose outline the shape switch controls */
-export const SHAPED: Kind[] = ["button", "iconButton", "fab", "extendedFab"];
-/** the shapes a kind that is a circle by nature — an icon button, a FAB — can take */
+export const SHAPED: Kind[] = ["button", "iconButton", "fab", "extendedFab", "fnButton"];
+/** the shapes a kind that is a circle by nature — an icon button, a FAB, a function button — can take */
 export const ROUND_SHAPES: { key: ButtonShape; icon: string }[] = [
   { key: "round", icon: "circle" },
   { key: "square", icon: "square" },
 ];
 /** whether a kind wears a circle unless the author asks for a square */
-export const roundByNature = (kind: Kind) => kind === "iconButton" || kind === "fab";
+export const roundByNature = (kind: Kind) => kind === "iconButton" || kind === "fab" || kind === "fnButton";
+/** The corner a circle-by-nature part wears: a true circle unless the author asked for the rounded
+ *  square an icon button takes (`scaleR(8)`, the document's own shape scale). `size` is the circle's
+ *  diameter, which is not always the part's width — a function button makes room for its lines first. */
+export const roundShapeRadius = (shape: ButtonShape | undefined, size: number) =>
+  shape === "square" ? scaleR(8) : Math.round(size / 2);
 export const isButtonShape = (v: unknown): v is ButtonShape => BUTTON_SHAPES.some((x) => x.key === v);
 
 export type PlacedItem = Item & { x: number; y: number };
@@ -2486,10 +2779,33 @@ export const TRANSITIONS: { key: Transition; label: string; icon: string }[] = [
   { key: "none", label: "None", icon: "block" },
 ];
 
+/**
+ * 把整条栏/标签行的入场方式铺到它每个目的地上
+ *
+ * 底栏上写下的动作里带着一个入场方式，可**点下去的其实是某一格**，走的是那一格
+ * 自己的动作 —— 作者在"点击后跳转"里把栏上的入场方式改成"从底层滑入"，
+ * 点那一格却毫无变化，就是这个原因。
+ *
+ * 因此栏上的那条是**模板**：换入场方式时，把每一格跟着改掉。这样作者的所见即所得，
+ * 也不必改数据结构（老文档里每一格都是显式写下的值，继续照用）。
+ */
+export function applySlotTransition(it: Item, transition: Transition): Partial<Item> {
+  const keys = actionSlotsOf(it).map((s) => s.key);
+  if (keys.length === 0) return { action: it.action ? { ...it.action, transition } : undefined };
+  const actions = { ...(it.actions ?? {}) };
+  for (const key of keys) {
+    const a = actions[key];
+    if (a) actions[key] = { ...a, transition };
+  }
+  return {
+    ...(it.action ? { action: { ...it.action, transition } } : {}),
+    ...(Object.keys(actions).length ? { actions } : {}),
+  };
+}
+
 /** slots on a bar that can each carry their own tap action */
 export function actionSlotsOf(it: Item): IconSlot[] {
   if (it.kind === "topAppBar" || it.kind === "bottomNav" || it.kind === "navRail" || it.kind === "toolbar") return iconSlotsOf(it).filter((s) => !!s.value);
-  if (it.kind === "fabMenu") return (it.tabs ?? []).map((t, i) => ({ key: `tab:${i}`, label: t.label || `${i + 1}`, value: t.icon || null }));
   if (isTabRow(it)) return (it.tabs ?? []).map((t, i) => ({ key: `tab:${i}`, label: t.label || `${i + 1}`, value: null }));
   return [];
 }
@@ -2521,7 +2837,7 @@ export function actionsOf(it: Item): { slot: string; action: Action }[] {
 }
 
 /** kinds a user can tap in the preview */
-export const TAPPABLE: Kind[] = ["button", "iconButton", "fab", "extendedFab", "chip", "listItem", "card", "image", "text", "splitButton", "radio", "wheel", "gridWheel", "gacha", "slot", "calendar", "rewardTrack"];
+export const TAPPABLE: Kind[] = ["button", "iconButton", "fab", "extendedFab", "fnButton", "chip", "listItem", "itemCell", "assetPill", "card", "image", "text", "splitButton", "radio", "wheel", "gridWheel", "gacha", "slot", "calendar", "rewardTrack"];
 
 /** Where each day of a check-in calendar sits: seven to a row, the way a month is printed. */
 export function calendarCell(day: number): { row: number; col: number } {
@@ -2775,8 +3091,10 @@ export type ColorToken =
 /** The background that paints nothing: what is behind the part shows through, which is what a
  *  container drawn over a picture, or a button left bare on the page, is for. */
 export const TRANSPARENT = "transparent";
-/** What a background field holds: a palette role, or nothing at all. */
-export type FillToken = ColorToken | typeof TRANSPARENT;
+/** What a background field holds: a palette role, nothing at all, or a `#rrggbb` colour of the
+ *  author's own — the same rule `Item.color` and `Item.strokeColor` are read by, and what the free
+ *  colour disc (see CustomColorDisc) writes. */
+export type FillToken = ColorToken | typeof TRANSPARENT | `#${string}`;
 
 export const COLOR_TOKENS: { key: ColorToken; label: string }[] = [
   { key: "surface", label: "Surface" },
@@ -2791,11 +3109,14 @@ export const COLOR_TOKENS: { key: ColorToken; label: string }[] = [
   { key: "inverseSurface", label: "Inverse surface" },
 ];
 
-/** The colour a background paints: a palette role, or nothing at all. */
-export const fillColor = (t: FillToken | undefined, p: Palette, fallback: ColorToken): string => (t === TRANSPARENT ? "transparent" : p[t ?? fallback]);
+/** The colour a background paints: a palette role, a colour of the author's own, or nothing. */
+export const fillColor = (t: FillToken | undefined, p: Palette, fallback: ColorToken): string =>
+  t === TRANSPARENT ? "transparent" : t !== undefined && isHex(t) ? t : p[(t as ColorToken | undefined) ?? fallback];
 
-/** The ink that reads on it: over no background at all, the page's own text colour. */
-export const fillInk = (t: FillToken | undefined, p: Palette, fallback: ColorToken): string => (t === TRANSPARENT ? p.onSurface : onToken(t ?? fallback, p));
+/** The ink that reads on it: the readable ink of the author's own colour, and over no background at
+ *  all the page's own text colour. */
+export const fillInk = (t: FillToken | undefined, p: Palette, fallback: ColorToken): string =>
+  t === TRANSPARENT ? p.onSurface : t !== undefined && isHex(t) ? onColorFor(t) : onToken((t as ColorToken | undefined) ?? fallback, p);
 
 /** readable foreground for a chosen background token */
 /** the background a card draws when no token is set: it follows the variant */
@@ -2822,6 +3143,8 @@ export const cardContentAlignOf = (it: Item): CardAlign => it.contentAlign ?? (!
 
 /** the color roles a card's text may be set to; "on" roles pair with the containers offered as backgrounds */
 export type TextToken = "primary" | "secondary" | "onSurface" | "onSurfaceVariant" | "onPrimaryContainer" | "onSecondaryContainer" | "onTertiaryContainer" | "inverseOnSurface";
+/** 文字颜色和别的颜色字段一样：给一个角色，或给作者自己的 #rrggbb */
+export type TextColor = TextToken | `#${string}`;
 export const TEXT_TOKENS: { key: TextToken; label: string }[] = [
   { key: "onSurface", label: "On surface" },
   { key: "onSurfaceVariant", label: "On surface variant" },
@@ -2833,12 +3156,20 @@ export const TEXT_TOKENS: { key: TextToken; label: string }[] = [
   { key: "inverseOnSurface", label: "Inverse on surface" },
 ];
 export const isTextToken = (v: unknown): v is TextToken => TEXT_TOKENS.some((t) => t.key === v);
-/** the card's text color: the chosen role, else white over a photo, the container's
+/** a text colour this build can draw: one of the roles, or a literal the author picked */
+export const isTextColor = (v: unknown): v is TextColor => isTextToken(v) || (typeof v === "string" && isHex(v));
+/**
+ * The colour a "role, or a colour of the author's own" field draws with: a `#rrggbb` as it is, a role
+ * from the palette otherwise — the same rule `color`, `fill` and `strokeColor` already follow.
+ */
+export const roleColor = (v: string, p: Palette): string => (isHex(v) ? v : ((p as Record<string, string>)[v] ?? p.onSurface));
+
+/** the card's text color: the chosen role or colour, else white over a photo, the container's
  *  "on" color over a placeholder background or a chosen fill, and onSurface otherwise */
 export function cardTextColorOf(it: Item, p: Palette): string {
   const own = colorOverrideOf(it, p);
   if (own) return own.on;
-  if (it.textColor) return p[it.textColor];
+  if (it.textColor) return roleColor(it.textColor, p);
   if (!it.noImage && cardImagePosOf(it) === "background") return it.src ? "#ffffff" : p.onPrimaryContainer;
   return fillInk(it.fill, p, "surfaceContainerHighest");
 }
@@ -3302,7 +3633,7 @@ export const FULL_WIDTH: Kind[] = ["topAppBar", "bottomNav", "tabs", "sideTabs"]
 
 /** Kinds drawn to the width of what they say until the author gives them one. Their own width has to
  *  beat the measurement the canvas took of them, in `sizeOf` and in the renderer alike. */
-export const AUTHOR_WIDTHS: Kind[] = ["switch", "button", "badge", "chip", "checkbox", "radio", "extendedFab", "splitButton"];
+export const AUTHOR_WIDTHS: Kind[] = ["switch", "button", "badge", "chip", "checkbox", "radio", "extendedFab", "splitButton", "assetPill"];
 
 /** The spec a part draws from. A part whose kind this build does not know — one from a
  *  document another build wrote, or one left in state while this list was being edited —
@@ -3636,8 +3967,6 @@ export function defaultTabsFor(kind: Kind): NavTab[] {
       return TAB_LABELS[getLang()].map((label) => ({ icon: "", label }));
     case "select":
       return SELECT_OPTIONS[getLang()].map((label) => ({ icon: "", label }));
-    case "fabMenu":
-      return FAB_MENU_TABS[getLang()].map((t) => ({ ...t }));
     case "toolbar":
       return TOOLBAR_ICONS.map((icon) => ({ icon, label: "" }));
     case "bottomNav":
@@ -3676,7 +4005,33 @@ export function makeItem(kind: Kind): Item {
     it.value = 20;
     it.unit = false;
   }
-  if (kind === "joystick") it.max = 360;
+  if (kind === "fnButton") {
+    /* A fresh one already shows what makes it this part: the icon in the circle, the name under it and
+       a countdown running, so the two lines can be tried on the spot. */
+    it.timer = true;
+    it.timerValue = TIMER_DEF_VALUE;
+    it.timerUnit = TIMER_DEF_UNIT;
+  }
+  if (kind === "assetPill") {
+    /* A fresh one is the composite: an amount on the surface it was drawn on. Its round icon comes
+       from the spec's default, and its capsule corner from the box (see baseRadii). */
+    it.fill = "surfaceContainerHigh";
+  }
+  if (kind === "itemCell") {
+    /* A fresh cell is a whole piece of loot, the way the composite was: the picture, the count, the
+       quality tag on its top-left, the "new" mark on its top-right and the name under it. Its surface
+       and its hairline are the ones the composite was drawn on. */
+    it.badge2 = true;
+    it.badge2Text = text?.badge2Text ?? s.defBadge2Text ?? "";
+    it.badge2Color = ITEM_CELL_QUALITY;
+    it.badge = true;
+    it.badgeText = text?.badgeText ?? s.defBadgeText ?? "";
+    it.fill = ITEM_CELL_FILL;
+    /* the cell's ring is the cell's own: `strokeWidth`/`strokeColor` are read by its body (see the
+       renderer), not by the plain box around the whole part */
+    it.strokeWidth = 1;
+    it.strokeColor = "secondaryContainer";
+  }
   if (kind === "box") {
     it.size2 = 220;
     it.radiusTop = 28;
@@ -3715,7 +4070,7 @@ export function makeItem(kind: Kind): Item {
     /* the expressive rail, whose header is its own fold button */
     it.railExpanded = false;
   }
-  if (kind === "tabs" || kind === "sideTabs" || kind === "fabMenu" || kind === "select") it.tabs = defaultTabsFor(kind);
+  if (kind === "tabs" || kind === "sideTabs" || kind === "select") it.tabs = defaultTabsFor(kind);
   if (kind === "toolbar") it.tabs = defaultTabsFor(kind).slice(0, 4);
   return it;
 }
@@ -3736,7 +4091,14 @@ export function progressTrack(it: Item, p: Palette): { color: string; ink: strin
 }
 
 /** Content-sized kinds are measured in the DOM; the rest derive from spec + size. */
-export const MEASURED: Kind[] = ["button", "extendedFab", "chip", "switch", "checkbox", "text", "splitButton", "radio", "badge"];
+/**
+ * The kinds whose width the browser decides from their real content. The editor renders a hidden copy of
+ * each in a fixed, invisible layer, measures it, and hands the numbers to `sizeOf` — so a part drawn to
+ * its own words is boxed at exactly the width those words take in the loaded font, not at a guess.
+ *
+ * 资产框 is here for the author's sake: 输入的金额多长，条就多长，不会因为估算偏短而把文字省略掉。
+ */
+export const MEASURED: Kind[] = ["button", "extendedFab", "chip", "switch", "checkbox", "text", "splitButton", "radio", "badge", "assetPill"];
 
 /** Progress track thickness range in dp; Material's standard bar is 4 and its thick bar 8. */
 export const TRACK_MIN = 2;
@@ -3767,8 +4129,6 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
       return { w: it.size ?? widths[it.id] ?? 128, h: it.size2 ?? s.h };
     case "badge":
       return { w: it.size ?? widths[it.id] ?? 16, h: it.size2 ?? (it.label.trim() ? s.h : 6) };
-    case "fabMenu":
-      return { w: n, h: 56 + (it.tabs?.length ?? 0) * (FAB_MENU_ITEM_H + FAB_MENU_GAP) };
     case "toolbar":
       return { w: it.size ?? toolbarWidth(it), h: it.size2 ?? s.h };
     case "tabs":
@@ -3778,6 +4138,8 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
        square wheel is only square by default — the author stretches it into a rectangle whenever the
        cells want to be wider than they are tall. */
     case "joystick":
+      /* a round pad is square: one side for the circle, whatever height a document still carries */
+      return { w: n, h: n };
     case "wheel":
       return { w: n, h: it.size2 ?? n };
     case "gridWheel":
@@ -3793,6 +4155,12 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
     case "circularProgress":
     case "loadingIndicator":
       return { w: n, h: n };
+    case "fnButton":
+      /* the circle its own width gives it, plus a line for each line it draws — the author's height wins */
+      return { w: n, h: it.size2 ?? fnButtonHeight(n, fnButtonLines(it)) };
+    case "itemCell":
+      /* the square its own width gives it, plus the name's line when it has one — the author's height wins */
+      return { w: n, h: it.size2 ?? itemCellHeight(n, itemCellLines(it)) };
     case "image":
       /* square until the author gives it a height, the way a camera preview starts 4:3 */
       return { w: n, h: it.size2 ?? n };
@@ -3819,7 +4187,12 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
     case "select":
     case "linearProgress":
     case "divider":
-      return { w: n, h: it.size2 ?? s.h };
+    /* an amount on a bar: as wide as its own content — 留白 + 图标 + 文字 + 间距，删掉图标就变短 —
+       直到作者钉了一个宽度。宽度优先用浏览器量出来的那个数（见 MEASURED；也可能来自别的绘制路径），
+       还没量到时退回估算（见 assetPillWidth），所以静态导出和首帧也有一个合理的盒子。
+       高是作者的高，圆角跟着盒子走（见 baseRadii）。 */
+    case "assetPill":
+      return { w: it.size ?? widths[it.id] ?? assetPillWidth(it), h: it.size2 ?? s.h };
     case "slider":
       /* a slider that shows its number needs the room above the track to show it in */
       return { w: n, h: it.size2 ?? (it.showValue ? SLIDER_VALUE_H : SLIDER_H) };
@@ -3872,13 +4245,25 @@ export function baseRadii(it: Item): Radii {
       if (it.shape === "round") return uniformRadii(Math.round((it.size ?? 56) / 2));
       if (it.shape === "square") return uniformRadii(scaleR(8));
       return uniformRadii(scaleR(Math.round((it.size ?? 56) * 0.28)));
-    case "fabMenu":
-      return uniformRadii(0);
     case "iconButton":
       /* a square is the author asking for one; otherwise an icon button is a circle, and keeps it
          whatever the document's shape scale says — exactly as a round FAB does */
       if (it.shape === "square") return uniformRadii(scaleR(8));
       return uniformRadii(Math.round((it.size ?? 48) / 2));
+    case "fnButton":
+      /* the same two outlines an icon button wears (see roundShapeRadius); the circle's own diameter
+         is what decides its roundness, so a part that made room for its lines stays a true circle */
+      return uniformRadii(roundShapeRadius(it.shape, fnButtonCircle(it)));
+    case "joystick":
+      /* a movement pad is a circle by nature and keeps it whatever the document's shape scale says —
+         a square-theme document drew a squarish pad. The corner follows the box the pad is drawn in,
+         so a resized pad is still a circle (see sizeOf) */
+      return uniformRadii(Math.round(sizeOf(it, {}).w / 2));
+    case "assetPill":
+      /* an amount on a bar: the corner the author set — a sharp rectangle when they set none, a
+         capsule when they round it to half the height — whatever the shape scale says (see
+         assetPillRadius) */
+      return uniformRadii(assetPillRadius(it));
     case "chip":
     case "splitButton":
     case "radio":
@@ -3914,8 +4299,6 @@ export function baseRadii(it: Item): Radii {
       return uniformRadii(scaleR(s.radius));
   }
 }
-
-export const FAB_MENU_ITEM_H = 56;
 
 /** a tab row fits up to this many fixed tabs; more become M3 scrollable tabs */
 export const FIXED_TABS_MAX = 5;
@@ -4375,6 +4758,9 @@ export function countdownLeft(autoClose: number | undefined, elapsed: number | u
 /** Whether a part a text reads is counting down rather than carrying a number. */
 export const readsTimer = (it: Item | undefined | null) => !!it?.autoClose;
 
+/** two digits, the way a clock writes them: 3 reads as 03 */
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
 /** A count of seconds as a clock: 5 minutes reads as 05:00 and counts down, an hour keeps its hour.
  *  A text bound to a part with a timer shows this, so a screen can say how long the visitor has. */
 export function clockText(totalSeconds: number): string {
@@ -4382,9 +4768,130 @@ export function clockText(totalSeconds: number): string {
   const h = Math.floor(all / 3600);
   const m = Math.floor((all % 3600) / 60);
   const s = all % 60;
-  const two = (n: number) => String(n).padStart(2, "0");
-  return h > 0 ? `${two(h)}:${two(m)}:${two(s)}` : `${two(m)}:${two(s)}`;
+  return h > 0 ? `${pad2(h)}:${pad2(m)}:${pad2(s)}` : `${pad2(m)}:${pad2(s)}`;
 }
+
+/* ---------- the function button's countdown ---------- */
+
+/** The word a count of days ends with, in the author's own language: 6天 in Chinese, 6d in English. */
+const DAY_UNIT: Record<Lang, string> = { ja: "日", en: "d", zh: "天", ko: "일" };
+
+/** Whether the function button draws its second line at all. */
+export const timerOn = (it: Pick<Item, "timer">) => !!it.timer;
+/** How many units the countdown stands at: the author's number, held inside the ceiling so the
+ *  slider that edits it and the line that draws it can never disagree about the top of the range. */
+export const timerValueOf = (it: Pick<Item, "timerValue">) => timerCount(it.timerValue ?? TIMER_DEF_VALUE);
+/** Which unit that count is in. */
+export const timerUnitOf = (it: Pick<Item, "timerUnit">) => (isTimerUnit(it.timerUnit) ? it.timerUnit : TIMER_DEF_UNIT);
+
+/** The kinds whose fill row ends with the free colour disc (see `TokenChips`' `custom`): a part whose
+ *  surface is its whole look can wear a colour of the author's own, and that colour is one chip among
+ *  the roles rather than a control on a line of its own. */
+export const FILL_CUSTOM_KINDS: Kind[] = ["itemCell", "assetPill"];
+
+/** The kinds whose properties hold nothing to do with a clock: no 定时关闭 row is offered for them at
+ *  all. A readout is not a part that puts itself away — but one a stored document already gave a time
+ *  to keeps the row, so that time can still be taken away (see `hidesAutoClose`). */
+export const NO_AUTO_CLOSE_KINDS: Kind[] = ["itemCell", "assetPill"];
+/** Whether this part hides the 定时关闭 row the inspector gives every other kind. */
+export const hidesAutoClose = (it: Pick<Item, "kind" | "autoClose">) =>
+  NO_AUTO_CLOSE_KINDS.includes(it.kind) && it.autoClose === undefined;
+
+/** The kinds whose countdown the inspector and the phone sheet edit: the function button, and nothing
+ *  else. One list, because a part that has no countdown must not be offered one — an item cell's
+ *  properties are its picture, its count, its marks and its name. */
+export const TIMED_KINDS: Kind[] = ["fnButton"];
+export const hasTimer = (it: Pick<Item, "kind">) => TIMED_KINDS.includes(it.kind);
+
+/** Whether a count in this unit is drawn to the second. Minutes and seconds are; days and hours are
+ *  not, because a part flickering through the seconds of six days reads as a clock rather than as the
+ *  count the author set — and a line without seconds has nothing to tick. */
+export const timerTicks = (unit: TimerUnit) => unit === "minute" || unit === "second";
+
+/** How many count units a value stands for, in seconds: what the ticking units run down from. */
+export const timerSeconds = (value: number | undefined, unit: TimerUnit): number => timerCount(value) * TIMER_SECONDS[unit];
+
+/**
+ * What is left of a countdown after `elapsed` seconds have run, in seconds — or `null` for the units
+ * that do not tick. It is pure: the caller hands the time in, which is what keeps the ticking out of
+ * the document and lets one second hand drive every part on the screen.
+ */
+export function timerLeft(value: number | undefined, unit: TimerUnit, elapsed: number): number | null {
+  if (!timerTicks(unit)) return null;
+  /* a broken elapsed time counts as none: one bad frame must not blank a line the author set */
+  const run = Number.isFinite(elapsed) ? Math.max(0, Math.floor(elapsed)) : 0;
+  return Math.max(0, timerSeconds(value, unit) - run);
+}
+
+/** a count of seconds as mm:ss: minutes run on past the hour rather than growing an hours field,
+ *  because this line counts down and is not the time of day. */
+const msText = (totalSeconds: number) => {
+  const all = Math.max(0, Math.round(totalSeconds));
+  return `${pad2(Math.floor(all / 60))}:${pad2(all % 60)}`;
+};
+
+/** a count of seconds as hh:mm: an hour's line leaves the seconds out, and the hours run on past a
+ *  day rather than wrapping, so the number always says what the author set. */
+const hmText = (totalSeconds: number) => {
+  const all = Math.max(0, Math.round(totalSeconds));
+  return `${pad2(Math.floor(all / 3600))}:${pad2(Math.floor((all % 3600) / 60))}`;
+};
+
+/**
+ * A countdown as the one line under the function name. Days keep the day they are counted in — 6天 —
+ * because "06:00:00" for six days reads as a time of day; an hour is hh:mm, and minutes and seconds are
+ * mm:ss and run down as the visitor watches (`elapsed` is how long the part has been on screen).
+ *
+ * It is a pure formatter: the elapsed time is handed in, so the canvas, the export and the preview all
+ * draw the same line from the same document, and nothing here reads a clock or writes one back.
+ */
+export function timerText(value: number | undefined, unit: TimerUnit, lang: Lang = getLang(), elapsed = 0): string {
+  const n = timerCount(value);
+  if (unit === "day") return `${n}${DAY_UNIT[lang] ?? DAY_UNIT.en}`;
+  if (unit === "hour") return hmText(n * TIMER_SECONDS.hour);
+  return msText(timerLeft(n, unit, elapsed) ?? 0);
+}
+
+/** The second line of a function button, or `null` while its timer is off: the line is left out rather
+ *  than drawn empty, which is what the renderer and the height both read. */
+export const countdownLine = (it: Item, lang: Lang = getLang(), elapsed = 0): string | null =>
+  timerOn(it) ? timerText(timerValueOf(it), timerUnitOf(it), lang, elapsed) : null;
+
+/** How many lines of words the part actually draws: its name when it has one, and its countdown while
+ *  the timer is on. An empty line is not drawn and takes no room, so the part is exactly as tall as
+ *  what it says — the geometry (`sizeOf`) and the drawing both come through here. */
+export const fnButtonLines = (it: Item): number => ((it.label ?? "").trim() ? 1 : 0) + (timerOn(it) ? 1 : 0);
+
+/**
+ * The ink a function button's own name is drawn with: the colour the author chose (a role or a colour
+ * of their own), or the `onSurface` every line of the part has always used. This is **the first line
+ * only** — the countdown under it keeps `onSurface`, so a colour on the name cannot bleed into the
+ * time (see FnButtonContent).
+ */
+export const fnButtonNameInk = (it: Item, p: Palette): string => (it.textColor ? roleColor(it.textColor, p) : p.onSurface);
+
+/** The circle a function button draws: its own width, or whatever a pinned height leaves once the
+ *  lines have taken their room. The drawing, the corner it is given and the badge that sits on it all
+ *  measure the button with this one function, so none of them can drift from the others. */
+export const fnButtonCircle = (it: Item, width = it.size ?? KIND_SPEC.fnButton.defSize ?? KIND_SPEC.fnButton.w): number => {
+  const lines = fnButtonLines(it);
+  return Math.max(8, Math.min(width, (it.size2 ?? fnButtonHeight(width, lines)) - FN_BUTTON_LINE * lines));
+};
+
+/* ---------- the badge on a function button's corner ---------- */
+
+/** Whether a part wears the corner mark it can be given: a function button's badge, an item cell's
+ *  top-right one. (A navigation destination's own `badge` is a different thing — that one is the
+ *  words, this one is the switch.) */
+export const badgeOn = (it: Pick<Item, "badge">) => !!it.badge;
+/** What that badge says. Empty is a state of its own: the bare dot a "new" mark is. */
+export const badgeTextOf = (it: Pick<Item, "badgeText">) => (it.badgeText ?? "").trim();
+/** The item cell's other corner mark, on the top-left: whether it is drawn, what it says and the
+ *  colour of the pill — a palette role, a #rrggbb literal, or unset for the theme's own role. */
+export const badge2On = (it: Pick<Item, "badge2">) => !!it.badge2;
+export const badge2TextOf = (it: Pick<Item, "badge2Text">) => (it.badge2Text ?? "").trim();
+export const badge2ColorOf = (it: Pick<Item, "badge2Color">) => (isCustomColor(it.badge2Color) ? it.badge2Color : undefined);
+
 
 /** Whether a part's own number carries its percent sign: unset is yes, `false` is the author saying
  *  the number stands on its own. */
@@ -4880,7 +5387,6 @@ export function tabScrollOffset(it: Item, width: number): number {
   const max = Math.max(0, n * SCROLL_TAB_W - width);
   return Math.max(0, Math.min(max, (sel + 1.5) * SCROLL_TAB_W - width));
 }
-export const FAB_MENU_GAP = 8;
 /** a toolbar hugs its icon buttons: 48dp each with 4dp between, 8dp at the ends */
 export const toolbarWidth = (it: Item) => {
   const n = Math.max(1, it.tabs?.length ?? 0);
@@ -4904,6 +5410,13 @@ export type IconSlot = { key: string; label: string; value: string | null };
 
 export function iconSlotsOf(it: Item): IconSlot[] {
   switch (it.kind) {
+    case "assetPill":
+      /* an amount on a capsule: the mark it was drawn with on the left, and one the author may add on
+         the right (unset is no right-hand mark at all) */
+      return [
+        { key: "icon", label: t("leftIcon"), value: it.icon },
+        { key: "icon2", label: t("rightIcon"), value: it.icon2 ?? null },
+      ];
     case "listItem":
     case "topAppBar":
     case "searchBar":
@@ -4922,11 +5435,6 @@ export function iconSlotsOf(it: Item): IconSlot[] {
         label: `${i + 1}`,
         value: t.icon || null,
       }));
-    case "fabMenu":
-      return [
-        { key: "icon", label: t("icon"), value: it.icon },
-        ...(it.tabs ?? []).map((t, i) => ({ key: `tab:${i}`, label: `${i + 1}`, value: t.icon || null })),
-      ];
     default:
       return specOf(it).hasIcon
         ? [{ key: "icon", label: t("icon"), value: it.icon }]

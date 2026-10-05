@@ -10,7 +10,10 @@ vi.mock("@/lib/color", () => import("../lib/color"));
 vi.mock("motion/react", () => ({ AnimatePresence: "presence", motion: { div: "div", button: "button" } }));
 vi.mock("./M3Node", () => ({ Icon: "icon" }));
 
-import { FOLD_SLOP, FoldButton } from "./ui";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import { FOLD_SLOP, FoldButton, TokenChips } from "./ui";
+import { FILL_CUSTOM_KINDS, PALETTES } from "../lib/tokens";
 
 /* The fold button sits on top of a navigation part on the canvas. A press on it must not start
  * moving the part — a click on a rail's chevron used to leave the rail being dragged — while a
@@ -83,5 +86,30 @@ describe("the fold button of a navigation part", () => {
     props.onPointerCancel({ currentTarget: el });
     props.onPointerUp({ currentTarget: el });
     expect(onFold).not.toHaveBeenCalled();
+  });
+});
+
+/* A fill row is one run of colour chips. The free colour disc belongs at the end of that run — on the
+ * same line as the roles — rather than on a block of its own that starts a second line. */
+describe("the fill row's free colour disc", () => {
+  const row = (custom?: (c: string) => void) =>
+    renderToStaticMarkup(<TokenChips value="surfaceContainerLow" onChange={() => {}} p={PALETTES[0]} custom={custom} />);
+
+  it("ends the run of chips when it is offered", () => {
+    const out = row(() => {});
+    /* one row, and the disc is the last thing inside it: nothing is left to start another line */
+    expect(out.startsWith('<div style="display:flex;flex-wrap:wrap;gap:8px">')).toBe(true);
+    expect(out.endsWith("</label></div>")).toBe(true);
+    expect(out.match(/type="color"/g)?.length).toBe(1);
+  });
+
+  it("is not there at all for a row that does not offer it", () => {
+    const out = row();
+    expect(out).not.toContain('type="color"');
+    expect(out).not.toContain("<label");
+  });
+
+  it("is offered by the kinds whose surface is the part's whole look", () => {
+    expect(FILL_CUSTOM_KINDS).toEqual(["itemCell", "assetPill"]);
   });
 });

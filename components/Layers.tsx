@@ -4,6 +4,7 @@ import { ReactNode, createContext, useContext, useEffect, useMemo, useRef, useSt
 import { Frame, Group, Item, KIND_SPEC, Palette, byLayer, explodeGroup, findItemIn, isOverlayFrame, isPhoneFrame, isTabRow, layerOf, overlayLevelOfFrame, pageTintOf, parentOf, subtreeOf, tabIndexOf, takesText } from "@/lib/tokens";
 import { contrastRatio } from "@/lib/color";
 import { splitByPage } from "@/lib/pages";
+import { renamedTo } from "@/lib/rename";
 import { Icon } from "./M3Node";
 import { inputBox } from "./ui";
 import { Lang, KIND_TEXT, overlayLevelText, t, useLang } from "@/lib/i18n";
@@ -129,6 +130,51 @@ function Row({
   const lang0 = useLang();
   /* the name being typed over this row's own, when the author double-clicked it */
   const [typing, setTyping] = useState<string | null>(null);
+  /** the box itself, so a press somewhere else can hand it the blur that commits the name */
+  const box = useRef<HTMLInputElement | null>(null);
+  /** this edit is over — committed or thrown away — so a blur that arrives afterwards does nothing */
+  const done = useRef(false);
+  const editing = typing !== null;
+
+  /**
+   * The one way a rename is stored: Enter, the box losing focus, and a press anywhere else all land
+   * here, and the rule of what to store lives in `renamedTo` (nothing when the box is empty, so a
+   * cleared box keeps the name the row had).
+   */
+  const commit = (typed: string) => {
+    if (done.current) return;
+    done.current = true;
+    setTyping(null);
+    const name = renamedTo(typed, label);
+    if (name !== null) onRename?.(name);
+  };
+  /** the box thrown away: Escape reverts, and the blur that follows must not store the discarded text */
+  const cancel = () => {
+    done.current = true;
+    setTyping(null);
+  };
+  const startEdit = () => {
+    done.current = false;
+    setTyping(label);
+  };
+
+  /**
+   * A press anywhere else commits the box before that press is handled. It has to be a window listener
+   * in the capture phase: a row's own pointerdown calls preventDefault (it is picking a drag up), and so
+   * does the canvas, which would otherwise leave the box focused with the name uncommitted — 点了旁边
+   * 的东西就再也不提交的那个 bug. The press itself is not swallowed, so whatever was clicked still
+   * does its own job on the same click.
+   */
+  useEffect(() => {
+    if (!editing) return;
+    const away = (e: PointerEvent) => {
+      const el = box.current;
+      if (!el || e.target === el || (e.target instanceof Node && el.contains(e.target))) return;
+      el.blur();
+    };
+    window.addEventListener("pointerdown", away, true);
+    return () => window.removeEventListener("pointerdown", away, true);
+  }, [editing]);
   /* A row can take a part two ways: as a container takes anything, or — only while a text is being
      dragged — as a part that writes text, which takes the text into itself. */
   const canTake = holds || (dnd.carrying === "text" && !!takesText);
@@ -174,17 +220,22 @@ function Row({
       )}
       {typing !== null ? (
         <input
+          ref={box}
           autoFocus
+          /* a stable hook for the browser to find the box by (and for the listener above) */
+          data-rename="1"
           value={typing}
           onChange={(e) => setTyping(e.target.value)}
           onPointerDown={(e) => e.stopPropagation()}
-          onBlur={() => {
-            onRename?.(typing.trim());
-            setTyping(null);
-          }}
+          onBlur={() => commit(typing)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            else if (e.key === "Escape") setTyping(null);
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit(typing);
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              cancel();
+            }
           }}
           aria-label={t("rename", lang0)}
           style={{ flex: 1, minWidth: 0, height: 26, marginLeft: -4, padding: "0 6px", borderRadius: 8, border: `1px solid ${p.primary}`, background: p.surface, color: p.onSurface, fontSize: 12, fontWeight: 500, outline: "none" }}
@@ -193,7 +244,7 @@ function Row({
       <button
         onPointerDown={draggable ? (e) => dnd.begin(e, id, id, !!holds) : undefined}
         onClick={(e) => onSelect(e.shiftKey)}
-        onDoubleClick={onRename ? () => setTyping(label) : undefined}
+        onDoubleClick={onRename ? startEdit : undefined}
         title={onRename ? t("renameHint", lang0) : undefined}
         style={{
           flex: 1,

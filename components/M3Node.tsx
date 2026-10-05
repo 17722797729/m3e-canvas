@@ -1,13 +1,30 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import {
+  badge2ColorOf,
+  badge2On,
+  badge2TextOf,
+  badgeOn,
   badgeSurface,
+  badgeTextOf,
   buttonScale,
-  FAB_MENU_GAP,
+  countdownLine,
+  fnButtonCircle,
+  fnButtonLines,
+  FAB_SHADOW,
+  FN_BUTTON_LINE,
+  fnButtonNameInk,
+  ITEM_CELL_FILL,
+  ITEM_CELL_RADIUS,
+  itemCellBox,
+  roundShapeRadius,
+  timerOn,
+  timerTicks,
+  timerUnitOf,
+  timerValueOf,
   R_INNER,
-  FAB_MENU_ITEM_H,
   H,
   Item,
   Kind,
@@ -16,6 +33,7 @@ import {
   Palette,
   Radii,
   STATUS_BAR_H,
+  assetPillMetrics,
   baseRadii,
   CARD_MEDIA_GAP,
   CARD_PADDING,
@@ -75,8 +93,7 @@ import {
   defaultPrizes,
   prizeLabel,
   joystickKnob,
-  joystickTravel,
-  JOYSTICK_SIZE,
+  JOYSTICK_MAX,
   tabScrollOffset,
   SCROLL_TAB_W,
   fillColor,
@@ -159,9 +176,12 @@ const NO_BOX: Kind[] = [
   "text",
   "divider",
   "splitButton",
-  "fabMenu",
   "badge",
   "rewardTrack",
+  /* the function button paints its own circle and its words, and an item cell its own square and the
+     name under it, so the box around them stays plain */
+  "fnButton",
+  "itemCell",
 ];
 
 /** Padding follows M3: icon+label is tighter than label alone. */
@@ -218,6 +238,145 @@ function ExtendedFabContent({ item }: { item: Item }) {
       {hasIcon && <Icon name={item.icon!} size={24} />}
       {hasLabel && <span>{item.label}</span>}
     </span>
+  );
+}
+
+/* ---------- the second hand a function button counts on ---------- */
+
+/**
+ * One clock for the whole editor: every part that counts by the second subscribes here, so a screen
+ * full of countdowns still runs a single interval, and the last part to leave stops it. The interval
+ * is only ever started from an effect (see useSecondHand), so the first paint — the server's and the
+ * client's first render alike — shows the count the author set and hydration cannot mismatch.
+ */
+const tickListeners = new Set<() => void>();
+let tickTimer: ReturnType<typeof setInterval> | null = null;
+function subscribeTick(fn: () => void): () => void {
+  tickListeners.add(fn);
+  if (tickTimer === null) tickTimer = setInterval(() => { for (const l of [...tickListeners]) l(); }, 1000);
+  return () => {
+    tickListeners.delete(fn);
+    if (tickListeners.size === 0 && tickTimer !== null) {
+      clearInterval(tickTimer);
+      tickTimer = null;
+    }
+  };
+}
+
+/**
+ * How many seconds this part has been on screen. Nothing here writes to the item: the tick is drawn,
+ * never saved. The author's own number is where the countdown starts, so changing the count or the
+ * unit (or reusing the component for another part) puts the hand back to zero.
+ */
+function useSecondHand(on: boolean, restart: string): number {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    setElapsed(0);
+    if (!on) return;
+    return subscribeTick(() => setElapsed((s) => s + 1));
+  }, [on, restart]);
+  return elapsed;
+}
+
+/**
+ * A function button: the round button and, under it, the lines it actually says — its name and, while
+ * the timer is on, the countdown. An empty name and a switched-off timer take no room at all.
+ *
+ * It is a component of its own because it owns the one thing no other kind has: a second hand. Minutes
+ * and seconds count down while it is on screen; a still drawing — a market thumbnail, the export's
+ * snapshot, anything rendered without effects — keeps the author's own number.
+ */
+function FnButtonContent({ item, p, still }: { item: Item; p: Palette; still?: boolean }) {
+  const lang = useLang();
+  const w = useWeight();
+  const value = timerValueOf(item);
+  const unit = timerUnitOf(item);
+  const elapsed = useSecondHand(!still && timerOn(item) && timerTicks(unit), `${item.id}:${unit}:${value}`);
+
+  const box = sizeOf(item, {});
+  const label = item.label.trim();
+  const countdown = countdownLine(item, lang, elapsed);
+  /* the circle and the line count come from the same helpers `sizeOf` measured with, so the box is
+     exactly the size of what is drawn and the round corner is the one `baseRadii` reports */
+  const d = fnButtonCircle(item, box.w);
+  const lines = fnButtonLines(item);
+  const row = lines > 0 ? Math.max(8, Math.round((box.h - d) / lines)) : 0;
+  /* 两行用同一个字号（作者要求统一），取值随部件宽度走，并留出行的余量 */
+  const font = Math.max(9, Math.min(18, Math.round(box.w * 0.32)));
+  const lineStyle: React.CSSProperties = {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    height: row,
+    display: "grid",
+    placeItems: "center",
+    fontSize: font,
+    lineHeight: 1,
+    fontWeight: w(500, 700),
+    color: p.onSurface,
+    ...ellipsis,
+  };
+  /* 只有第一行（功能名）用作者选的颜色，第二行是计时，颜色照旧 —— 一个颜色不会漏到时间上 */
+  const nameStyle: React.CSSProperties = { ...lineStyle, color: fnButtonNameInk(item, p) };
+
+  /* the badge: an empty one is the bare dot a "new" mark is, and its words make it a pill */
+  const badgeText = badgeTextOf(item);
+  const dot = Math.max(6, Math.round(d * 0.16));
+  const badgeH = badgeText ? Math.max(12, Math.round(d * 0.3)) : dot;
+  return (
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      <div
+        style={{
+          position: "absolute",
+          left: Math.round((box.w - d) / 2),
+          top: 0,
+          width: d,
+          height: d,
+          /* circle or rounded square: the same two outlines an icon button takes */
+          borderRadius: roundShapeRadius(item.shape, d),
+          display: "grid",
+          placeItems: "center",
+          boxSizing: "border-box",
+          /* The shadow a floating button carries, so it reads as floating on any surface — except on
+             the two flat variants, which have nothing to float: a shadow under a transparent outline
+             reads as a mistake. The line under the circle stays onSurface and the badge keeps its own
+             error colours, so both are legible whatever the circle wears. */
+          boxShadow: item.variant === "outlined" || item.variant === "text" ? "none" : FAB_SHADOW,
+          ...variantStyle(item.variant, p),
+        }}
+      >
+        {/* the glyph takes the variant's own ink (it inherits the circle's colour); only a filled
+            circle draws the solid icon, as the button kind does */}
+        {item.icon && <Icon name={item.icon} size={Math.round(d * 0.44)} fill={item.variant === "filled"} />}
+      </div>
+      {badgeOn(item) && (
+        <span
+          style={{
+            position: "absolute",
+            top: 0,
+            /* the mark's trailing edge rides the circle's own right edge, whatever size it is */
+            right: Math.round((box.w - d) / 2),
+            minWidth: badgeH,
+            height: badgeH,
+            padding: badgeText ? `0 ${Math.max(4, Math.round(badgeH * 0.35))}px` : 0,
+            borderRadius: badgeH / 2,
+            boxSizing: "border-box",
+            background: p.error,
+            color: p.onError,
+            display: "grid",
+            placeItems: "center",
+            fontSize: Math.max(8, Math.round(badgeH * 0.66)),
+            lineHeight: 1,
+            fontWeight: 600,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {badgeText}
+        </span>
+      )}
+      {label && <div style={{ ...nameStyle, top: d }}>{label}</div>}
+      {countdown && <div style={{ ...lineStyle, top: d + (label ? row : 0) }}>{countdown}</div>}
+    </div>
   );
 }
 
@@ -461,6 +620,75 @@ export function BadgeContent({ item, p }: { item: Item; p: Palette }) {
 }
 
 /** Content for kinds that size to their text; rendered again offscreen to measure. */
+/**
+ * 资产框的内容：金额，以及它两旁作者摆的圆图标。图标多大、间距多宽、留白多宽、字多大，全部来自
+ * assetPillMetrics —— 和包围盒（sizeOf）同一个来源，所以盒子和画出来的东西不会各说各话。
+ *
+ * 它是一个"量出来的"部件（见 MEASURED）：宽度不受限时由浏览器按真实的字体量出内容宽度（少一个图标
+ * 就少一个图标加一个间距），所以金额不会被省略；作者钉了宽度时才回到"文字让位"的老规矩。
+ */
+export function AssetPillContent({ item, p }: { item: Item; p: Palette }) {
+  const w = useWeight();
+  const { chip, gap, inset, font } = assetPillMetrics(item);
+  const amount = item.label.trim();
+  /* 作者钉了宽度，文字就是唯一能让位的子项；没钉的时候宽度由内容决定，文字不缩也不省略 */
+  const pinned = item.size !== undefined;
+  /* 两边的圆图标取部件自己的 variant（编辑器的"样式"一行，和按钮同一套标签）：一个选择管两个
+     图标，和条本身的 fill 各管各的——所以填充的条上也能是一个描边的图标。border-box 让描边的 1dp
+     画在 20dp 之内，几何和包围盒都还算这个大小。 */
+  const mark = (key: string, name: string | null | undefined) =>
+    name ? (
+      <span
+        key={key}
+        style={{
+          width: chip,
+          height: chip,
+          flex: "0 0 auto",
+          borderRadius: chip / 2,
+          display: "grid",
+          placeItems: "center",
+          boxSizing: "border-box",
+          ...variantStyle(item.variant, p),
+        }}
+      >
+        {/* the glyph takes the chip's own ink (it inherits the colour); a filled chip draws it solid */}
+        <Icon name={name} size={Math.round(chip * 0.6)} fill={item.variant === "filled"} />
+      </span>
+    ) : null;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap,
+        height: "100%",
+        padding: `0 ${inset}px`,
+        boxSizing: "border-box",
+        /* the row itself may not be squeezed: the box is either the content's own width or the one the
+           author pinned, and in the pinned case the words are what gives way */
+        minWidth: 0,
+      }}
+    >
+      {mark("left", item.icon)}
+      {amount && (
+        <span
+          style={{
+            fontSize: font,
+            lineHeight: 1,
+            fontWeight: w(500, 700),
+            whiteSpace: "nowrap",
+            ...(pinned ? { flex: "0 1 auto", minWidth: 0, ...ellipsis } : { flex: "0 0 auto" }),
+          }}
+        >
+          {amount}
+        </span>
+      )}
+      {mark("right", item.icon2)}
+    </div>
+  );
+}
+
 export function MeasuredContent({ item, p }: { item: Item; p: Palette }) {
   switch (item.kind) {
     case "button":
@@ -481,6 +709,8 @@ export function MeasuredContent({ item, p }: { item: Item; p: Palette }) {
       return <RadioContent item={item} p={p} />;
     case "badge":
       return <BadgeContent item={item} p={p} />;
+    case "assetPill":
+      return <AssetPillContent item={item} p={p} />;
     default:
       return null;
   }
@@ -870,7 +1100,20 @@ function ValueRow({ item, p }: { item: Item; p: Palette }) {
   );
 }
 
-function Body({ item, p, tabScroll, widths }: { item: Item; p: Palette; tabScroll?: number; widths?: Record<string, number> }) {
+function Body({
+  item,
+  p,
+  tabScroll,
+  widths,
+  still,
+}: {
+  item: Item;
+  p: Palette;
+  tabScroll?: number;
+  widths?: Record<string, number>;
+  /** drawn once, with no clock: a still frame keeps the author's own count (see FnButtonContent) */
+  still?: boolean;
+}) {
   const lang = useLang();
   const w = useWeight();
   const hasLabel = item.label.trim().length > 0;
@@ -889,6 +1132,93 @@ function Body({ item, p, tabScroll, widths }: { item: Item; p: Palette; tabScrol
       );
     }
 
+    case "itemCell": {
+      /* One part: a cell holding the item's picture, its count and its two corner marks, with the
+         item's name under it. The picture is drawn the way an icon button draws its own, and each mark
+         with the badge kind's own pill, so a cell and a dropped badge look the same. */
+      const box = sizeOf(item, {});
+      const cell = itemCellBox(item, box.w);
+      const name = item.label.trim();
+      const count = (item.supporting ?? "").trim();
+      const markH = Math.max(10, Math.round(cell * 0.18));
+      /* a mark is the badge kind handed the words, the size and the colour it would have had there */
+      const mark = (key: string, on: boolean, text: string, colour: string | undefined, style: React.CSSProperties) =>
+        on ? (
+          <span key={key} style={{ position: "absolute", top: 2, ...style }}>
+            <BadgeContent
+              item={{ ...item, kind: "badge", label: text, size: undefined, size2: text ? markH : undefined, color: colour, strokeWidth: 0, strokeColor: undefined }}
+              p={p}
+            />
+          </span>
+        ) : null;
+      return (
+        <div style={{ position: "relative", width: "100%", height: "100%" }}>
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              width: cell,
+              height: cell,
+              borderRadius: scaleR(ITEM_CELL_RADIUS),
+              background: fillColor(item.fill, p, ITEM_CELL_FILL),
+              color: fillInk(item.fill, p, ITEM_CELL_FILL),
+              /* the hairline the author set rings the cell itself, not the box around the name */
+              boxShadow: strokeOf(item, p) ?? undefined,
+              boxSizing: "border-box",
+            }}
+          >
+            {item.icon && (
+              <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
+                {/* the picture wears the author's own colour when they picked one (the inspector names
+                    that control 图标颜色 for this kind), and the primary role when they did not */}
+                <Icon name={item.icon} size={Math.round(cell * 0.4)} color={colorOverrideOf(item, p)?.main ?? p.primary} />
+              </span>
+            )}
+            {count && (
+              <span
+                style={{
+                  position: "absolute",
+                  right: Math.round(cell * 0.1),
+                  bottom: Math.round(cell * 0.06),
+                  fontSize: Math.max(9, Math.min(24, Math.round(cell * 0.23))),
+                  lineHeight: 1,
+                  fontWeight: w(500, 700),
+                }}
+              >
+                {count}
+              </span>
+            )}
+            {/* the quality tag on the top-left, the "new" mark on the top-right — the two the
+                背包格子 composite carried as badges of its own */}
+            {mark("quality", badge2On(item), badge2TextOf(item), badge2ColorOf(item) ?? "secondaryContainer", { left: 3 })}
+            {mark("fresh", badgeOn(item), badgeTextOf(item), undefined, { right: 3 })}
+          </div>
+          {name && (
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                top: cell,
+                height: Math.max(8, box.h - cell),
+                display: "grid",
+                placeItems: "center",
+                fontSize: Math.max(9, Math.min(24, Math.round(box.w * 0.22))),
+                lineHeight: 1,
+                fontWeight: w(500, 700),
+                color: p.onSurface,
+                ...ellipsis,
+              }}
+            >
+              {name}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+
     case "fab": {
       const s = item.size ?? 56;
       return (
@@ -897,6 +1227,9 @@ function Body({ item, p, tabScroll, widths }: { item: Item; p: Palette; tabScrol
         </div>
       );
     }
+
+    case "fnButton":
+      return <FnButtonContent item={item} p={p} still={still} />;
 
     case "topAppBar":
       return (
@@ -1588,57 +1921,6 @@ function Body({ item, p, tabScroll, widths }: { item: Item; p: Palette; tabScrol
       );
     }
 
-    case "fabMenu": {
-      const tabs = item.tabs ?? [];
-      const filled = item.variant === "filled";
-      const fabStyle = variantStyle(item.variant, p);
-      const itemStyle = filled
-        ? { background: p.primaryContainer, color: p.onPrimaryContainer }
-        : { background: p.secondaryContainer, color: p.onSecondaryContainer };
-      return (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: FAB_MENU_GAP, height: "100%" }}>
-          {tabs.map((tab, i) => (
-            <span
-              key={i}
-              style={{
-                ...itemStyle,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 12,
-                height: FAB_MENU_ITEM_H,
-                padding: "0 24px 0 20px",
-                borderRadius: scaleR(28),
-                fontSize: 16,
-                fontWeight: w(500, 700),
-                whiteSpace: "nowrap",
-                maxWidth: "100%",
-                boxSizing: "border-box",
-                boxShadow: "0 1px 3px rgba(0,0,0,0.16)",
-              }}
-            >
-              {tabShowsIcon(tab) && <Icon name={tab.icon} size={22} />}
-              <span style={ellipsis}>{tab.label}</span>
-              <NavBadge tab={tab} p={p} size={16} inset={2} />
-            </span>
-          ))}
-          <span
-            style={{
-              ...fabStyle,
-              width: 56,
-              height: 56,
-              borderRadius: scaleR(16),
-              display: "grid",
-              placeItems: "center",
-              boxShadow: "0 3px 8px rgba(0,0,0,0.18), 0 1px 3px rgba(0,0,0,0.12)",
-              flex: "0 0 auto",
-            }}
-          >
-            {item.icon && <Icon name={item.icon} size={24} />}
-          </span>
-        </div>
-      );
-    }
-
     case "toolbar": {
       const tabs = item.tabs ?? [];
       const vibrant = item.variant === "filled";
@@ -1829,27 +2111,17 @@ function Body({ item, p, tabScroll, widths }: { item: Item; p: Palette; tabScrol
     }
 
     case "joystick": {
-      /* A movement pad: four faint arrows, a knob the visitor drags, and the angle it stands for.
-         The knob is placed from the part's own value, so the canvas, the preview and an export all
-         show the same angle. */
-      const size = Math.min(item.size ?? JOYSTICK_SIZE, item.size2 ?? item.size ?? JOYSTICK_SIZE);
-      const travel = joystickTravel(size);
-      const angle = clampValue(item.value ?? 0, maxOf(item));
+      /* A movement pad: the round plate, a centre mark, and the knob the visitor drags. There are no
+         direction keys — the pad is the control — and the knob is placed from the part's own value, so
+         the canvas, the preview and an export all show the same stick. Nothing here reads the angle
+         out: a number chasing the finger is what this part must not show. */
+      /* the plate's side is the box's own (see sizeOf), which is what its round corner and the
+         knob's travel are measured from */
+      const size = sizeOf(item, {}).w;
+      const angle = clampValue(item.value ?? 0, JOYSTICK_MAX);
       const knob = joystickKnob(angle, size, angle > 0);
-      const arrow = (name: string, deg: number) => (
-        <span
-          key={name}
-          style={{ position: "absolute", left: "50%", top: "50%", transform: `translate(-50%, -50%) rotate(${deg}deg) translateY(-${Math.round(size * 0.36)}px)`, color: p.outline, display: "inline-flex" }}
-        >
-          <Icon name={name} size={Math.max(14, Math.round(size * 0.15))} />
-        </span>
-      );
       return (
         <div style={{ position: "relative", width: "100%", height: "100%" }}>
-          {arrow("keyboard_arrow_up", 0)}
-          {arrow("keyboard_arrow_right", 90)}
-          {arrow("keyboard_arrow_down", 180)}
-          {arrow("keyboard_arrow_left", 270)}
           <span
             data-joystick-knob=""
             style={{
@@ -1861,19 +2133,14 @@ function Body({ item, p, tabScroll, widths }: { item: Item; p: Palette; tabScrol
               marginLeft: -Math.round(Math.max(24, size * 0.34) / 2),
               marginTop: -Math.round(Math.max(24, size * 0.34) / 2),
               borderRadius: "50%",
+              /* the knob carries no reading of its own: the angle is the author's number (see the
+                 inspector's value control), and a figure following the finger is exactly what the
+                 pad must not show. Its fill still says whether the stick is being held. */
               background: angle > 0 ? p.primary : p.primaryContainer,
-              color: angle > 0 ? p.onPrimary : p.onPrimaryContainer,
               boxShadow: "0 2px 6px rgba(0,0,0,0.18)",
-              display: "grid",
-              placeItems: "center",
-              fontSize: 11,
-              fontWeight: 700,
             }}
-          >
-            {angle > 0 ? `${angle}°` : ""}
-          </span>
+          />
           <span style={{ position: "absolute", left: "50%", top: "50%", width: 6, height: 6, marginLeft: -3, marginTop: -3, borderRadius: 3, background: p.outlineVariant }} />
-          <span style={{ position: "absolute", left: travel > 0 ? "50%" : 0, top: 0, display: "none" }} />
         </div>
       );
     }
@@ -2412,6 +2679,11 @@ function boxStyle(item: Item, p: Palette): React.CSSProperties {
       const t = item.fill ?? "surfaceContainerLow";
       return { background: fillColor(t, p, "surfaceContainerLow"), border: "none", color: fillInk(t, p, "surfaceContainerLow") };
     }
+    case "assetPill": {
+      /* the bar's own surface: a role, or a colour of the author's own (see fillColor) */
+      const t = item.fill ?? "surfaceContainerHigh";
+      return { background: fillColor(t, p, "surfaceContainerHigh"), border: "none", color: fillInk(t, p, "surfaceContainerHigh") };
+    }
     default:
       return { background: p.surfaceContainerHigh, border: "none", color: p.onSurface };
   }
@@ -2427,7 +2699,7 @@ function shadowOf(item: Item): string {
     case "extendedFab":
       return variantShadow(item.variant);
     case "fab":
-      return "0 3px 8px rgba(0,0,0,0.18), 0 1px 3px rgba(0,0,0,0.12)";
+      return FAB_SHADOW;
     case "card":
       return item.variant === "elevated" ? "0 1px 3px rgba(0,0,0,0.20), 0 2px 6px rgba(0,0,0,0.10)" : "none";
     case "dialog":
@@ -2501,6 +2773,8 @@ export function M3Node({
   return (
     <motion.div
       data-node={item.id}
+      /* 给浏览器探针用的稳定标记（纯新增，不参与样式和行为）：每个部件的最外层元素都带自己的 id */
+      data-part-id={item.id}
       data-kind={item.kind}
       data-wide-rail={item.kind === "navRail" && isWideRail(item) ? "true" : undefined}
       onPointerDown={onPointerDown}
@@ -2543,8 +2817,9 @@ export function M3Node({
         userSelect: "none",
         touchAction: "none",
         boxSizing: "border-box",
-        /* a badge rings its own pill, so the box behind it draws no ring of its own */
-        boxShadow: [item.kind === "badge" ? null : strokeOf(item, ep), shadowOf(item)].filter((v) => v && v !== "none").join(", ") || "none",
+        /* a badge rings its own pill and an item cell its own square, so the box behind them draws no
+           ring of its own */
+        boxShadow: [item.kind === "badge" || item.kind === "itemCell" ? null : strokeOf(item, ep), shadowOf(item)].filter((v) => v && v !== "none").join(", ") || "none",
         outline: selected ? `2px solid ${palette.primary}` : "2px solid transparent",
         outlineOffset: 3,
         /* a part turns about its own middle: the place it takes in the layout does not move */
@@ -2586,6 +2861,7 @@ export function M3Static({
   const ep = paletteForItem(item, palette);
   return (
     <div
+      data-part-id={item.id}
       style={{
         ...boxStyle(item, ep),
         width: measured ? undefined : size.w,
@@ -2596,8 +2872,9 @@ export function M3Static({
         position: "relative",
         zIndex: layerOf(item),
         boxSizing: "border-box",
-        /* a badge rings its own pill, so the box behind it draws no ring of its own */
-        boxShadow: [item.kind === "badge" ? null : strokeOf(item, ep), shadowOf(item)].filter((v) => v && v !== "none").join(", ") || "none",
+        /* a badge rings its own pill and an item cell its own square, so the box behind them draws no
+           ring of its own */
+        boxShadow: [item.kind === "badge" || item.kind === "itemCell" ? null : strokeOf(item, ep), shadowOf(item)].filter((v) => v && v !== "none").join(", ") || "none",
         borderTopLeftRadius: r.tl,
         borderTopRightRadius: r.tr,
         borderBottomLeftRadius: r.bl,
@@ -2608,7 +2885,7 @@ export function M3Static({
         ...style,
       }}
     >
-      <Body item={item} p={ep} widths={{}} />
+      <Body item={item} p={ep} widths={{}} still />
       <ScrollLayer item={item} p={ep} widths={{}}>
         {overlay}
       </ScrollLayer>

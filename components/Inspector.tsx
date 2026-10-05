@@ -36,9 +36,11 @@ import {
   TRANSITIONS,
   Transition,
   VARIANTS,
+  variantsOf,
   Variant,
   ROUND_SHAPES,
   actionSlotsOf,
+  applySlotTransition,
   isVariant,
   uid,
   TRACK_DEFAULT,
@@ -124,6 +126,30 @@ import {
   clampValue,
   MAX_DEF,
   AUTHOR_WIDTHS,
+  /* the countdown a function button shows under its name */
+  TIMER_UNITS,
+  TIMER_VALUE_MAX,
+  timerOn,
+  timerUnitOf,
+  timerValueOf,
+  type TimerUnit,
+  /* the badge on a function button's corner */
+  badge2On,
+  badge2TextOf,
+  badgeOn,
+  badgeTextOf,
+  FILL_CUSTOM_KINDS,
+  MARK_GAP_MAX,
+  TextColor,
+  assetPillMetrics,
+  assetPillRadius,
+  assetPillWidth,
+  hasStateRow,
+  hasTimer,
+  hidesAutoClose,
+  /* the height a function button draws at when no height is pinned (see sizeOf) */
+  fnButtonHeight,
+  fnButtonLines,
   type FillToken,
   type RuleField,
   /* the cell board a slot grid draws */
@@ -173,47 +199,6 @@ function UrlField({ value, onChange, placeholder, p }: { value: string; onChange
       />
     </div>
   );
-}
-
-export function variantsOf(kind: Kind): { key: Variant; label: string }[] {
-  const variants = VARIANTS.map((v) => ({ ...v, label: t(v.key) }));
-  switch (kind) {
-    case "card":
-      return [
-        { key: "tonal", label: t("filled") },
-        { key: "elevated", label: t("elevated") },
-        { key: "outlined", label: t("outlined") },
-      ];
-    case "textField":
-    case "select":
-      return [
-        { key: "outlined", label: t("outlined") },
-        { key: "filled", label: t("filled") },
-      ];
-    case "chip":
-      return [
-        { key: "outlined", label: t("outlined") },
-        { key: "tonal", label: t("elevated") },
-      ];
-    case "fab":
-    case "extendedFab":
-    case "fabMenu":
-      return variants.filter((v) => v.key !== "text" && v.key !== "elevated" && v.key !== "outlined");
-    case "splitButton":
-      return variants.filter((v) => v.key !== "text");
-    case "toolbar":
-      return [
-        { key: "tonal", label: t("standard") },
-        { key: "filled", label: t("vibrant") },
-      ];
-    case "iconButton":
-      return variants.filter((v) => v.key !== "elevated" && v.key !== "text").concat({
-        key: "text",
-        label: t("standard"),
-      });
-    default:
-      return variants;
-  }
 }
 
 export function VariantSwatch({
@@ -279,6 +264,14 @@ export const widthPresetLabel = (v: number, frameWidth = PHONE_W): string | unde
 
 const heightPresetLabel = (v: number, frameHeight = PHONE_H): string | undefined =>
   v === frameHeight ? t("screenHeight") : v === frameHeight / 2 ? t("halfHeight") : undefined;
+
+/** the i18n key each unit of a function button's countdown is named by */
+export const FN_UNIT_TEXT: Record<TimerUnit, UIKey> = {
+  day: "fnUnitDay",
+  hour: "fnUnitHour",
+  minute: "fnUnitMinute",
+  second: "fnUnitSecond",
+};
 
 export function FrameSizePicker({
   frame,
@@ -493,7 +486,7 @@ function ActionEditor({
         back
       />
       {action && action.to !== BACK_TARGET && (
-        <TransitionPicker value={action.transition} onChange={(transition) => onChange({ ...action, transition })} p={p} />
+        <TransitionPicker value={action.transition ?? "none"} onChange={(transition) => onChange({ ...action, transition })} p={p} />
       )}
     </div>
   );
@@ -1142,6 +1135,7 @@ export function Inspector({
     item.kind === "camera" ||
     item.kind === "map" ||
     item.kind === "invGrid" ||
+    item.kind === "assetPill" ||
     item.kind === "box";
 
   return (
@@ -1253,7 +1247,9 @@ export function Inspector({
                 <Field
                   value={shown.label}
                   onChange={(label) => change({ label })}
-                  placeholder={t("label", lang)}
+                  /* an amount on a capsule is a count, not a name: the same word the item cell's
+                     quantity uses, so the author reads what the field is for */
+                  placeholder={item.kind === "assetPill" ? t("quantity", lang) : t("label", lang)}
                   p={p}
                   icon="short_text"
                 />
@@ -1269,12 +1265,26 @@ export function Inspector({
                 )}
               </div>
             )}
+            {item.kind === "fnButton" && !editOn && (
+              <>
+                {/* 第一行（功能名）自己的颜色，放在它染色的那个输入框下面；第二行是计时，颜色照旧
+                    （见 FnButtonContent）。自动就是今天的样子：onSurface。 */}
+                <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("textColor", lang)}</div>
+                <TextTokenChips
+                  value={item.textColor}
+                  auto={p.onSurface}
+                  onChange={(textColor) => change({ textColor })}
+                  custom={(color) => change({ textColor: color as TextColor })}
+                  p={p}
+                />
+              </>
+            )}
             {spec.hasSupporting && !editOn && (
               /* a card's body is a paragraph: the field wraps and grows with it, and the canvas wraps the text itself */
               <Field
                 value={item.supporting ?? ""}
                 onChange={(supporting) => onChange({ supporting })}
-                placeholder={item.kind === "snackbar" ? t("action", lang) : t("supporting", lang)}
+                placeholder={item.kind === "snackbar" ? t("action", lang) : item.kind === "itemCell" ? t("quantity", lang) : t("supporting", lang)}
                 p={p}
                 icon="notes"
                 multiline={item.kind === "card"}
@@ -1300,7 +1310,91 @@ export function Inspector({
                   />
                 </div>
                 <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("textColor", lang)}</div>
-                <TextTokenChips value={item.textColor} auto={cardTextColorOf(item, p)} onChange={(textColor) => onChange({ textColor })} p={p} />
+                <TextTokenChips
+                  value={item.textColor}
+                  auto={cardTextColorOf(item, p)}
+                  onChange={(textColor) => onChange({ textColor })}
+                  custom={(color) => onChange({ textColor: color as TextColor })}
+                  p={p}
+                />
+              </>
+            )}
+          </div>
+        </Section>
+      )}
+
+      {hasTimer(item) && !editOn && (() => {
+        /* The countdown the button shows under its name — the one kind that has a timer at all. Off,
+           the part draws no second line at all, not an empty one, so the author sees exactly the two
+           states the part has. */
+        const unit = timerUnitOf(item);
+        const unitText = t(FN_UNIT_TEXT[unit], lang);
+        return (
+          <Section id="fnTimer" icon="timer" title={t("fnTimer", lang)} p={p}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <Toggle on={timerOn(item)} onChange={(timer) => onChange({ timer })} p={p} icon="timer" label={t("fnTimerOn", lang)} grow />
+              {timerOn(item) && (
+                <>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("fnTimerUnit", lang)}</div>
+                  <Segmented<TimerUnit>
+                    options={TIMER_UNITS.map((u) => ({ key: u, label: t(FN_UNIT_TEXT[u], lang), title: t(FN_UNIT_TEXT[u], lang) }))}
+                    value={unit}
+                    onChange={(timerUnit) => onChange({ timerUnit })}
+                    p={p}
+                    height={36}
+                  />
+                  <Slider
+                    icon="hourglass_top"
+                    title={unitText}
+                    value={timerValueOf(item)}
+                    min={0}
+                    max={TIMER_VALUE_MAX}
+                    step={1}
+                    onChange={(timerValue) => onChange({ timerValue })}
+                    p={p}
+                    unit={unitText}
+                  />
+                  <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("fnTimerHint", lang)}</div>
+                </>
+              )}
+            </div>
+          </Section>
+        );
+      })()}
+
+      {(item.kind === "fnButton" || item.kind === "itemCell") && !editOn && (
+        <Section id="fnBadge" icon="notifications_unread" title={t("fnBadge", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {/* Switching it on writes no words: an enabled badge with none is the bare dot a "new"
+                mark is, and the author adds the number only if there is one. */}
+            <Toggle on={badgeOn(item)} onChange={(badge) => onChange({ badge: badge || undefined })} p={p} icon="notifications_unread" label={t("fnBadge", lang)} grow />
+            {badgeOn(item) && (
+              <>
+                <Field
+                  value={badgeTextOf(item)}
+                  onChange={(text) => onChange({ badgeText: text || undefined })}
+                  placeholder={t("badge", lang)}
+                  p={p}
+                  icon="label"
+                />
+                <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("fnBadgeHint", lang)}</div>
+              </>
+            )}
+          </div>
+        </Section>
+      )}
+
+      {item.kind === "itemCell" && !editOn && (
+        <Section id="itemMark" icon="sell" title={t("markLeft", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {/* The cell's other corner mark: the quality tag a game brands an item with. It keeps a
+                colour of its own, because a quality is read by its colour before its word. */}
+            <Toggle on={badge2On(item)} onChange={(badge2) => onChange({ badge2: badge2 || undefined })} p={p} icon="sell" label={t("markLeft", lang)} grow />
+            {badge2On(item) && (
+              <>
+                <Field value={badge2TextOf(item)} onChange={(text) => onChange({ badge2Text: text || undefined })} placeholder={t("badge", lang)} p={p} icon="label" />
+                <ItemColorChips value={item.badge2Color} onChange={(badge2Color) => onChange({ badge2Color })} p={p} />
+                <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("markLeftHint", lang)}</div>
               </>
             )}
           </div>
@@ -1719,7 +1813,7 @@ export function Inspector({
       )}
 
       {mainSlots.length > 0 && activeSlot && !item.src && (
-        <Section id="icon" icon="emoji_symbols" title={t("icon", lang)} p={p} onToggle={(open) => { if (!open && !activeSlot.key.startsWith("tab:")) setPickerOpen(false); }}>
+        <Section id="icon" icon="emoji_symbols" title={t(item.kind === "assetPill" ? "leftIcon" : "icon", lang)} p={p} onToggle={(open) => { if (!open && !activeSlot.key.startsWith("tab:")) setPickerOpen(false); }}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {mainSlots.map((s) =>
               slotBtn(
@@ -2000,6 +2094,12 @@ export function Inspector({
             noneTextColor={item.kind === "card" ? onToken(cardDefaultFillOf(item.variant), p) : undefined}
             noneIcon={item.kind === "card" ? "restart_alt" : undefined}
             noneLabel={item.kind === "card" ? t("defaultColor", lang) : undefined}
+            /* An item cell's or an asset pill's surface is often a colour of the author's own — a
+               rarity green, a quality purple — so its row ends with the free colour disc the
+               part-colour row already offers (see CustomColorDisc), one chip among the rest rather
+               than a control on a line of its own. The disc writes a #rrggbb literal, which is one of
+               the things a fill field holds (see FillToken). */
+            custom={FILL_CUSTOM_KINDS.includes(item.kind) ? (fill) => onChange({ fill: fill as FillToken }) : undefined}
           />
           {item.kind === "listItem" && (
             <>
@@ -2040,9 +2140,13 @@ export function Inspector({
 
       {/* every part carries a colour and a level of its own, whatever its kind */}
       {!editOn && (
-        <Section id="appearance" icon="format_paint" title={t("appearance", lang)} p={p}>
+        /* An item cell has no heading over these controls: the colour below names itself (the icon's
+           own) and the layer and rotation rows speak for themselves (see Section's `bare`) */
+        <Section id="appearance" icon="format_paint" title={t("appearance", lang)} p={p} bare={item.kind === "itemCell"}>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t("bgColor", lang)}</div>
+            {/* An item cell has no surface of its own to paint (that is its fill, above), so the
+                colour here is the icon's — named for what it does (see the renderer). */}
+            <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant }}>{t(item.kind === "itemCell" ? "iconColor" : "bgColor", lang)}</div>
             <ItemColorChips value={item.color} onChange={(color) => onChange({ color })} p={p} />
             <div style={{ fontSize: 12, fontWeight: 600, color: p.onSurfaceVariant, marginTop: 4 }}>{t("layer", lang)}</div>
             <Slider
@@ -2110,7 +2214,7 @@ export function Inspector({
         </Section>
       )}
 
-      {(spec.hasChecked || spec.hasValue || spec.hasWavy || spec.hasContained || spec.hasScroll || item.kind === "listItem") && !editOn && (
+      {hasStateRow(item, spec) && !editOn && (
         <Section id="state" icon="tune" title={t("state", lang)} p={p}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "2px 0" }}>
             {item.kind === "listItem" && (
@@ -2329,8 +2433,9 @@ export function Inspector({
                         ? t("width", lang)
                         : t("size", lang)
                   }
-                  /* a rail's width comes from its own makeup until the author sets one */
-                  value={item.kind === "navRail" ? railWidth(item) : item.size ?? spec.defSize ?? spec.w}
+                  /* a rail's width comes from its own makeup until the author sets one, and an amount
+                     on a bar is as wide as its content until the author pins a width */
+                  value={item.kind === "navRail" ? railWidth(item) : item.kind === "assetPill" ? assetPillWidth(item) : item.size ?? spec.defSize ?? spec.w}
                   min={spec.size.min}
                   max={widthMax(spec.size.max)}
                   step={spec.size.step}
@@ -2366,7 +2471,7 @@ export function Inspector({
                     {spec.size.presets && (
                       <SizePresets
                         values={[...new Set([...(frameSize.w !== PHONE_W && spec.size.icon === "width" && spec.size.presets.includes(CONTENT_W) ? [CONTENT_W] : []), ...spec.size.presets.map(mapWidthPreset)])].sort((a, b) => a - b)}
-                        value={item.kind === "navRail" ? railWidth(item) : item.size ?? spec.defSize ?? spec.w}
+                        value={item.kind === "navRail" ? railWidth(item) : item.kind === "assetPill" ? assetPillWidth(item) : item.size ?? spec.defSize ?? spec.w}
                         min={spec.size.min}
                         max={widthMax(spec.size.max)}
                         onChange={(size) => onChange({ size })}
@@ -2384,8 +2489,16 @@ export function Inspector({
                   icon={spec.size2.icon}
                   title={t("height", lang)}
                   /* the height it draws when the author has set none: a badge with no number is the
-                     small dot, not the numbered pill */
-                  value={item.size2 ?? (item.kind === "badge" && !item.label.trim() ? 6 : spec.h)}
+                     small dot, not the numbered pill, and a function button is as tall as the lines
+                     it actually says */
+                  value={
+                    item.size2 ??
+                    (item.kind === "badge"
+                      ? (item.label.trim() ? spec.h : 6)
+                      : item.kind === "fnButton"
+                        ? fnButtonHeight(item.size ?? spec.defSize ?? spec.w, fnButtonLines(item))
+                        : spec.h)
+                  }
                   min={spec.size2.min}
                   max={heightMax(spec.size2.max)}
                   step={spec.size2.step}
@@ -2417,6 +2530,43 @@ export function Inspector({
                 p={p}
               />
             )}
+            {item.kind === "assetPill" && (() => {
+              /* 图标与金额之间的间距：拉长了整条就变长（自然宽度由它算出来，见 assetPillWidth），
+                 所以作者调的是"排版松紧"，而不是让文字缩略。回到默认值时清掉字段，间距就继续跟高度走。 */
+              const derived = assetPillMetrics(item).gap;
+              return (
+                <Slider
+                  icon="space_bar"
+                  title={t("markGap", lang)}
+                  value={item.markGap ?? derived}
+                  min={0}
+                  max={MARK_GAP_MAX}
+                  step={1}
+                  onChange={(markGap) => onChange({ markGap: markGap === derived ? undefined : markGap })}
+                  p={p}
+                />
+              );
+            })()}
+
+            {hasRadius && item.kind === "assetPill" && (() => {
+              /* The pill's corner: one number for the whole shape, the control the image uses. Unset
+                 is a sharp rectangle (the default the author asked for), and the slider's top is half
+                 the drawn height — past that a corner stops meaning anything. */
+              const half = Math.floor(sizeOf(item, {}).h / 2);
+              return (
+                <Slider
+                  icon="rounded_corner"
+                  title={t("cornerRadius", lang)}
+                  value={assetPillRadius(item)}
+                  min={0}
+                  max={half}
+                  step={1}
+                  onChange={(radiusTop) => onChange({ radiusTop })}
+                  p={p}
+                />
+              );
+            })()}
+
             {hasRadius && (item.kind === "card" || item.kind === "box" || item.kind === "invGrid") && (() => {
               /* One radius for every corner until the author asks for each. The seeds match what the
                * canvas draws: a box's unset side is 0, a card's and a slot grid's unset radius is the
@@ -2510,15 +2660,17 @@ export function Inspector({
           p={p}
           value={item.note ?? ""}
           onChange={(note) => onChange({ note })}
-          placeholder={item.kind === "button" || item.kind === "fab" || item.kind === "iconButton" || item.kind === "extendedFab" ? t("whenPressed", lang) : t("whatItDoes", lang)}
+          placeholder={item.kind === "button" || item.kind === "fab" || item.kind === "iconButton" || item.kind === "extendedFab" || item.kind === "fnButton" ? t("whenPressed", lang) : t("whatItDoes", lang)}
         />
       </Section>
       )}
 
       {/* A part that is only good for a while: the activity entry that closes after three days, the
           bubble that dismisses itself. A container takes its children with it, and a bubble closes
-          the way a tap outside it would. */}
-      {!editOn && (
+          the way a tap outside it would. The readouts (see NO_AUTO_CLOSE_KINDS) are not offered this
+          — their properties hold no timer at all — but one a stored document already gave a time to
+          keeps the row, so that time can still be taken away. */}
+      {!editOn && !hidesAutoClose(item) && (
         <Section id="auto" icon="timer" title={t("autoClose", lang)} p={p}>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <Toggle on={item.autoClose !== undefined} onChange={(on) => onChange({ autoClose: on ? AUTO_CLOSE_DEF : undefined })} p={p} icon="timer" label={t("autoClose", lang)} grow />
@@ -3000,7 +3152,7 @@ function LookPreview({ item, look, p }: { item: Item; look?: PartLook; p: Palett
   const size = sizeOf(drawn, {});
   const k = Math.min(1, 132 / Math.max(1, size.w), 44 / Math.max(1, size.h));
   return (
-    <div style={{ width: 132, height: 44, borderRadius: 10, background: p.surfaceContainerHigh, display: "grid", placeItems: "center", overflow: "hidden", flex: "0 0 auto" }}>
+    <div style={{ width: 132, height: 44, flex: "0 0 auto", flexShrink: 0, borderRadius: 10, background: p.surfaceContainerHigh, display: "grid", placeItems: "center", overflow: "hidden" }}>
       <div style={{ transform: `scale(${k})`, pointerEvents: "none", display: "flex" }}>
         <M3Static item={drawn} palette={p} />
       </div>
@@ -3190,24 +3342,31 @@ function FlowEditor({
         const title = node.look ? nodeName(node.look) : t("flowStart", lang);
         return (
           <div key={node.id} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ ...cardStyle(p), flexDirection: "row", alignItems: "center" }}>
-              <LookPreview item={item} look={node.look} p={p} />
-              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
-                {node.look ? (
-                  <Field value={node.look.name ?? ""} onChange={(name) => patchLook(node.id, { name })} placeholder={title} p={p} icon="label" height={34} />
-                ) : (
-                  <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurface }}>{title}</span>
-                )}
-                <div style={{ fontSize: 11, lineHeight: 1.4, color: p.outline }}>
-                  {changed.length > 0 ? changed.map((f) => t(f.title, lang)).join(" · ") : t(node.look ? "flowNoChange" : "flowStartHint", lang)}
+            {/* 两段排：上面一行是"画的样子 + 名字 + 操作"，下面一行**独占整幅宽度**写说明。
+                挤在一行里的话，说明只剩几十像素，中文会一个字一行、把卡片撑得很高。 */}
+            <div style={{ ...cardStyle(p), gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                <LookPreview item={item} look={node.look} p={p} />
+                {/* 可以缩（minWidth: 0）但不许长出去（overflow: hidden）：
+                    名字框比这一列宽的话，就会盖到右边的「改属性」「删除」上 */}
+                <div style={{ flex: "1 1 0%", minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: 4 }}>
+                  {node.look ? (
+                    /* 不给图标：这一格本来就窄（右边还有两个按钮），图标会挤掉能看见的字 */
+                    <Field value={node.look.name ?? ""} onChange={(name) => patchLook(node.id, { name })} placeholder={title} p={p} height={34} />
+                  ) : (
+                    <span style={{ fontSize: 12, fontWeight: 600, color: p.onSurface, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
+                  )}
                 </div>
+                {node.look && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, flex: "0 0 auto", flexShrink: 0 }}>
+                    <IconBtn icon="tune" p={p} on={openId === node.id} title={t("flowChange", lang)} size={30} onClick={() => setOpenId(openId === node.id ? null : node.id)} />
+                    <IconBtn icon="delete" p={p} danger title={t("delete", lang)} size={30} onClick={() => dropLook(node.id)} />
+                  </div>
+                )}
               </div>
-              {node.look && (
-                <>
-                  <IconBtn icon="tune" p={p} on={openId === node.id} title={t("flowChange", lang)} size={30} onClick={() => setOpenId(openId === node.id ? null : node.id)} />
-                  <IconBtn icon="delete" p={p} danger title={t("delete", lang)} size={30} onClick={() => dropLook(node.id)} />
-                </>
-              )}
+              <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline, wordBreak: "break-word" }}>
+                {changed.length > 0 ? changed.map((f) => t(f.title, lang)).join(" · ") : t(node.look ? "flowNoChange" : "flowStartHint", lang)}
+              </div>
             </div>
             {node.look && openId === node.id && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 8, borderRadius: 12, border: `1px solid ${p.outlineVariant}` }}>
@@ -3346,6 +3505,15 @@ function StateRules({
     perSlot
       ? onChange({ actions: { ...(item.actions ?? {}), [target]: a as Action } })
       : onChange({ action: a });
+  /* 入场方式是"整条栏"的设置，但它要铺到每一格上 —— 点下去的其实是某一格（见
+     applySlotTransition）。不然作者在这里改了，预览里毫无变化。 */
+  const writeTransition = (transition: Transition) => {
+    if (action) {
+      writeAction({ ...action, transition });
+      return;
+    }
+    onChange(applySlotTransition(item, transition));
+  };
   const card: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 8, padding: 10, borderRadius: 14, background: p.surfaceContainerLow };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -3376,7 +3544,7 @@ function StateRules({
             p={p}
           />
           {action && action.to !== BACK_TARGET && (
-            <TransitionPicker value={action.transition} onChange={(transition) => writeAction({ ...action, transition })} p={p} />
+            <TransitionPicker value={action.transition} onChange={writeTransition} p={p} />
           )}
         </div>
       )}
