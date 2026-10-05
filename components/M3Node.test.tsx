@@ -97,9 +97,9 @@ describe("an item cell as drawn", () => {
     expect(out).toContain("普通");
     expect(out).toContain("新");
     expect(out).toContain("树叶");
-    /* the cell square sits on the part's own width, rounded by the document's shape scale */
+    /* the cell square sits on the part's own width, sharp by default (the author asked for 0) */
     expect(out).toContain("width:60px;height:60px");
-    expect(out).toContain("border-radius:10px");
+    expect(out).toContain("width:60px;height:60px;border-radius:0");
     /* and the part is the composite's 60×76: the cell plus the name's line */
     expect(out).toContain("width:60px;height:76px");
     /* the marks hug opposite corners of the cell */
@@ -108,6 +108,15 @@ describe("an item cell as drawn", () => {
     /* the hairline rings the cell itself; the plain box around the whole part draws none */
     expect(out).toContain("box-shadow:inset 0 0 0 1px");
     expect(out).toContain("box-shadow:none");
+  });
+
+  it("draws the corner the author set, held to half the square (never the part's height)", () => {
+    /* 作者设过的圆角就画在格子上 */
+    expect(draw(cell({ radiusTop: 12 }))).toContain("width:60px;height:60px;border-radius:12px");
+    /* 60×76 的部件：封顶是正方形的一半 30，不是高度的一半 38 */
+    expect(draw(cell({ radiusTop: 99 }))).toContain("width:60px;height:60px;border-radius:30px");
+    /* 作者钉了矮格子，正方形小了，封顶跟着小 */
+    expect(draw(cell({ radiusTop: 99, size2: 40 }))).toContain("border-radius:12px");
   });
 
   it("takes the name's line away with the name, rather than leaving a gap", () => {

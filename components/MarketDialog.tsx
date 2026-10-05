@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { CustomPart, Doc, Frame, Palette, Theme } from "@/lib/tokens";
+import { CustomPart, DEFAULT_PALETTE_KEY, Doc, Frame, Palette, Theme } from "@/lib/tokens";
 import { t, useLang } from "@/lib/i18n";
 import {
   ComponentTypeCode,
@@ -143,7 +143,7 @@ export function MarketDialog({
       groups: screen.groups.map((g, i) => ({ id: `market-screen-${i}`, x: g.x, y: g.y, axis: g.axis, ...(g.free ? { free: true as const } : undefined), ...(g.pos ? { pos: g.pos } : undefined), items: g.items })),
       /* 预览只读 frames / groups / theme / 配色，其余字段给上默认值就是一份合法文档 */
       frame: "phone",
-      paletteKey: "purple",
+      paletteKey: DEFAULT_PALETTE_KEY,
       title: detail?.name ?? "",
       brief: "",
       ...(theme ? { theme } : undefined),

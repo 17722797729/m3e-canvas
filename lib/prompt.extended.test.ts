@@ -19,6 +19,7 @@
 import { describe, expect, it } from "vitest";
 import { buildPrompt, effectivePrompt } from "./prompt";
 import {
+  DEFAULT_THEME,
   Doc,
   Frame,
   Group,
@@ -31,6 +32,9 @@ import {
 
 const widths: Record<string, number> = {};
 const paletteKey = "baseline";
+/* 单套手写配色那条路：不分深浅、标准对比。出厂默认现在是"跟随系统 + 高对比"，
+   会同时写出浅色和深色两套 —— 要锁"逐角色列出这一份配色"就得把它显式关掉。 */
+const plainTheme = { ...DEFAULT_THEME, bothModes: false, contrast: "standard" as const, dark: false };
 const palette: Palette = {
   key: "baseline",
   label: "Baseline",
@@ -105,7 +109,9 @@ describe("buildPrompt — language switch", () => {
 
 describe("buildPrompt — palette section", () => {
   it("includes every required color role", () => {
-    const doc = baseDoc();
+    /* 这一份配色就是文档自己的（paletteKey: "custom"）+ 单套方案：
+       于是提示词逐角色列出下面这份 `palette` 的值。 */
+    const doc = baseDoc({ paletteKey: "custom", theme: plainTheme });
     const out = buildPrompt(doc, widths, undefined, "en");
     for (const role of [
       "primary",
@@ -139,7 +145,7 @@ describe("buildPrompt — palette section", () => {
   });
 
   it("writes hex colors uppercased", () => {
-    const doc = baseDoc();
+    const doc = baseDoc({ paletteKey: "custom", theme: plainTheme });
     const out = buildPrompt(doc, widths, undefined, "en");
     expect(out).toContain("#6750A4");
     expect(out).toContain("#FEF7FF");

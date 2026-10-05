@@ -1,7 +1,7 @@
 import { deflateRawSync, inflateRawSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DOC_PARAM, DOCZ_PARAM, hasShareHash, readShareHash, shareable, shareLink } from "./share";
-import type { Doc, Item } from "./tokens";
+import { DEFAULT_PALETTE_KEY, type Doc, type Item } from "./tokens";
 
 const doc = (): Doc => ({
   title: "設計 中文 한국어 🎨 + & # %", brief: "First line\nSecond line", paletteKey: "purple", frame: "phone", platform: "web",
@@ -149,7 +149,7 @@ describe("shareLink and readShareHash", () => {
        the fields a document is required to have */
     const legacy = { groups: [], frames: [] };
     await expect(readShareHash(plainHash(legacy))).resolves.toMatchObject({
-      groups: [], frames: [], title: "", brief: "", paletteKey: "purple", frame: "phone",
+      groups: [], frames: [], title: "", brief: "", paletteKey: DEFAULT_PALETTE_KEY, frame: "phone",
     });
   });
 

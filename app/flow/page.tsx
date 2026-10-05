@@ -7,7 +7,9 @@ import { FlowBoard, boardFromFlow, loadBoard, mergeBoard, saveBoard } from "@/li
 import { FlowCanvas } from "@/components/FlowCanvas";
 import { Icon } from "@/components/M3Node";
 import { readDoc as readStoredDoc } from "@/lib/project";
-import { paletteOf, type Doc, type Palette } from "@/lib/tokens";
+import { paletteOf, DEFAULT_PALETTE_KEY, DEFAULT_THEME, type Doc, type Palette, type Theme } from "@/lib/tokens";
+import { loadAppTheme } from "@/lib/appTheme";
+import { useSystemTheme } from "@/lib/theme";
 import { LangContext, isLang, setGlobalLang, t, type Lang } from "@/lib/i18n";
 import { goToEditor } from "@/lib/appPath";
 
@@ -109,6 +111,8 @@ function downloadUrl(url: string, name: string) {
 export default function FlowPage() {
   const [lang, setLang] = useState<Lang | null>(null);
   const [doc, setDoc] = useState<Doc | null>(null);
+  /** 主题是应用级的：这一页不看 doc.theme，只看 `m3e:theme` */
+  const [theme, setTheme] = useState<Theme>(DEFAULT_THEME);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** 能改的那张图；null 表示"还没建，按屏幕推导" */
   const [board, setBoard] = useState<FlowBoard | null>(null);
@@ -125,14 +129,17 @@ export default function FlowPage() {
     setGlobalLang(initial);
     setLang(initial);
     setDoc(readDoc());
+    setTheme(loadAppTheme(window.localStorage));
   }, []);
 
   const ui: Lang = lang ?? "ja";
   const text = FLOW_TEXT[ui];
+  /* 深浅色模式：开了 bothModes 时上屏的深浅跟系统走（lib/systemTheme.ts） */
+  const shownTheme = useSystemTheme(theme);
   const p: Palette = useMemo(
-    /* the diagram wears the document's own colours, not a fixed scheme */
-    () => paletteOf(doc?.paletteKey ?? "purple", doc?.customPalette ?? null, doc?.theme),
-    [doc?.paletteKey, doc?.customPalette, doc?.theme],
+    /* the diagram wears the current project's colours, and the app-level theme */
+    () => paletteOf(doc?.paletteKey ?? DEFAULT_PALETTE_KEY, doc?.customPalette ?? null, shownTheme),
+    [doc?.paletteKey, doc?.customPalette, shownTheme],
   );
   const flow = useMemo(() => (doc ? buildFlow(doc, ui) : null), [doc, ui]);
   const layout = useMemo(() => (flow ? layoutFlow(flow) : null), [flow]);

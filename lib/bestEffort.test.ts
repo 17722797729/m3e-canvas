@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readDoc, readItem, readProject, readableGroups } from "./project";
 import { tryDesign } from "./ai";
 import { readShareHash, shareLink } from "./share";
-import { KIND_SPEC, ROT_MAX, SIDE_RAIL_MIN, makeItem, type Doc, type Item } from "./tokens";
+import { KIND_SPEC, DEFAULT_PALETTE_KEY, ROT_MAX, SIDE_RAIL_MIN, makeItem, type Doc, type Item } from "./tokens";
 
 /* Reading a stored document is best effort, everywhere: repair what can be repaired, drop the part
  * when nothing can draw it, and never lose the canvas over one value. */
@@ -132,7 +132,8 @@ describe("the floor a file has to clear", () => {
 
   it("keeps the fields a document needs, and the ones another build wrote", () => {
     const read = readDoc({ groups: [], frames: [], futureField: { keep: true }, title: 12 })!;
-    expect(read).toMatchObject({ title: "12", paletteKey: "purple", frame: "phone", futureField: { keep: true } });
+    /* 没写 paletteKey 的文档补的是**出厂默认配色**（Mono），不是预设里的第一套 */
+    expect(read).toMatchObject({ title: "12", paletteKey: DEFAULT_PALETTE_KEY, frame: "phone", futureField: { keep: true } });
     expect(readDoc({ groups: [], frames: [], theme: { dark: true } })!.theme).toMatchObject({ dark: true });
     expect(readDoc({ groups: [], frames: [], platform: "ios" })!.platform).toBeUndefined();
   });

@@ -1,4 +1,4 @@
-import { Doc } from "./tokens";
+import { DEFAULT_PALETTE_KEY, DEFAULT_THEME, Doc, Theme } from "./tokens";
 import { BUILTIN_CANVAS_ID, BUILTIN_CANVAS_NAME } from "./builtinCanvas";
 
 /**
@@ -10,6 +10,10 @@ import { BUILTIN_CANVAS_ID, BUILTIN_CANVAS_NAME } from "./builtinCanvas";
  * 存储分两处，各管一半：
  *   `m3e:doc`       —— 当前画布这一份（沿用老键，单画布的流程因此一行都不用改）
  *   `m3e:canvases`  —— 清单：有哪几个画布、叫什么、当前是哪一个
+ *
+ * 外观里只有主题不在这里：它是应用级的，单独存在 `m3e:theme`（见 lib/appTheme.ts），
+ * 内置那份、新建的和每一份画布都跟着它。文档里也写着 theme，但那只是导出/分享时
+ * 带着的观感，打开时上屏的以应用级主题为准。
  *
  * 切走的时候当前画布已经由文档的自动保存写进 `m3e:doc` 了，所以清单里不必再存副本；
  * 切过去就是把它读出来交给编辑器。
@@ -153,6 +157,59 @@ export function canvasCopy(prev: CanvasState, from: string, name: string, doc: D
   const canvas: Canvas = { id: newCanvasId(), name, kind: "own", at: Date.now() };
   return { list: [...prev.list, canvas], activeId: canvas.id, docs: { ...prev.docs, [canvas.id]: doc } };
 }
+
+/**
+ * 新画布沿用当前画布的哪些字段
+ *
+ * 只有"结构/平台"这一类：实现目标（platform）、屏幕模式（frame），
+ * 以及作者自己攒的组件（customParts）—— 组件是作者的内容，一直是有意继承的。
+ * 外观不在此列：配色、自定义配色回默认；主题则取**应用级**那一份（见 blankDoc）。
+ */
+export type BlankDocSource = Pick<Doc, "platform" | "frame" | "customParts">;
+
+/**
+ * 一份空白的画布：一屏、没有部件
+ *
+ * 这里是**逐字段**写明的一份新文档，而不是 `{ ...from, ... }`。
+ * 展开当前画布会把它的 paletteKey / customPalette / dynamicColor / promptEdit
+ * 一起带进新画布，「新建画布」于是顶着上一份的观感。所以 Doc 以后多出字段
+ * 也不会再悄悄漏进来：要继承什么，必须在这里写明。别把这份字段清单"化简"回展开。
+ *
+ * 主题是例外，但**不是**"跟着源文档"：它是应用级设置（lib/appTheme.ts 的
+ * `m3e:theme`），跟着作者设的那一次走。调用方把当前应用级主题传进来；
+ * 不传（纯函数调用、没有应用级设置可言）就是出厂那套 DEFAULT_THEME，
+ * 与一台全新机器上 loadAppTheme 的结果一致。
+ */
+export function blankDoc(from: BlankDocSource, home: string, theme: Theme = DEFAULT_THEME): Doc {
+  return {
+    /* 结构性的：屏幕模式与实现目标跟着作者现在这一份 —— 一块空白屏幕应该还是手机/桌面那一种 */
+    frame: from.frame,
+    platform: from.platform,
+    /* 作者自己的组件：内容，不是外观，照旧继承 */
+    customParts: from.customParts,
+    /* 内容：一屏空白，没有部件 */
+    groups: [],
+    frames: [{ id: `f${Date.now().toString(36)}`, name: home, x: 0, y: 0, w: 412, h: 892 }],
+    title: "",
+    brief: "",
+    /* 外观：配色回默认预设，不跟着当前画布 */
+    paletteKey: DEFAULT_PALETTE_KEY,
+    /* 主题是应用级设置：新画布跟着作者设的那一份，而不是这份源文档的旧观感 */
+    theme,
+  };
+}
+
+/**
+ * 把应用级主题盖到清单里每一份画布的文档上
+ *
+ * 主题改一次，所有画布都得跟着：否则切回另一份画布时，它文档里存着的那套旧主题
+ * 会把新设置顶掉。当前正开着的那一份不在清单里（它由编辑器自己那份状态承载），
+ * 由调用方一并更新 —— 见 lib/appTheme.ts 的 setAppTheme。
+ */
+export const withAppTheme = (state: CanvasState, theme: Theme): CanvasState => ({
+  ...state,
+  docs: Object.fromEntries(Object.entries(state.docs).map(([id, d]) => [id, { ...d, theme }])),
+});
 
 /** 新开一个空白画布 */
 export function canvasBlank(prev: CanvasState, name: string, doc: Doc): CanvasState {

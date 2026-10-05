@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildDocs, outlineNumbers, type DocBlock } from "@/lib/docs";
-import { Doc, paletteOf, sizeOf, type Palette } from "@/lib/tokens";
+import { Doc, DEFAULT_PALETTE_KEY, DEFAULT_THEME, Theme, paletteOf, sizeOf, type Palette } from "@/lib/tokens";
+import { loadAppTheme } from "@/lib/appTheme";
+import { useSystemTheme } from "@/lib/theme";
 import { readDoc as readStoredDoc } from "@/lib/project";
 import { LangContext, isLang, setGlobalLang, t, type Lang } from "@/lib/i18n";
 import { goToEditor } from "@/lib/appPath";
@@ -50,6 +52,8 @@ function readDoc(): Doc | null {
 export default function DocsPage() {
   const [lang, setLang] = useState<Lang | null>(null);
   const [doc, setDoc] = useState<Doc | null>(null);
+  /** 主题是应用级的：这一页的配色按 `m3e:theme` 算，不看 doc.theme */
+  const [theme, setTheme] = useState<Theme>(DEFAULT_THEME);
   const [skills, setSkills] = useState<Skill[]>(BUILTIN_SKILLS);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -76,6 +80,7 @@ export default function DocsPage() {
     setGlobalLang(initial);
     setLang(initial);
     setDoc(readDoc());
+    setTheme(loadAppTheme(window.localStorage));
     setSkills(loadSkills(window.localStorage));
     /* 只有一条 skill（作者给的模板），第一次打开就默认用它 */
     const stored = loadActiveSkillId(window.localStorage);
@@ -87,7 +92,9 @@ export default function DocsPage() {
   }, []);
 
   const ui: Lang = lang ?? "en";
-  const p: Palette = useMemo(() => paletteOf(doc?.paletteKey ?? "purple", doc?.customPalette ?? null, doc?.theme), [doc?.paletteKey, doc?.customPalette, doc?.theme]);
+  /* 深浅色模式：开了 bothModes 时上屏的深浅跟系统走（lib/systemTheme.ts） */
+  const shownTheme = useSystemTheme(theme);
+  const p: Palette = useMemo(() => paletteOf(doc?.paletteKey ?? DEFAULT_PALETTE_KEY, doc?.customPalette ?? null, shownTheme), [doc?.paletteKey, doc?.customPalette, shownTheme]);
   const widths = useMemo(() => {
     const out: Record<string, number> = {};
     for (const f of doc?.frames ?? []) out[f.id] = f.w ?? 412;

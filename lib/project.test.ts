@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { isProject, projectFileName, readableGroups, readProject } from "./project";
 import { updateRail } from "./rail";
-import { KIND_ORDER, VARIANTS, railExpansionSide, type Doc, type Item } from "./tokens";
+import { DEFAULT_PALETTE_KEY, KIND_ORDER, VARIANTS, railExpansionSide, type Doc, type Item } from "./tokens";
 
 const item = (): Item => ({ id: "item", kind: "button", label: "Save", icon: null, variant: "filled" });
 const doc = (): Doc => ({
@@ -211,7 +211,7 @@ describe("readProject", () => {
     /* a field another build wrote is kept exactly as it was… */
     expect(saved).toMatchObject({ futureField: { keep: true } });
     /* …and the fields a document needs are filled in, so every reader downstream has a document */
-    expect(saved).toMatchObject({ groups: [], frames: [], title: "", brief: "", paletteKey: "purple", frame: "phone" });
+    expect(saved).toMatchObject({ groups: [], frames: [], title: "", brief: "", paletteKey: DEFAULT_PALETTE_KEY, frame: "phone" });
   });
 
   it.each(["", "{", "null", "[]", '{"groups":[],"frames":{}}'])("returns null for invalid file contents %j", async (text) => {

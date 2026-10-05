@@ -144,6 +144,9 @@ import {
   assetPillMetrics,
   assetPillRadius,
   assetPillWidth,
+  /* 物品格画圆角用的那个正方形，以及作者设过 / 没设时该画多圆 */
+  itemCellBox,
+  itemCellRadius,
   hasStateRow,
   hasTimer,
   hidesAutoClose,
@@ -1136,6 +1139,8 @@ export function Inspector({
     item.kind === "map" ||
     item.kind === "invGrid" ||
     item.kind === "assetPill" ||
+    /* 物品格的圆角也是作者设的（和资产框同一个「圆角」控件），所以这个开关也要放它进来 */
+    item.kind === "itemCell" ||
     item.kind === "box";
 
   return (
@@ -2560,6 +2565,25 @@ export function Inspector({
                   value={assetPillRadius(item)}
                   min={0}
                   max={half}
+                  step={1}
+                  onChange={(radiusTop) => onChange({ radiusTop })}
+                  p={p}
+                />
+              );
+            })()}
+
+            {hasRadius && item.kind === "itemCell" && (() => {
+              /* 物品格的圆角：一个数管四条边，用的还是图片/资产框那个「圆角」控件。不设就是直角
+                 （用户要求的默认），滑杆上限是格子画出来的那个正方形的一半 —— 物品格是 60×76
+                 （正方形 + 名字一行），封顶要用正方形，不是部件的高度。 */
+              const side = itemCellBox(item);
+              return (
+                <Slider
+                  icon="rounded_corner"
+                  title={t("cornerRadius", lang)}
+                  value={itemCellRadius(item)}
+                  min={0}
+                  max={Math.floor(side / 2)}
                   step={1}
                   onChange={(radiusTop) => onChange({ radiusTop })}
                   p={p}

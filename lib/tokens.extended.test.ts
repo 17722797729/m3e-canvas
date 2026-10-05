@@ -318,11 +318,13 @@ describe("iconSlotsOf / setIconSlot", () => {
 
 describe("normalizeTheme", () => {
   it("returns the documented defaults when given undefined", () => {
+    /* 出厂默认：Mono 配色（DEFAULT_PALETTE_KEY）+ 高对比度 + 跟随系统深浅色。
+       dark 仍是 false —— 跟随系统时它只是"系统还没读到"的兜底。 */
     const t = normalizeTheme(undefined);
     expect(t).toEqual({
       dark: false,
-      bothModes: false,
-      contrast: "standard",
+      bothModes: true,
+      contrast: "high",
       shape: "rounded",
       font: "roboto",
       emphasized: false,

@@ -446,6 +446,13 @@ const PRESETS: Omit<Palette, "secondary">[] = [
 ];
 export const PALETTES: Palette[] = PRESETS.map((p) => ({ ...p, secondary: schemeFromSeed(p.primary, p.label, { keepChroma: true }).secondary }));
 
+/** 一份画布的默认配色：Mono（`PALETTES` 里 key 为 `"mono"` 的那一套，预设里的第五套）。
+ *  新建画布、缺 paletteKey 的老文档、清空后回落的默认值都读它，
+ *  免得"默认配色"在几处各写一遍字符串。
+ *  注意它**不是** `PALETTES[0]`（那是 Purple）：出厂默认已经是 Mono，
+ *  读文档补默认值的地方要么用它，要么写 `PALETTES[0].key` 就等于把默认配方又写死回紫色。 */
+export const DEFAULT_PALETTE_KEY = "mono";
+
 /* ---------- theme: the four expressive axes ---------- */
 export type ShapeScale = "square" | "rounded" | "full";
 export type FontKey = "roboto" | "robotoFlex" | "robotoSerif" | "system";
@@ -454,7 +461,9 @@ export type { Contrast };
 
 export type Theme = {
   dark: boolean;
-  /** the app follows the system setting; the canvas shows the mode chosen in `dark` */
+  /** 跟随系统深浅色（深浅色模式）：开着时上屏的 `dark` 由系统决定，
+   *  见 lib/systemTheme.ts 的 themeForSystem；`dark` 这时只是"系统还不知道"时的兜底
+   *  （SSR / 首帧），以及关掉它之后要用哪一个 */
   bothModes: boolean;
   contrast: Contrast;
   shape: ShapeScale;
@@ -464,7 +473,10 @@ export type Theme = {
   motion: MotionScheme;
 };
 
-export const DEFAULT_THEME: Theme = { dark: false, bothModes: false, contrast: "standard", shape: "rounded", font: "roboto", emphasized: false, motion: "standard" };
+/** 出厂设置：Mono 配色 + 高对比度 + 跟随系统深浅色（深浅色模式），其余轴是 M3 的标准那套。
+ *  `dark: false` 是有意的：跟随系统时真正的深/浅由 lib/systemTheme.ts 决定，
+ *  这里只是系统还没读到之前的兜底（SSR 与首帧画的就是它），以及关掉跟随系统后的落点。 */
+export const DEFAULT_THEME: Theme = { dark: false, bothModes: true, contrast: "high", shape: "rounded", font: "roboto", emphasized: false, motion: "standard" };
 
 /** a stored theme with any missing or unknown field replaced by its default */
 export function normalizeTheme(t: Partial<Theme> | undefined): Theme {
@@ -545,7 +557,10 @@ export function scaleR(r: number): number {
  *  fine-tuned custom scheme are light and standard contrast; dark mode and the
  *  other contrast levels are generated from the same seed. */
 export function paletteOf(key: string, custom?: Palette | null, theme?: Theme): Palette {
-  const base = (key === "custom" && custom) || PALETTES.find((p) => p.key === key) || PALETTES[0];
+  /* 认不出的 key（老文档、别的构建写下的值）落在**出厂默认配色**上，而不是预设里的第一套：
+     "默认是哪一套"只有 DEFAULT_PALETTE_KEY 一处。`PALETTES[0]` 只在连默认都查不到时兜底。 */
+  const fallback = PALETTES.find((p) => p.key === DEFAULT_PALETTE_KEY) ?? PALETTES[0];
+  const base = (key === "custom" && custom) || PALETTES.find((p) => p.key === key) || fallback;
   if (!theme || (!theme.dark && theme.contrast === "standard")) {
     /* Saved custom schemes may predate the secondary role. */
     return base.secondary ? base : { ...base, secondary: schemeFromSeed(base.seed ?? base.primary).secondary };
@@ -936,8 +951,18 @@ export const itemCellBox = (it: Item, width = it.size ?? KIND_SPEC.itemCell.defS
   const lines = itemCellLines(it);
   return Math.max(8, Math.min(width, (it.size2 ?? itemCellHeight(width, lines)) - ITEM_CELL_LINE * lines));
 };
-/** The corner an item cell is rounded by, at the document's own shape scale. */
-export const ITEM_CELL_RADIUS = 10;
+/** 物品格的圆角：作者设的那个数（radiusTop，和资产框共用同一个「圆角」控件），按**格子画出来的
+ *  正方形的一半**封顶 —— 格子是 60×76 的部件（正方形 + 名字那一行），量圆角要用里面那个正方形，
+ *  不是部件的高度。不设就是 0，也就是直角。
+ *
+ *  The corner an item cell is drawn with, held inside what the drawn square allows — past half that
+ *  square a corner stops meaning anything (the browser distorts the shape). Zero, the default the
+ *  author asked for, is a sharp rectangle; half the square makes it a circle. */
+export const itemCellRadius = (it: Partial<Item>, side = itemCellBox(it as Item)): number =>
+  Math.min(Math.floor(side / 2), Math.max(0, Math.round(it.radiusTop ?? 0)));
+/** 用户明确要求：物品格默认是直角 —— 所以这个"kind 自己的默认圆角"是 0（名字里 itemCellRadius
+ *  才是真正画出来的圆角，作者设过就按作者的、并按正方形的一半封顶）。 */
+export const ITEM_CELL_RADIUS = 0;
 /** The surface a fresh cell sits on, and the green a fresh quality mark is written in — the two the
  *  背包格子 composite was drawn with. */
 export const ITEM_CELL_FILL: ColorToken = "surfaceContainerHigh";
@@ -4264,6 +4289,10 @@ export function baseRadii(it: Item): Radii {
          capsule when they round it to half the height — whatever the shape scale says (see
          assetPillRadius) */
       return uniformRadii(assetPillRadius(it));
+    case "itemCell":
+      /* 物品格的圆角：作者用「圆角」控件设的那个数，按格子画出来的正方形的一半封顶（见
+         itemCellRadius）。不设就是直角 —— 用户要求的默认。assetPill 是另一个 kind，各画各的。 */
+      return uniformRadii(itemCellRadius(it));
     case "chip":
     case "splitButton":
     case "radio":

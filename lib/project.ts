@@ -1,4 +1,5 @@
 import {
+  DEFAULT_PALETTE_KEY,
   Doc,
   Frame,
   Group,
@@ -9,7 +10,6 @@ import {
   MARK_GAP_MAX,
   LEGACY_KINDS,
   NavTab,
-  PALETTES,
   PartFlow,
   PlacedItem,
   Prize,
@@ -22,6 +22,7 @@ import {
   TIMER_VALUE_MAX,
   VARIANTS,
   assetPillRadius,
+  itemCellRadius,
   clamp,
   Kind,
   isButtonShape,
@@ -447,6 +448,9 @@ export function readItem(value: unknown): Item | null {
   /* an asset frame draws its corner from its own height, so a stored number is only ever held inside
      that same range — clamped, never a reason to lose the part */
   if (kind === "assetPill" && typeof it.radiusTop === "number") put(it, "radiusTop", assetPillRadius(it as unknown as Item));
+  /* 物品格同理：它画圆角用的是格子那个正方形（不是部件的高度），存下来的数也按同一个范围夹住 ——
+     越界的值夹回来，绝不因此丢掉部件或整份文档（best effort）。 */
+  if (kind === "itemCell" && typeof it.radiusTop === "number") put(it, "radiusTop", itemCellRadius(it as unknown as Item));
   /* a direction wheel carries no value and no maximum any more (see its spec): an older file is still
      opened, and the two fields are let go — a number nobody can set would leave a stuck pad */
   if (kind === "joystick") {
@@ -588,7 +592,9 @@ export function readDoc(value: unknown): Doc | null {
   doc.frames = value.frames.map((frame) => readFrame(frame)).filter((frame): frame is Frame => !!frame);
   doc.title = readText(value.title) ?? "";
   doc.brief = readText(value.brief) ?? "";
-  doc.paletteKey = readText(value.paletteKey) ?? PALETTES[0].key;
+  /* 没写 paletteKey 的文档（内置那份就是）落在**出厂默认配色**上，
+     和新建画布同一套；不能再写 PALETTES[0]（那是 Purple，默认已经改成 Mono）。 */
+  doc.paletteKey = readText(value.paletteKey) ?? DEFAULT_PALETTE_KEY;
   doc.frame = value.frame === "blank" ? "blank" : "phone";
   put(doc, "platform", readOne(value.platform, isPlatform));
   /* normalize once, so a scheme saved before the secondary role gets it and keeps it on re-save */

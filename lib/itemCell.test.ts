@@ -5,6 +5,7 @@ import { isPlacedItem, readDoc } from "./project";
 import {
   ITEM_CELL_FILL,
   TIMED_KINDS,
+  baseRadii,
   fillColor,
   fillInk,
   hasTimer,
@@ -19,9 +20,11 @@ import {
   itemCellBox,
   itemCellHeight,
   itemCellLines,
+  itemCellRadius,
   makeItem,
   PALETTES,
   scaleR,
+  setGlobalShape,
   sizeOf,
   type Item,
 } from "./tokens";
@@ -48,7 +51,9 @@ describe("the item cell as a kind", () => {
     expect([spec.w, spec.h]).toEqual([60, 76]);
     expect(spec.defBadge2Text).toBe("普通");
     expect(spec.defBadgeText).toBe("新");
+    /* 用户要求默认直角：kind 自己的默认圆角是 0 */
     expect(spec.radius).toBe(ITEM_CELL_RADIUS);
+    expect(spec.radius).toBe(0);
   });
 
   it("has no countdown of its own: the timer belongs to the function button alone", () => {
@@ -120,6 +125,55 @@ describe("the cell's own box", () => {
     /* squeezed below the cell's own height, the square gives way first — never the name's line */
     expect(itemCellBox(part({ label: "树叶", size2: 40 }), 60)).toBe(40 - ITEM_CELL_LINE);
     expect(itemCellBox(part({ label: "树叶", size2: 0 }), 60)).toBe(8);
+  });
+});
+
+/* 用户要求：物品格的圆角由作者用和资产框同一个「圆角」控件设，默认是直角（0）。
+   画出来的数按**格子那个正方形**的一半封顶 —— 物品格是 60×76 的部件（正方形 + 名字一行），
+   封顶要用里面的 60×60，不是部件的高度 76。 */
+describe("the cell's corner", () => {
+  it("is a sharp rectangle until the author sets one", () => {
+    const it = part();
+    expect(ITEM_CELL_RADIUS).toBe(0);
+    expect(it.radiusTop).toBeUndefined();
+    expect(itemCellRadius(it)).toBe(0);
+    expect(baseRadii(it).tl).toBe(0);
+    /* whatever its size: a cell nobody rounded stays sharp */
+    expect(baseRadii(part({ size: 96 })).tl).toBe(0);
+    expect(baseRadii(part({ size: 96, size2: 120 })).tl).toBe(0);
+    expect(sizeOf(part({ size: 96, size2: 120 }), {})).toEqual({ w: 96, h: 120 });
+  });
+
+  it("draws the corner its author set, held inside the square the cell is drawn at", () => {
+    expect(itemCellRadius(part({ radiusTop: 8 }))).toBe(8);
+    expect(baseRadii(part({ radiusTop: 8 })).tl).toBe(8);
+    /* 封顶是正方形的一半：60×76 的部件里是 30，不是部件高度的一半（38） */
+    expect(itemCellHeight(60, 1)).toBe(76);
+    expect(itemCellRadius(part({ radiusTop: 99 }))).toBe(30);
+    expect(baseRadii(part({ radiusTop: 99 })).tl).toBe(30);
+    /* 作者钉了矮格子，正方形跟着小，封顶也跟着小 */
+    expect(itemCellBox(part({ size2: 40 }))).toBe(24);
+    expect(itemCellRadius(part({ radiusTop: 99, size2: 40 }))).toBe(12);
+    expect(baseRadii(part({ radiusTop: 99, size2: 40 })).tl).toBe(12);
+    /* 设过的数留在部件上，封顶只发生在画的时候 */
+    const big = part({ radiusTop: 60 });
+    expect(big.radiusTop).toBe(60);
+    expect(itemCellRadius(big)).toBe(30);
+    /* 负数是直角 */
+    expect(itemCellRadius(part({ radiusTop: -5 }))).toBe(0);
+    expect(baseRadii(part({ radiusTop: -5 })).tl).toBe(0);
+    /* 小数按四舍五入画 */
+    expect(itemCellRadius(part({ radiusTop: 7.6 }))).toBe(8);
+  });
+
+  it("does not read its corner from the document's shape scale", () => {
+    /* 圆角是作者的数字，和主题的 shape 无关 —— 和资产框同一套做法 */
+    setGlobalShape("square");
+    expect(baseRadii(part({ radiusTop: 6 })).tl).toBe(6);
+    expect(baseRadii(part()).tl).toBe(0);
+    setGlobalShape("full");
+    expect(baseRadii(part({ radiusTop: 6 })).tl).toBe(6);
+    setGlobalShape("rounded");
   });
 });
 
@@ -212,5 +266,22 @@ describe("an item cell in a saved document", () => {
     expect(isPlacedItem({ ...makeItem("itemCell"), badge2: "yes" })).toBe(false);
     expect(isPlacedItem({ ...makeItem("itemCell"), badge2Text: 3 })).toBe(false);
     expect(isPlacedItem({ ...makeItem("itemCell"), badge2Color: "not a colour" })).toBe(false);
+  });
+
+  it("holds a stored corner inside its range instead of losing the part", () => {
+    /* best effort：越界的圆角夹回来，不合法就放掉，部件和整份文档都还在 */
+    expect(loaded({ radiusTop: 999 })).toMatchObject({ kind: "itemCell", radiusTop: 30 });
+    expect(isPlacedItem(loaded({ radiusTop: 999 }))).toBe(true);
+    expect(baseRadii(loaded({ radiusTop: 999 })).tl).toBe(30);
+    expect(loaded({ radiusTop: -5 })).toMatchObject({ radiusTop: 0 });
+    /* 矮格子按自己的正方形封顶，不是按存下来的数 */
+    expect(loaded({ radiusTop: 999, size2: 40 })).toMatchObject({ radiusTop: 12 });
+    /* 根本不是数的就放掉：部件还是直角 */
+    const odd = loaded({ radiusTop: "round" as never });
+    expect(odd).not.toHaveProperty("radiusTop");
+    expect(itemCellRadius(odd)).toBe(0);
+    /* 其余字段一个不少 */
+    expect(odd).toMatchObject({ kind: "itemCell", supporting: "23", icon: "eco" });
+    expect(sizeOf(odd, {})).toEqual({ w: 60, h: 76 });
   });
 });

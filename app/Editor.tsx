@@ -12,7 +12,7 @@ import { AnimatePresence, motion, useReducedMotion, useSpring } from "motion/rea
 import { toPng } from "html-to-image";
 import { buildPrompt, effectivePrompt } from "@/lib/prompt";
 import { alignTo, linesX, linesY, type AlignGuide, type AlignLine } from "@/lib/guides";
-import { clockText, countdownLeft, Action, actionPatchFor, actionsOf, Axis, BACK_TARGET, baseRadii, explodeGroup, freeRadii, radiiOfRuns, BEZEL, canJoin, clamp, connectSpecOf, Doc, isPlatform, Platform, Frame, Place, AlignKind, FramePreset, FRAME_GAP, FRAME_LABEL_H, FrameMode, frameOfGroup, framePresetPatch, framePresetOf, frameRadius, frameRect, childAt, childDragFree, pruneParts, childDragRoom, findItemIn, foldMargins, selectedAncestor, foldPlace, keepPanelSlots, needsTabPanels, panelSlotFor, refillPanels, restorePanel, slotsOf, tabIndexOf, tabPanelId, takesText, tabPanelsPatch, liftAbove, frameSizeOf, DEFAULT_OVERLAY_LEVEL, isOverlayFrame, isOverlayItem, overlayLevelOf, overlayLevelOfFrame, carryItemSize, defaultPlatformOf, GAP, Group, groupBounds, Item, Kind, KIND_ORDER, KIND_SPEC, PlacedItem, CustomPart, compositeInstance, resizedChildren, withGridCells, isGridCell, isTabPanel, isTabRow, ruleTargets, readoutOf, readText, byLayer, copySubtree, syncTabPanels, itemsOf, layerOf, parentOf, subtreeOf, collapseFree, layoutOf, lerp, makeItem, DEFAULT_THEME, Theme, CONTENT_W, fontFamilyOf, uiFontFamily, normalizeTheme, setGlobalShape, MEASURED, NAV_BAR_H, Palette, paletteOf, pageTintOf, PHONE_H, PHONE_MARGIN, PHONE_W, PULL_EXP, Radii, SETTLE_MS, sizeOf, SNAP_CROSS, SNAP_MAIN, Transition, TRANSITIONS, uid, uniformRadii, FULL_WIDTH, fitHeight, railExpansionSide, isWideRail, LAYER_DEFAULT, childShown, childDrawn, drawnIds, railMetrics, RAIL_TOP, migrateFlows, fillColor, } from "@/lib/tokens";
+import { clockText, countdownLeft, Action, actionPatchFor, actionsOf, Axis, BACK_TARGET, baseRadii, explodeGroup, freeRadii, radiiOfRuns, BEZEL, canJoin, clamp, connectSpecOf, Doc, isPlatform, Platform, Frame, Place, AlignKind, FramePreset, FRAME_GAP, FRAME_LABEL_H, FrameMode, frameOfGroup, framePresetPatch, framePresetOf, frameRadius, frameRect, childAt, childDragFree, pruneParts, childDragRoom, findItemIn, foldMargins, selectedAncestor, foldPlace, keepPanelSlots, needsTabPanels, panelSlotFor, refillPanels, restorePanel, slotsOf, tabIndexOf, tabPanelId, takesText, tabPanelsPatch, liftAbove, frameSizeOf, DEFAULT_OVERLAY_LEVEL, isOverlayFrame, isOverlayItem, overlayLevelOf, overlayLevelOfFrame, carryItemSize, defaultPlatformOf, GAP, Group, groupBounds, Item, Kind, KIND_ORDER, KIND_SPEC, PlacedItem, CustomPart, compositeInstance, resizedChildren, withGridCells, isGridCell, isTabPanel, isTabRow, ruleTargets, readoutOf, readText, byLayer, copySubtree, syncTabPanels, itemsOf, layerOf, parentOf, subtreeOf, collapseFree, layoutOf, lerp, makeItem, DEFAULT_THEME, DEFAULT_PALETTE_KEY, Theme, CONTENT_W, fontFamilyOf, uiFontFamily, setGlobalShape, MEASURED, NAV_BAR_H, Palette, paletteOf, pageTintOf, PHONE_H, PHONE_MARGIN, PHONE_W, PULL_EXP, Radii, SETTLE_MS, sizeOf, SNAP_CROSS, SNAP_MAIN, Transition, TRANSITIONS, uid, uniformRadii, FULL_WIDTH, fitHeight, railExpansionSide, isWideRail, LAYER_DEFAULT, childShown, childDrawn, drawnIds, railMetrics, RAIL_TOP, migrateFlows, fillColor, } from "@/lib/tokens";
 import { GridCellMarks, Icon, M3Node, M3Static, MeasuredContent } from "@/components/M3Node";
 import { LayersPanel } from "@/components/Layers";
 import { AuditPanel } from "@/components/Audit";
@@ -41,7 +41,7 @@ import { StaticScreen } from "@/components/StaticFrame";
 import { captureOptions as thumbCaptureOptions, iconFontEmbedCss } from "@/lib/marketThumbnail";
 import { ColorPanel } from "@/components/ColorPanel";
 import { MotionPanel, ShapePanel, TypePanel } from "@/components/ThemePanel";
-import { ThemeContext, ensureFontLoaded, ensureLangFontLoaded } from "@/lib/theme";
+import { ThemeContext, ensureFontLoaded, ensureLangFontLoaded, useSystemDark } from "@/lib/theme";
 import { BottomSheet, MobileActionBar, MobileInspector, MobileLang, MobileSettings } from "@/components/Mobile";
 import { ConfirmDialog, FoldButton, IconBtn, PromptDialog, Segmented } from "@/components/ui";
 import { KIND_TEXT, Lang, LangContext, SEED_TEXT, adoptDoc, getLang, overlayLevelText, setGlobalLang, t, translateDoc } from "@/lib/i18n";
@@ -56,6 +56,7 @@ import { BUILTIN_CANVAS_DOC, BUILTIN_CANVAS_ID, BUILTIN_CANVAS_NAME } from "@/li
 import {
   CanvasState as CanvasTabs,
   activeCanvas,
+  blankDoc,
   canvasBlank,
   canvasClosed,
   canvasCopy,
@@ -68,6 +69,7 @@ import {
   withDoc,
   withName,
 } from "@/lib/canvases";
+import { adoptAppTheme, setAppTheme, themeForDoc } from "@/lib/appTheme";
 import { WorkspacePanel } from "@/components/WorkspacePanel";
 
 /** the screens while a model drafts: primary, tertiary and primary container, drifting */
@@ -349,11 +351,13 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     setGroupState((prev) => constrainModalRails(typeof next === "function" ? next(prev) : next));
   }, []);
   const [frames, setFrames] = useState<Frame[]>(() => [{ ...SEED_FRAMES[0], name: t("home", initialLang) }]);
-  const [paletteKey, setPaletteKey] = useState("purple");
+  const [paletteKey, setPaletteKey] = useState(DEFAULT_PALETTE_KEY);
   const [customPalette, setCustomPalette] = useState<Palette | null>(null);
   const [dynamicColor, setDynamicColor] = useState(false);
   const [theme, setTheme] = useState<Theme>(DEFAULT_THEME);
-  const patchTheme = (patch: Partial<Theme>) => setTheme((t) => ({ ...t, ...patch }));
+  /** 应用级主题，给"早于本次渲染"建出来的回调读（applyDoc、新建画布） */
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   const [frame, setFrame] = useState<FrameMode>("phone");
   const changeLanguage = (next: Lang) => {
     setGlobalLang(next);
@@ -463,9 +467,14 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   const aiNoteTimer = useRef<number | null>(null);
   const aiAbortRef = useRef<AbortController | null>(null);
 
-  const p = paletteOf(paletteKey, customPalette, theme);
+  /* 上屏的主题：应用级那份（themeForDoc 的规则）+ 深浅色模式（开了 bothModes 就跟系统走）。
+     theme 这份 state 仍然是**作者设的那套**（会存 `m3e:theme`），
+     系统值只作用在渲染上，不会写回作者的设置 —— 见 lib/systemTheme.ts。 */
+  const systemDark = useSystemDark();
+  const shownTheme = themeForDoc(theme, undefined, systemDark);
+  const p = paletteOf(paletteKey, customPalette, shownTheme);
   /* corner helpers read the shape scale outside React; keep it current before anything renders */
-  setGlobalShape(theme.shape);
+  setGlobalShape(shownTheme.shape);
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const measureEls = useRef<Map<string, HTMLElement>>(new Map());
@@ -679,14 +688,15 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       if (Array.isArray(doc.frames)) setFrames(owned.frames);
     }
     if (typeof doc.paletteKey === "string" && doc.paletteKey) setPaletteKey(doc.paletteKey);
-    else if (reset) setPaletteKey("purple");
+    else if (reset) setPaletteKey(DEFAULT_PALETTE_KEY);
     /* normalize once so a scheme saved before the secondary role gets it and keeps it on re-save */
     if (doc.customPalette && typeof doc.customPalette.primary === "string") setCustomPalette(paletteOf("custom", doc.customPalette));
     else if (reset) setCustomPalette(null);
     if (typeof doc.dynamicColor === "boolean") setDynamicColor(doc.dynamicColor);
     else if (reset) setDynamicColor(false);
-    if (doc.theme && typeof doc.theme === "object") setTheme(normalizeTheme(doc.theme));
-    else if (reset) setTheme(normalizeTheme(undefined));
+    /* 主题不读文档里那份：主题是应用级设置（lib/appTheme.ts），打开哪一份文档
+       上屏的都是它。这里是"哪个主题上屏"的唯一落点 —— themeForDoc 就是那条规则。 */
+    setTheme(themeForDoc(themeRef.current, doc));
     if (typeof doc.title === "string") setTitle(doc.title);
     else if (reset) setTitle("");
     if (typeof doc.brief === "string") setBrief(doc.brief);
@@ -704,22 +714,25 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
     if (loadedRef.current) return;
     try {
       /* 画布清单先读：没有 `m3e:doc` 时要靠它决定"打开时该显示哪一份" */
-      const tabs = ensureBuiltin(loadCanvases(window.localStorage), BUILTIN_CANVAS_DOC);
-      setCanvases(tabs);
+      const tabs0 = ensureBuiltin(loadCanvases(window.localStorage), BUILTIN_CANVAS_DOC);
       const d = localStorage.getItem(DOC_KEY);
-      const saved = tabs.docs[tabs.activeId];
-      if (d) {
+      const saved = tabs0.docs[tabs0.activeId];
+      /* 当前这一份文档先读出来：应用级主题第一次建立时要看它（见下）。
+         每一份存下来的文档都走同一个读取器（见 readDoc）：读不出来的部件丢掉，
+         坏字段就地修好，而不是把整份画布判为无效 */
+      const current = d ? readDoc(JSON.parse(d)) : saved ? readDoc(saved) : null;
+      /* 应用级主题：作者设过一次就一直在 `m3e:theme`。这一版之前没有这个键时，
+         把"现在正在看的这一份"的主题升成全局设置（没有当前文档就用出厂那套），
+         并盖到清单里每一份画布上，免得它们的旧观感在切换时回来。 */
+      const adopted = adoptAppTheme(window.localStorage, current, tabs0);
+      themeRef.current = adopted.theme;
+      setTheme(adopted.theme);
+      setCanvases(adopted.canvases);
+      if (current) {
         hadDocRef.current = true;
-        /* 每一份存下来的文档都走同一个读取器（见 readDoc）：读不出来的部件丢掉，坏字段就地修好，
-           而不是把整份画布判为无效 */
-        const stored = readDoc(JSON.parse(d));
-        if (stored) applyDoc(stored, false);
+        /* 从 `m3e:doc` 来的是"续上"（reset=false），从清单里来的是"装进编辑器"（reset=true） */
+        applyDoc(current, !d);
         // frame mode is decided by the device (media-query effect), not restored
-      } else if (saved) {
-        /* 当前画布是内置那份（或换过机器）：它存在清单里，就从那儿装进编辑器 */
-        hadDocRef.current = true;
-        const stored = readDoc(saved);
-        if (stored) applyDoc(stored, true);
       }
       const before = d ? localStorage.getItem(BEFORE_KEY) : null;
       if (!d) localStorage.removeItem(BEFORE_KEY);
@@ -3354,15 +3367,16 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
    * 走 importDoc，所以这一步是可撤销的（和打开文件、清空画布同一条路）。
    * 屏幕之外的设置（配色、形状、字体、动效）留着不动：模板给的是屏幕，不是整套外观。
    */
-  /** 一份空白的画布：一屏、没有部件，外观设置沿用现在这份 */
-  const emptyDoc = (): Doc => ({
-    ...docRef.current,
-    title: "",
-    brief: "",
-    frames: [{ id: `f${Date.now().toString(36)}`, name: t("home", lang), x: 0, y: 0, w: 412, h: 892 }],
-    groups: [],
-    customParts: docRef.current.customParts,
-  });
+  /**
+   * 一份空白的画布：一屏、没有部件
+   *
+   * 配色回默认、自定义配色/动态取色/手改提示词都不带过来（逐字段的清单在
+   * lib/canvases.ts 的 blankDoc 里，那里写了为什么不能改成展开当前文档）。
+   * **主题不是"回默认"而是取应用级那一条**：作者设过一次深色/高对比度，
+   * 新建的这份也得是它。只有结构性的设置跟着当前画布走：
+   * 实现目标、屏幕模式，以及作者自己的组件。
+   */
+  const emptyDoc = (): Doc => blankDoc(docRef.current, t("home", lang), themeRef.current);
 
   /**
    * 切到另一个画布
@@ -3609,7 +3623,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           groups={gs.map((g) => ({ ...g, x: g.x - f.x, y: g.y - f.y }))}
           widths={widths}
           palette={p}
-          theme={theme}
+          theme={shownTheme}
           lang={lang}
           w={w}
           h={h}
@@ -4042,6 +4056,21 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   /** the same document, for callbacks that were created on an earlier render */
   const docRef = useRef(doc);
   docRef.current = doc;
+
+  /**
+   * 改一条主题轴：**每一个主题控件的唯一落点**
+   *
+   * 颜色页（亮度、跟随系统、对比度）、形状页、字体页、动效页都调它，谁也不自己去 setTheme。
+   * setAppTheme 一次写三处：应用级 store（`m3e:theme`）、当前这份文档、以及清单里
+   * 每一份画布的文档（落盘），所以之后切到哪一份都不会把旧主题带回来。当前这份
+   * 文档进 `m3e:doc` 仍由下面的自动保存完成 —— 主题进了 doc，它自然会写。
+   */
+  const patchTheme = (patch: Partial<Theme>) => {
+    const next = setAppTheme(window.localStorage, canvases, docRef.current, patch);
+    themeRef.current = next.theme;
+    setTheme(next.theme);
+    setCanvases(next.canvases);
+  };
 
   /* The walkthrough report: the rail badge counts it and the panel lists it, so it is worked
      out once here rather than twice from the same inputs. */
@@ -4598,7 +4627,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
 
   return (
     <LangContext.Provider value={lang}>
-    <ThemeContext.Provider value={theme}>
+    <ThemeContext.Provider value={shownTheme}>
       <div
         className={revealing ? "app-root m3e-reveal" : "app-root"}
         /* the preview sits outside this tree and owns the keyboard while it is up */
@@ -4870,7 +4899,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                 ) : leftTab === "market" ? (
                   <MarketPanel
                     p={p}
-                    theme={theme}
+                    theme={shownTheme}
                     refreshKey={marketKey}
                     onAddPart={addMarketPart}
                     onToast={showToast}
@@ -4902,7 +4931,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                 ) : leftTab === "workspace" ? (
                   <WorkspacePanel
                     p={p}
-                    theme={theme}
+                    theme={shownTheme}
                     canvases={canvases}
                     currentName={doc.title}
                     onNewCanvas={addCanvas}
@@ -5806,7 +5835,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           open={uploadOpen}
           onClose={() => setUploadOpen(false)}
           doc={{ groups, frames, widths }}
-          theme={theme}
+          theme={shownTheme}
           /* 上传的是面板正在处理的那一屏，没有选中就退回第一屏 */
           frame={screenInPlay ?? frames[0] ?? null}
           onToast={showToast}

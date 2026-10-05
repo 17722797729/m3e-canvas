@@ -17,8 +17,8 @@ import {
   FN_BUTTON_LINE,
   fnButtonNameInk,
   ITEM_CELL_FILL,
-  ITEM_CELL_RADIUS,
   itemCellBox,
+  itemCellRadius,
   roundShapeRadius,
   timerOn,
   timerTicks,
@@ -1160,7 +1160,7 @@ function Body({
               top: 0,
               width: cell,
               height: cell,
-              borderRadius: scaleR(ITEM_CELL_RADIUS),
+              borderRadius: itemCellRadius(item, cell),
               background: fillColor(item.fill, p, ITEM_CELL_FILL),
               color: fillInk(item.fill, p, ITEM_CELL_FILL),
               /* the hairline the author set rings the cell itself, not the box around the name */

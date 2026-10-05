@@ -626,6 +626,11 @@ export const UI = {
   favorites: { ja: "お気に入り", en: "Favorites", zh: "收藏" },
   addFavorite: { ja: "お気に入りに追加", en: "Add to favorites", zh: "添加到收藏" },
   removeFavorite: { ja: "お気に入りから外す", en: "Remove from favorites", zh: "取消收藏" },
+  favoritesHint: {
+    ja: "まだお気に入りがありません。部品の右上の星を押すと、ここに出ます。",
+    en: "No favorites yet. Tap the star on a part's corner and it shows up here.",
+    zh: "还没有收藏。点组件卡片右上角的星标，收藏的组件会出现在这里。",
+  },
   clear: { ja: "クリア", en: "Clear", zh: "清除" },
   language: { ja: "言語", en: "Language", zh: "语言" },
   // toolbar
@@ -1411,7 +1416,7 @@ export const KO: Record<UIKey, string> = {
   flowLink: "기존 상태로",
   flowTo: "이동할 곳",
   flowAddDo: "동작 추가",
-  search: "검색", favorites: "즐겨찾기", addFavorite: "즐겨찾기에 추가", removeFavorite: "즐겨찾기에서 제거", clear: "지우기", language: "언어",
+  search: "검색", favorites: "즐겨찾기", addFavorite: "즐겨찾기에 추가", removeFavorite: "즐겨찾기에서 제거", favoritesHint: "아직 즐겨찾기가 없습니다. 부품 오른쪽 위의 별을 누르면 여기에 표시됩니다.", clear: "지우기", language: "언어",
   select: "선택 (V)", hand: "손 도구 (H / Space)", blank: "빈 캔버스", phone: "휴대전화 화면", addFrame: "화면 추가", overlayNoBg: "떠서 열리는 대화상자는 안의 부품만 표시됩니다(페이지 배경은 쓰지 않습니다). 전체 화면 레이어로 바꾸면 페이지 배경이 쓰입니다.", preview: "미리보기 (P)",
   zoomIn: "확대 (+)", zoomOut: "축소 (-)", fit: "전체 맞춤 (0)", zoomLevel: "확대/축소 비율(% 입력)", undo: "실행 취소 (Ctrl+Z)", redo: "다시 실행 (Ctrl+Shift+Z)",
   clearAll: "모두 지우기", clearAllTitle: "캔버스를 비울까요?", clearAllBody: "모든 화면과 부품을 삭제합니다. 실행 취소(Ctrl+Z)로 복원할 수 있습니다.",

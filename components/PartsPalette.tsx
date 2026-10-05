@@ -1,18 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CATEGORIES, CustomPart, KIND_ORDER, KIND_SPEC, Category, Kind, Palette } from "@/lib/tokens";
+import { CustomPart, KIND_ORDER, KIND_SPEC, Kind, Palette } from "@/lib/tokens";
 import { Icon } from "./M3Node";
 import { KIND_TEXT, t, useLang } from "@/lib/i18n";
 import { Field, Section, Tile } from "./ui";
 import { MyComponent } from "@/lib/syai";
 import { categoryOf, categoryName, isJoinedPart, partOf } from "@/lib/market";
-
-const CATEGORY_TEXT = {
-  ja: { actions: "操作", navigation: "ナビゲーション", containment: "コンテナ", inputs: "入力", content: "コンテンツ", progress: "進捗", features: "機能" },
-  zh: { actions: "操作", navigation: "导航", containment: "容器", inputs: "输入", content: "内容", progress: "进度", features: "功能" },
-  ko: { actions: "동작", navigation: "내비게이션", containment: "컨테이너", inputs: "입력", content: "콘텐츠", progress: "진행 상태", features: "기능" },
-} satisfies Record<string, Record<Category, string>>;
+/* 各节的顺序在 lib/paletteSections 里定：收藏第一，然后在作者存过组合时是组合那一节，最后按分类。
+   顺序是数据，所以没有 DOM 也能断言它（见 lib/paletteSections.test.ts）。 */
+import { COMPOSITES_SECTION_ID, FAVORITES_SECTION_ID, paletteSections } from "@/lib/paletteSections";
 
 export function PartsPalette({
   palette: p,
@@ -112,6 +109,42 @@ export function PartsPalette({
       return !s || c.name.toLowerCase().includes(s) || categoryName(categoryOf(c.type)).includes(s);
     });
 
+  /** 作者自己存下来的一套组合：拖本体就能用，角上两个按钮改它 / 删它 */
+  const compositeTile = (part: CustomPart) => (
+    <div key={part.id} style={{ position: "relative" }}>
+      <Tile
+        icon="dashboard_customize"
+        label={part.name || t("composite", lang)}
+        p={p}
+        onPointerDown={onCompositePointerDown ? (e) => onCompositePointerDown(e, part) : undefined}
+      />
+      <span style={{ position: "absolute", top: 2, right: 2, display: "flex", gap: 2 }}>
+        {onEditComposite && (
+          <button
+            onClick={() => onEditComposite(part)}
+            title={t("renameComposite", lang)}
+            aria-label={t("renameComposite", lang)}
+            className="m3-press"
+            style={{ width: 22, height: 22, borderRadius: 11, border: "none", padding: 0, background: p.surfaceContainerHighest, color: p.onSurfaceVariant, cursor: "pointer", display: "grid", placeItems: "center" }}
+          >
+            <Icon name="edit" size={14} />
+          </button>
+        )}
+        {onDeleteComposite && (
+          <button
+            onClick={() => onDeleteComposite(part)}
+            title={t("deleteComposite", lang)}
+            aria-label={t("deleteComposite", lang)}
+            className="m3-press"
+            style={{ width: 22, height: 22, borderRadius: 11, border: "none", padding: 0, background: p.errorContainer, color: p.onErrorContainer, cursor: "pointer", display: "grid", placeItems: "center" }}
+          >
+            <Icon name="delete" size={14} />
+          </button>
+        )}
+      </span>
+    </div>
+  );
+
   const grid: React.CSSProperties = {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fill, minmax(78px, 1fr))",
@@ -125,56 +158,6 @@ export function PartsPalette({
       </div>
 
       <div className="no-scrollbar" style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: "0 8px" }}>
-        {!q && favorites.length > 0 && (
-          <Section id="fav" icon="star" title={t("favorites", lang)} p={p}>
-            <div style={grid}>{favorites.filter((k) => KIND_SPEC[k]).map(tile)}</div>
-          </Section>
-        )}
-        {!q && localParts.length > 0 && (
-          /* the author's own sets of parts — a container saved whole from the canvas — ready to drop
-             as often as they like. Nothing is composed from scratch here: a set is made by saving
-             what is on the page. Parts joined from the market are not here: they belong to their
-             own type below, next to the palette's own kinds. */
-          <Section id="composite" icon="widgets" title={t("composites", lang)} p={p}>
-            <div style={grid}>
-              {localParts.map((part) => (
-                /* a saved composite: drag the body to use it, the corner buttons change it */
-                <div key={part.id} style={{ position: "relative" }}>
-                  <Tile
-                    icon="dashboard_customize"
-                    label={part.name || t("composite", lang)}
-                    p={p}
-                    onPointerDown={onCompositePointerDown ? (e) => onCompositePointerDown(e, part) : undefined}
-                  />
-                  <span style={{ position: "absolute", top: 2, right: 2, display: "flex", gap: 2 }}>
-                    {onEditComposite && (
-                      <button
-                        onClick={() => onEditComposite(part)}
-                        title={t("renameComposite", lang)}
-                        aria-label={t("renameComposite", lang)}
-                        className="m3-press"
-                        style={{ width: 22, height: 22, borderRadius: 11, border: "none", padding: 0, background: p.surfaceContainerHighest, color: p.onSurfaceVariant, cursor: "pointer", display: "grid", placeItems: "center" }}
-                      >
-                        <Icon name="edit" size={14} />
-                      </button>
-                    )}
-                    {onDeleteComposite && (
-                      <button
-                        onClick={() => onDeleteComposite(part)}
-                        title={t("deleteComposite", lang)}
-                        aria-label={t("deleteComposite", lang)}
-                        className="m3-press"
-                        style={{ width: 22, height: 22, borderRadius: 11, border: "none", padding: 0, background: p.errorContainer, color: p.onErrorContainer, cursor: "pointer", display: "grid", placeItems: "center" }}
-                      >
-                        <Icon name="delete" size={14} />
-                      </button>
-                    )}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </Section>
-        )}
         {q ? (
           <div style={{ ...grid, padding: "4px 4px 12px" }}>
             {filtered.map(tile)}
@@ -186,18 +169,34 @@ export function PartsPalette({
             )}
           </div>
         ) : (
-          CATEGORIES.map((c) => {
-            /* 我的组件按类型分到各节里，和这一类的部件排在一起 —— 「加入我的组件」选的类型就是这个落点 */
-            const mine = myParts.filter((part) => categoryOf(part.type) === c.key);
-            return (
-              <Section key={c.key} id={`cat:${c.key}`} icon={c.icon} title={lang === "en" ? c.label : CATEGORY_TEXT[lang][c.key]} p={p}>
+          /* 不搜索时按 paletteSections 给的顺序铺开：收藏永远第一（一个都没有时那一节显示一句提示，
+             而不是整节消失 —— 消失的话没人发现得了星标），然后是作者存过的组合，最后按分类。 */
+          paletteSections(lang, { composites: localParts.length > 0 }).map((s) => (
+            <Section key={s.id} id={s.id} icon={s.icon} title={s.title} p={p}>
+              {s.id === FAVORITES_SECTION_ID ? (
+                favorites.length > 0 ? (
+                  <div style={grid}>{favorites.filter((k) => KIND_SPEC[k]).map(tile)}</div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 4px 8px", color: p.onSurfaceVariant, fontSize: 12, lineHeight: 1.5 }}>
+                    <Icon name="star_border" size={18} />
+                    <span>{t("favoritesHint", lang)}</span>
+                  </div>
+                )
+              ) : s.id === COMPOSITES_SECTION_ID ? (
+                /* the author's own sets of parts — a container saved whole from the canvas — ready to
+                   drop as often as they like. Nothing is composed from scratch here: a set is made by
+                   saving what is on the page. Parts joined from the market are not here: they belong
+                   to their own type below, next to the palette's own kinds. */
+                <div style={grid}>{localParts.map(compositeTile)}</div>
+              ) : (
+                /* 我的组件按类型分到各节里，和这一类的部件排在一起 —— 「加入我的组件」选的类型就是这个落点 */
                 <div style={grid}>
-                  {KIND_ORDER.filter((k) => KIND_SPEC[k].category === c.key).map(tile)}
-                  {mine.map(mineTile)}
+                  {KIND_ORDER.filter((k) => KIND_SPEC[k].category === s.category).map(tile)}
+                  {myParts.filter((part) => categoryOf(part.type) === s.category).map(mineTile)}
                 </div>
-              </Section>
-            );
-          })
+              )}
+            </Section>
+          ))
         )}
       </div>
 

@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { readDoc as readStoredDoc } from "@/lib/project";
-import { CATEGORIES, DEFAULT_THEME, Doc, Palette, paletteOf } from "@/lib/tokens";
+import { CATEGORIES, DEFAULT_PALETTE_KEY, DEFAULT_THEME, Doc, Palette, Theme, paletteOf } from "@/lib/tokens";
+import { loadAppTheme } from "@/lib/appTheme";
+import { useSystemTheme } from "@/lib/theme";
 import { LangContext, isLang, setGlobalLang, t, type Lang } from "@/lib/i18n";
 import { bootSession } from "@/lib/session";
 import {
@@ -21,7 +23,8 @@ import { Field, TypeSelect } from "@/components/ui";
 import { UserAvatar } from "@/components/UserAvatar";
 
 /* 市场组件页：整页浏览所有已公开（审核通过）的组件，按类型筛选、分页。
- * 它读编辑器写下的同一份自动保存（主题、配色），所以进来还是自己的画风。 */
+ * 它读编辑器写下的同一份自动保存（配色），主题则读那**一处**应用级设置
+ * （`m3e:theme`），所以进来还是自己的画风。 */
 
 const PAGE_SIZE = 12;
 
@@ -50,6 +53,8 @@ function readDoc(): Doc | null {
 export default function MarketPage() {
   const [lang, setLang] = useState<Lang | null>(null);
   const [doc, setDoc] = useState<Doc | null>(null);
+  /** 主题是应用级的：这一页不看 doc.theme，只看 `m3e:theme` */
+  const [theme, setTheme] = useState<Theme>(DEFAULT_THEME);
   const [types, setTypes] = useState<ComponentType[]>([]);
   const [type, setType] = useState<ComponentTypeCode | null>(null);
   const [sort, setSort] = useState<MarketSort>("created");
@@ -67,6 +72,7 @@ export default function MarketPage() {
     setGlobalLang(initial);
     setLang(initial);
     setDoc(readDoc());
+    setTheme(loadAppTheme(window.localStorage));
     /* 登录态和编辑器共用一个 store：这里也要引导一次，头像/审核信息才读得到 */
     bootSession();
     void componentTypes()
@@ -77,11 +83,12 @@ export default function MarketPage() {
   }, []);
 
   const ui: Lang = lang ?? "ja";
+  /* 深浅色模式：开了 bothModes 时上屏的深浅跟系统走（lib/systemTheme.ts） */
+  const shownTheme = useSystemTheme(theme);
   const p: Palette = useMemo(
-    () => paletteOf(doc?.paletteKey ?? "purple", doc?.customPalette ?? null, doc?.theme),
-    [doc?.paletteKey, doc?.customPalette, doc?.theme],
+    () => paletteOf(doc?.paletteKey ?? DEFAULT_PALETTE_KEY, doc?.customPalette ?? null, shownTheme),
+    [doc?.paletteKey, doc?.customPalette, shownTheme],
   );
-  const theme = doc?.theme ?? DEFAULT_THEME;
 
   useEffect(() => {
     setPage(1);
@@ -295,7 +302,7 @@ export default function MarketPage() {
       <MarketDialog
         p={p}
         component={opened}
-        theme={theme}
+        theme={shownTheme}
         onClose={() => setOpened(null)}
         onToast={() => {
           /* 市场页上「加入我的组件」已经写进后端；回到编辑器就能在组件面板里看到 */
