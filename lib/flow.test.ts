@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildFlow, flowMarkdown, frameNameOf, itemNameOf, itemsOf, stateText, FLOW_TEXT, type Flow } from "./flow";
-import { BACK_TARGET, START_LOOK, makeItem, type Doc, type Frame, type Group, type Item } from "./tokens";
+import { BACK_TARGET, START_LOOK, makeItem, type Doc, type Frame, type Group, type Item, type PartFlow } from "./tokens";
 import { KIND_TEXT } from "./i18n";
 
 /* The document builders below are deliberately tiny: a test only spells out the
@@ -90,6 +90,22 @@ describe("a part's machine", () => {
     );
     expect(flow.edges.map((e) => `${e.from}->${e.to}`)).toContain("home->next");
     expect(nodeOf(flow, "home").rules.map((r) => r.kind)).toContain("jump");
+  });
+
+  it("says which words a look changes on a part that keeps them somewhere else", () => {
+    const home = frame("home", "Home");
+    const flow: PartFlow = { looks: [{ id: "l2", label: "已领取" }], steps: [{ id: "s1", from: ":start", to: "l2", trigger: { kind: "tap" } }] };
+    /* 任务信息条的文字在领取按钮上（见 lib/tokens 的 wordsKeyOf）：句子说"按钮文字"，节点名也跟着
+       那两个字走 —— 说成"显示为"的话，照着这张图改代码的人会去改标题 */
+    const bar = item({ id: "tb", kind: "taskBar", label: "毎日ログイン (1/1)", label2: "受け取る", flow });
+    const saidBar = nodeOf(buildFlow(doc([home], [run("g", home, [bar])]), "zh"), "home").rules[0].description;
+    expect(saidBar).toContain("按钮文字为「已领取」");
+    expect(saidBar).toContain("「已领取」");
+    /* 别的部件一个字没变：还是"显示为" */
+    const button = item({ id: "b", flow });
+    const saidButton = nodeOf(buildFlow(doc([home], [run("g", home, [button])]), "zh"), "home").rules[0].description;
+    expect(saidButton).toContain("显示为「已领取」");
+    expect(saidButton).not.toContain("按钮文字");
   });
 });
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion, useDragControls } from "motion/react";
-import { BUTTON_SHAPES, ButtonShape, CONTRASTS, Contrast, FONTS, H, Item, KIND_SPEC, NavTab, PALETTES, Palette, ROUND_SHAPES, SHAPES, ShapeScale, Theme, TIMER_UNITS, TIMER_VALUE_MAX, badge2On, badge2TextOf, badgeOn, badgeTextOf, defaultTabsFor, hasTimer, iconSlotsOf, isTabRow, layerOf, roundByNature, setIconSlot, SHAPED, timerOn, timerUnitOf, timerValueOf, variantsOf, type TimerUnit } from "@/lib/tokens";
+import { BUTTON_SHAPES, ButtonShape, CONTRASTS, Contrast, FONTS, H, Item, KIND_SPEC, NavTab, PALETTES, Palette, ROUND_SHAPES, SHAPES, ShapeScale, Theme, TIMER_UNITS, TIMER_VALUE_MAX, badge2On, badge2TextOf, badgeColorOf, badgeOn, badgeTextOf, defaultTabsFor, hasTimer, iconSlotsOf, isTabRow, layerOf, roundByNature, setIconSlot, SHAPED, timerOn, timerUnitOf, timerValueOf, variantsOf, type TimerUnit } from "@/lib/tokens";
 import { ensureFontLoaded } from "@/lib/theme";
 import { KIND_TEXT, LANGS, Lang, UIKey, t, useLang } from "@/lib/i18n";
 import { IconPicker } from "./IconPicker";
@@ -155,11 +155,12 @@ export function MobileInspector({
       </div>
 
       {(spec.hasLabel || spec.hasSupporting) && (
-        <Row icon="title" label={t("text", lang)} p={p}>
+        /* 任务信息条上这个字段是那条任务的标题，所以名和占位都按它来（和桌面检查器同一句话） */
+        <Row icon="title" label={t(item.kind === "taskBar" ? "barTitle" : "text", lang)} p={p}>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {spec.hasLabel && (
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <Field value={item.label} onChange={(label) => onChange({ label })} placeholder={item.kind === "assetPill" ? t("quantity", lang) : t("label", lang)} p={p} icon="short_text" height={48} />
+                <Field value={item.label} onChange={(label) => onChange({ label })} placeholder={item.kind === "assetPill" ? t("quantity", lang) : item.kind === "taskBar" ? t("barTitle", lang) : t("label", lang)} p={p} icon="short_text" height={48} />
                 {item.kind === "text" && (
                   <IconBtn icon="format_bold" p={p} size={48} on={!!item.bold} onClick={() => onChange({ bold: !item.bold })} title={t("bold", lang)} />
                 )}
@@ -240,7 +241,8 @@ export function MobileInspector({
       )}
 
       {slots.length > 0 && activeSlot && (
-        <Row icon="emoji_symbols" label={t(item.kind === "assetPill" ? "leftIcon" : "icon", lang)} p={p}>
+        /* 任务信息条这一节是两个图标槽（奖励图标 + 按钮徽标里的图标），所以标题用总名「图标」 */
+        <Row icon="emoji_symbols" label={t(item.kind === "assetPill" ? "leftIcon" : item.kind === "taskBar" ? "barBadgeIcon" : "icon", lang)} p={p}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {slots.map((s) => {
               const on = s.key === activeSlot.key && pickerOpen;
@@ -347,12 +349,74 @@ export function MobileInspector({
         </Row>
       )}
 
+      {/* 功能按钮和物品格的角标共用这一行（同一套 badge / badgeText 字段），手机面板照桌面检查器一样
+          镜像它：开关 + 文字。按钮没有这一项（作者：「去掉此属性」）。 */}
       {(item.kind === "fnButton" || item.kind === "itemCell") && (
         <Row icon="notifications_unread" label={t("fnBadge", lang)} p={p}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <Toggle on={badgeOn(item)} onChange={(badge) => onChange({ badge: badge || undefined })} p={p} icon="notifications_unread" label={t("fnBadge", lang)} />
             {badgeOn(item) && (
               <Field value={badgeTextOf(item)} onChange={(text) => onChange({ badgeText: text || undefined })} placeholder={t("badge", lang)} p={p} icon="label" />
+            )}
+          </div>
+        </Row>
+      )}
+
+      {/* 任务信息条：标题、奖励格和「领取」按钮都是这一个部件的属性（和桌面检查器同样那几节，手机面板
+          只是把它们镜像成一行一行）。这几行按**属性分组**命名（按钮文字、按钮右上徽标），不按 kind
+          自己的名字 —— 顶上已经写着这是任务信息条了。奖励数量那个属性去掉了：格子里画的永远是那个固定
+          的 100（见 tokens 的 TASK_BAR_VALUE），所以这一条也不再有自己的行。 */}
+      {item.kind === "taskBar" && (
+        <Row icon="smart_button" label={t("barButton", lang)} p={p}>
+          {/* 这一条自己的一句话（见桌面检查器同一处）：奖励数量那一行去掉之后它留在这里，一句话不占
+              一行控件。 */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("taskBarHint", lang)}</div>
+            <Field value={item.label2 ?? ""} onChange={(label2) => onChange({ label2 })} placeholder={t("barButton", lang)} p={p} icon="smart_button" height={48} />
+          </div>
+        </Row>
+      )}
+
+      {item.kind === "taskBar" && (
+        <Row icon="notifications_unread" label={t("barBadge", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <Toggle on={!!item.buttonBadge} onChange={(buttonBadge) => onChange({ buttonBadge: buttonBadge || undefined })} p={p} icon="notifications_unread" label={t("barBadge", lang)} />
+            {item.buttonBadge && (
+              <>
+                <Field value={item.buttonBadgeText ?? ""} onChange={(text) => onChange({ buttonBadgeText: text || undefined })} placeholder={t("badge", lang)} p={p} icon="label" height={48} />
+                <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("barBadgeHint", lang)}</div>
+              </>
+            )}
+          </div>
+        </Row>
+      )}
+
+      {/* 两枚角标：①在格子左上（badge / badgeText / badgeColor），②在右上（物品格那三件套） */}
+      {item.kind === "taskBar" && (
+        <Row icon="sell" label={t("markLeft", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <Toggle on={badgeOn(item)} onChange={(badge) => onChange({ badge: badge || undefined })} p={p} icon="sell" label={t("markLeft", lang)} />
+            {badgeOn(item) && (
+              <>
+                <Field value={badgeTextOf(item)} onChange={(text) => onChange({ badgeText: text || undefined })} placeholder={t("badge", lang)} p={p} icon="label" height={48} />
+                <ItemColorChips value={item.badgeColor} onChange={(badgeColor) => onChange({ badgeColor })} p={p} />
+                <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("taskMarkHint", lang)}</div>
+              </>
+            )}
+          </div>
+        </Row>
+      )}
+
+      {item.kind === "taskBar" && (
+        <Row icon="sell" label={t("markRight", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <Toggle on={badge2On(item)} onChange={(badge2) => onChange({ badge2: badge2 || undefined })} p={p} icon="sell" label={t("markRight", lang)} />
+            {badge2On(item) && (
+              <>
+                <Field value={badge2TextOf(item)} onChange={(text) => onChange({ badge2Text: text || undefined })} placeholder={t("badge", lang)} p={p} icon="label" height={48} />
+                <ItemColorChips value={item.badge2Color} onChange={(badge2Color) => onChange({ badge2Color })} p={p} />
+                <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("taskMarkHint", lang)}</div>
+              </>
             )}
           </div>
         </Row>

@@ -15,6 +15,7 @@ import {
   rewardAt,
   Action,
   BACK_TARGET,
+  CLOSE_PANEL_TARGET,
   CONTENT_W,
   Frame,
   FramePreset,
@@ -104,7 +105,9 @@ import {
   RULE_ACTIONS,
   /* the state machine a part runs, and the flow the inspector draws it as */
   START_LOOK,
+  disablesWholePart,
   lookItem,
+  wordsOf,
   stepsFrom,
   type PartFlow,
   type PartLook,
@@ -136,6 +139,7 @@ import {
   /* the badge on a function button's corner */
   badge2On,
   badge2TextOf,
+  badgeColorOf,
   badgeOn,
   badgeTextOf,
   FILL_CUSTOM_KINDS,
@@ -147,6 +151,7 @@ import {
   /* 物品格画圆角用的那个正方形，以及作者设过 / 没设时该画多圆 */
   itemCellBox,
   itemCellRadius,
+  taskBarMetrics,
   hasStateRow,
   hasTimer,
   hidesAutoClose,
@@ -173,7 +178,7 @@ import {
 } from "@/lib/tokens";
 import { IconPicker } from "./IconPicker";
 import { Popover } from "./Menus";
-import { Icon, M3Static } from "./M3Node";
+import { Icon, M3Static, PartPressContext } from "./M3Node";
 import { ButtonRun, CardLayoutPicker, CornerIcon, CustomColorDisc, Field, IconBtn, ItemColorChips, Pick, Section, Segmented, SizePresets, Slider, TextTokenChips, Toggle, TokenChips, inputBox } from "./ui";
 import { AiWriteBtn } from "./AiPanel";
 import { popHistory } from "@/lib/ai";
@@ -342,17 +347,21 @@ function FrameSelect({
   value,
   onChange,
   p,
+  closePanel,
 }: {
   frames: Frame[];
   value: string | null;
   onChange: (id: string | null) => void;
   p: Palette;
+  /** 也给出"关掉这个部件所在的面板"这个落点（一个可选的去处，见 CLOSE_PANEL_TARGET） */
+  closePanel?: boolean;
 }) {
   const lang = useLang();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const current = frames.find((f) => f.id === value);
-  const label = value === BACK_TARGET ? t("back", lang) : current?.name || t("chooseScreen", lang);
+  const label =
+    value === BACK_TARGET ? t("back", lang) : value === CLOSE_PANEL_TARGET ? t("closePanelTarget", lang) : current?.name || t("chooseScreen", lang);
   const s2 = q.trim().toLowerCase();
   const list = s2 ? frames.filter((f) => (f.name || "").toLowerCase().includes(s2)) : frames;
   const pick = (id: string | null) => {
@@ -381,6 +390,11 @@ function FrameSelect({
             <button type="button" onClick={() => pick(BACK_TARGET)} className="m3-press" style={{ height: 40, borderRadius: 12, border: "none", textAlign: "left", padding: "0 12px", background: value === BACK_TARGET ? p.secondaryContainer : "transparent", color: value === BACK_TARGET ? p.onSecondaryContainer : p.onSurface, fontSize: 13, cursor: "pointer" }}>
               {t("back", lang)}
             </button>
+            {closePanel && (
+              <button type="button" onClick={() => pick(CLOSE_PANEL_TARGET)} className="m3-press" style={{ height: 40, borderRadius: 12, border: "none", textAlign: "left", padding: "0 12px", background: value === CLOSE_PANEL_TARGET ? p.secondaryContainer : "transparent", color: value === CLOSE_PANEL_TARGET ? p.onSecondaryContainer : p.onSurface, fontSize: 13, cursor: "pointer" }}>
+                {t("closePanelTarget", lang)}
+              </button>
+            )}
             {list.map((f) => (
               <button key={f.id} type="button" onClick={() => pick(f.id)} className="m3-press" style={{ height: 40, borderRadius: 12, border: "none", textAlign: "left", padding: "0 12px", background: f.id === value ? p.secondaryContainer : "transparent", color: f.id === value ? p.onSecondaryContainer : p.onSurface, fontSize: 13, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {f.name || t("screen", lang)}
@@ -575,6 +589,7 @@ export function FrameInspector({
   onPreview,
   prompt,
   onSaveImage,
+  onSaveJson,
   frames,
   ai,
   onSize,
@@ -588,6 +603,8 @@ export function FrameInspector({
   onPreview: () => void;
   prompt: string;
   onSaveImage: () => Promise<void>;
+  /** 把这一屏导出成一份 JSON（只含这一屏，见 lib/project 的 screenProject） */
+  onSaveJson: () => void;
   frames: Frame[];
   ai: AiHooks;
   onSize: (preset: FramePreset) => void;
@@ -777,6 +794,9 @@ export function FrameInspector({
             },
             saving,
           )}
+          {/* 这一屏自己的 JSON：整份画布有「保存项目」，一屏原先只能导出提示词和图片 —— 想把它交给别人
+              （或者交给编码代理）看清由哪些部件组成时，缺的就是这一份（见 lib/project 的 screenProject）。 */}
+          {actionBtn("data_object", t("saveJson", lang), onSaveJson)}
         </ButtonRun>
         <div
           className="no-scrollbar"
@@ -1141,6 +1161,8 @@ export function Inspector({
     item.kind === "assetPill" ||
     /* 物品格的圆角也是作者设的（和资产框同一个「圆角」控件），所以这个开关也要放它进来 */
     item.kind === "itemCell" ||
+    /* 任务信息条的圆角同理（不设就是 kind 自己的 16，见 baseRadii） */
+    item.kind === "taskBar" ||
     item.kind === "box";
 
   return (
@@ -1245,7 +1267,7 @@ export function Inspector({
       )}
 
       {(spec.hasLabel || spec.hasSupporting) && (
-        <Section id="text" icon="title" title={t("text", lang)} p={p}>
+        <Section id="text" icon="title" title={t(item.kind === "taskBar" ? "barTitle" : "text", lang)} p={p}>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {spec.hasLabel && (
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -1253,8 +1275,9 @@ export function Inspector({
                   value={shown.label}
                   onChange={(label) => change({ label })}
                   /* an amount on a capsule is a count, not a name: the same word the item cell's
-                     quantity uses, so the author reads what the field is for */
-                  placeholder={item.kind === "assetPill" ? t("quantity", lang) : t("label", lang)}
+                     quantity uses, so the author reads what the field is for. 任务信息条上这个字段
+                     是那条任务的标题，所以名和占位都按它来 */
+                  placeholder={item.kind === "assetPill" ? t("quantity", lang) : item.kind === "taskBar" ? t("barTitle", lang) : t("label", lang)}
                   p={p}
                   icon="short_text"
                 />
@@ -1367,6 +1390,8 @@ export function Inspector({
         );
       })()}
 
+      {/* 按钮不再有自己的"右徽标"了（作者：「去掉此属性」）；功能按钮和物品格还有各自的角标，字段、
+          开关和输入框是同一套（badge / badgeText，药丸由 BadgeContent 画）。 */}
       {(item.kind === "fnButton" || item.kind === "itemCell") && !editOn && (
         <Section id="fnBadge" icon="notifications_unread" title={t("fnBadge", lang)} p={p}>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1400,6 +1425,76 @@ export function Inspector({
                 <Field value={badge2TextOf(item)} onChange={(text) => onChange({ badge2Text: text || undefined })} placeholder={t("badge", lang)} p={p} icon="label" />
                 <ItemColorChips value={item.badge2Color} onChange={(badge2Color) => onChange({ badge2Color })} p={p} />
                 <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("markLeftHint", lang)}</div>
+              </>
+            )}
+          </div>
+        </Section>
+      )}
+
+      {/* 任务信息条：标题、奖励格和「领取」按钮都是这一个部件的属性，不是它的孩子（作者要求"将组合
+          组件改为属性的方式融进单组件里面"）。下面这几节按**属性分组**的名字排（按钮文字、按钮
+          右上徽标、左上/右上徽标），不按 kind 自己的名字 —— 面板顶上已经写着这是任务信息条了，再拿它
+          当一节的名字是多余的（作者：「这个单组件里面还有个'任务信息条'……这个不需要」），别的种类也从不
+          拿 kind 当节名（见功能按钮/物品格/资产框）。标题就是 label、奖励图标固定、格子固定两个、格子
+          里的数量也固定 100（奖励数量那个属性去掉了，见 tokens 的 TASK_BAR_VALUE），所以"这条自己的
+          属性"不再有自己的一节。 */}
+      {item.kind === "taskBar" && !editOn && (
+        <Section id="taskBarButton" icon="smart_button" title={t("barButton", lang)} p={p}>
+          {/* 这一条自己的一句话（标题、奖励格和按钮都是这一个部件的属性）：奖励数量那个控件去掉之后
+              它跟着"这条自己的属性"那一节一起没了，但那句话本身还是该说给作者听，所以留在这一组的头一节
+              里 —— 一句话不占控件，也不多出一节。 */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("taskBarHint", lang)}</div>
+            <Field value={item.label2 ?? ""} onChange={(label2) => onChange({ label2 })} placeholder={t("barButton", lang)} p={p} icon="smart_button" />
+          </div>
+        </Section>
+      )}
+
+      {item.kind === "taskBar" && !editOn && (
+        <Section id="taskBarBadge" icon="notifications_unread" title={t("barBadge", lang)} p={p}>
+          {/* 按钮右上角那枚徽标：字段是这一条自己的一对（`buttonBadge` / `buttonBadgeText`），药丸
+              由 BadgeContent 画，位置是**按钮的上层**（绝对定位在按钮的右上角，允许探出按钮的框，见
+              M3Node 的 TaskBarContent）—— 没有字的药丸什么也不说明，所以清空文字就等于没有徽标。
+              徽标里的图标在「图标」一节里选（`buttonBadgeIcon`）：图标优先于文字，选成锁图标时这一条
+              里的按钮就点不动了（见 taskBarButtonLocked）。 */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <Toggle on={!!item.buttonBadge} onChange={(buttonBadge) => onChange({ buttonBadge: buttonBadge || undefined })} p={p} icon="notifications_unread" label={t("barBadge", lang)} grow />
+            {item.buttonBadge && (
+              <>
+                <Field value={item.buttonBadgeText ?? ""} onChange={(text) => onChange({ buttonBadgeText: text || undefined })} placeholder={t("badge", lang)} p={p} icon="label" />
+                <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("barBadgeHint", lang)}</div>
+              </>
+            )}
+          </div>
+        </Section>
+      )}
+
+      {/* 任务信息条的两枚角标：①在格子的左上（`badge` / `badgeText` / 新的 `badgeColor`），②在右上
+          （物品格那三件套，原样复用）。它们叠在格子的角上，不把格子或条撑大（见 taskBarMetrics）。 */}
+      {item.kind === "taskBar" && !editOn && (
+        <Section id="taskMark1" icon="sell" title={t("markLeft", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <Toggle on={badgeOn(item)} onChange={(badge) => onChange({ badge: badge || undefined })} p={p} icon="sell" label={t("markLeft", lang)} grow />
+            {badgeOn(item) && (
+              <>
+                <Field value={badgeTextOf(item)} onChange={(text) => onChange({ badgeText: text || undefined })} placeholder={t("badge", lang)} p={p} icon="label" />
+                <ItemColorChips value={item.badgeColor} onChange={(badgeColor) => onChange({ badgeColor })} p={p} />
+                <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("taskMarkHint", lang)}</div>
+              </>
+            )}
+          </div>
+        </Section>
+      )}
+
+      {item.kind === "taskBar" && !editOn && (
+        <Section id="taskMark2" icon="sell" title={t("markRight", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <Toggle on={badge2On(item)} onChange={(badge2) => onChange({ badge2: badge2 || undefined })} p={p} icon="sell" label={t("markRight", lang)} grow />
+            {badge2On(item) && (
+              <>
+                <Field value={badge2TextOf(item)} onChange={(text) => onChange({ badge2Text: text || undefined })} placeholder={t("badge", lang)} p={p} icon="label" />
+                <ItemColorChips value={item.badge2Color} onChange={(badge2Color) => onChange({ badge2Color })} p={p} />
+                <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("taskMarkHint", lang)}</div>
               </>
             )}
           </div>
@@ -1818,7 +1913,9 @@ export function Inspector({
       )}
 
       {mainSlots.length > 0 && activeSlot && !item.src && (
-        <Section id="icon" icon="emoji_symbols" title={t(item.kind === "assetPill" ? "leftIcon" : "icon", lang)} p={p} onToggle={(open) => { if (!open && !activeSlot.key.startsWith("tab:")) setPickerOpen(false); }}>
+        /* 任务信息条只剩一个图标槽了（按钮徽标里那个），所以这一节就用那个槽自己的名字；两个槽的
+           种类（资产框）才用"左边那个图标"当节名（见 lib/tokens 的 iconSlotsOf）。 */
+        <Section id="icon" icon="emoji_symbols" title={t(item.kind === "assetPill" ? "leftIcon" : item.kind === "taskBar" ? "barBadgeIcon" : "icon", lang)} p={p} onToggle={(open) => { if (!open && !activeSlot.key.startsWith("tab:")) setPickerOpen(false); }}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {mainSlots.map((s) =>
               slotBtn(
@@ -2502,7 +2599,9 @@ export function Inspector({
                       ? (item.label.trim() ? spec.h : 6)
                       : item.kind === "fnButton"
                         ? fnButtonHeight(item.size ?? spec.defSize ?? spec.w, fnButtonLines(item))
-                        : spec.h)
+                        : item.kind === "taskBar"
+                          ? taskBarMetrics(item).h
+                          : spec.h)
                   }
                   min={spec.size2.min}
                   max={heightMax(spec.size2.max)}
@@ -2590,6 +2689,21 @@ export function Inspector({
                 />
               );
             })()}
+
+            {hasRadius && item.kind === "taskBar" && (
+              /* 任务信息条的圆角：一个数管四条边（一条信息条是一个圆角矩形），控件还是图片/资产框
+                 那个「圆角」。不设画的就是 kind 自己的 16。 */
+              <Slider
+                icon="rounded_corner"
+                title={t("cornerRadius", lang)}
+                value={item.radiusTop ?? spec.radius}
+                min={0}
+                max={48}
+                step={1}
+                onChange={(radiusTop) => onChange({ radiusTop })}
+                p={p}
+              />
+            )}
 
             {hasRadius && (item.kind === "card" || item.kind === "box" || item.kind === "invGrid") && (() => {
               /* One radius for every corner until the author asks for each. The seeds match what the
@@ -3164,21 +3278,36 @@ const LOOK_FIELDS: { key: "label" | "icon" | "color" | "variant" | "disabled" | 
   { key: "hidden", icon: "visibility_off", title: "state_hide" },
 ];
 
+/** 「改变文字」这一类在这一部件上的名字：任务信息条的文字在按钮上，所以在那儿它念作「按钮文字」
+ *  （和文字那一节按种类改名同一个规矩，见上面 id="text" 那一节）。 */
+export const lookFieldTitle = (key: (typeof LOOK_FIELDS)[number]["key"], title: UIKey, item: Pick<Item, "kind">): UIKey =>
+  key === "label" && item.kind === "taskBar" ? "barButton" : title;
+
 /** The value a field starts with when an author turns it on: the part's own, so switching a field on
- *  never changes what the node looks like until the author edits it. */
-const lookSeed = (key: (typeof LOOK_FIELDS)[number]["key"], item: Item): PartLook[keyof PartLook] =>
-  key === "label" ? item.label : key === "icon" ? item.icon : key === "color" ? item.color ?? "primary" : key === "variant" ? item.variant : true;
+ *  never changes what the node looks like until the author edits it.
+ *
+ *  文字这一项取的是这个部件**此刻的文字**：任务信息条上是按钮上那两个字（「受け取る」），不是标题
+ *  —— 否则一打开「改变文字」，字段里先摆着标题，作者一改就把标题改了（见 wordsOf）。 */
+export const lookSeed = (key: (typeof LOOK_FIELDS)[number]["key"], item: Item): PartLook[keyof PartLook] =>
+  key === "label" ? wordsOf(item) : key === "icon" ? item.icon : key === "color" ? item.color ?? "primary" : key === "variant" ? item.variant : true;
 
 /** A living preview of the part as one of its looks draws it: a node shows the thing itself rather
- *  than describing it. */
+ *  than describing it.
+ *
+ *  「置灰并停止响应」也要看得出来：普通部件整块灰，融合部件（任务信息条）只灰里面那颗按钮 —— 和预览
+ *  里的画法同一处判定（见 disablesWholePart），卡片上看到的就是点下去之后的样子。 */
 function LookPreview({ item, look, p }: { item: Item; look?: PartLook; p: Palette }) {
   const drawn = lookItem(item, look);
   const size = sizeOf(drawn, {});
   const k = Math.min(1, 132 / Math.max(1, size.w), 44 / Math.max(1, size.h));
+  const off = !!look?.disabled;
+  const whole = off && disablesWholePart(item.kind);
   return (
     <div style={{ width: 132, height: 44, flex: "0 0 auto", flexShrink: 0, borderRadius: 10, background: p.surfaceContainerHigh, display: "grid", placeItems: "center", overflow: "hidden" }}>
-      <div style={{ transform: `scale(${k})`, pointerEvents: "none", display: "flex" }}>
-        <M3Static item={drawn} palette={p} />
+      <div style={{ transform: `scale(${k})`, pointerEvents: "none", display: "flex", ...(whole ? { filter: "grayscale(1)", opacity: 0.55 } : undefined) }}>
+        <PartPressContext.Provider value={{ off: off && !whole }}>
+          <M3Static item={drawn} palette={p} />
+        </PartPressContext.Provider>
       </div>
     </div>
   );
@@ -3342,8 +3471,9 @@ function FlowEditor({
   const dropLook = (id: string) => put(looks.filter((l) => l.id !== id), steps.filter((s) => s.from !== id && s.to !== id));
   const patchStep = (id: string, next: Partial<PartStep>) => put(looks, steps.map((s) => (s.id === id ? { ...s, ...next } : s)));
   const dropStep = (id: string) => put(looks, steps.filter((s) => s.id !== id));
-  /** the name a node reads as: what its author called it, or the words it shows while in it */
-  const nodeName = (l: PartLook) => l.name?.trim() || lookItem(item, l).label.trim() || t("flowNewState", lang);
+  /** the name a node reads as: what its author called it, or the words it shows while in it
+   *  （任务信息条上是按钮上那两个字 —— 那才是这一状态真的改了的东西，见 wordsOf） */
+  const nodeName = (l: PartLook) => l.name?.trim() || wordsOf(lookItem(item, l)).trim() || t("flowNewState", lang);
   const targets = [{ key: START_LOOK, label: t("flowStart", lang) }, ...looks.map((l) => ({ key: l.id, label: nodeName(l) }))];
   /* a new state lands with a step into it: a node nothing reaches is a node nobody meant to draw */
   const addState = (from: string) => {
@@ -3389,7 +3519,7 @@ function FlowEditor({
                 )}
               </div>
               <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline, wordBreak: "break-word" }}>
-                {changed.length > 0 ? changed.map((f) => t(f.title, lang)).join(" · ") : t(node.look ? "flowNoChange" : "flowStartHint", lang)}
+                {changed.length > 0 ? changed.map((f) => t(lookFieldTitle(f.key, f.title, item), lang)).join(" · ") : t(node.look ? "flowNoChange" : "flowStartHint", lang)}
               </div>
             </div>
             {node.look && openId === node.id && (
@@ -3419,12 +3549,12 @@ function FlowEditor({
                         }}
                       >
                         <Icon name={on ? "check" : "add"} size={14} />
-                        {t(f.title, lang)}
+                        {t(lookFieldTitle(f.key, f.title, item), lang)}
                       </button>
                     );
                   })}
                 </div>
-                {node.look.label !== undefined && <Field value={node.look.label} onChange={(label) => patchLook(node.id, { label })} p={p} placeholder={t("lookText", lang)} icon="edit" height={36} />}
+                {node.look.label !== undefined && <Field value={node.look.label} onChange={(label) => patchLook(node.id, { label })} p={p} placeholder={t(item.kind === "taskBar" ? "barButton" : "lookText", lang)} icon="edit" height={36} />}
                 {node.look.icon !== undefined && <IconPicker value={node.look.icon} onChange={(icon) => patchLook(node.id, { icon })} onClose={() => {}} palette={p} />}
                 {node.look.color !== undefined && <ItemColorChips value={node.look.color} onChange={(color) => patchLook(node.id, { color })} p={p} />}
                 {node.look.variant !== undefined && (
@@ -3566,8 +3696,10 @@ function StateRules({
             value={action?.to ?? null}
             onChange={(to) => writeAction(to ? { to, transition: action?.transition ?? "none" } : undefined)}
             p={p}
+            closePanel
           />
-          {action && action.to !== BACK_TARGET && (
+          {/* 关掉面板没有"入场方式"可配：那一层怎么收起来是它自己的事 */}
+          {action && action.to !== BACK_TARGET && action.to !== CLOSE_PANEL_TARGET && (
             <TransitionPicker value={action.transition} onChange={writeTransition} p={p} />
           )}
         </div>

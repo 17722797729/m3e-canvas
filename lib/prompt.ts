@@ -7,6 +7,7 @@ import {
   Platform,
   Action,
   BACK_TARGET,
+  CLOSE_PANEL_TARGET,
   Doc,
   FONTS,
   Frame,
@@ -53,7 +54,41 @@ import {
   assetPillRadius,
   /* the two lines a function button says */
   countdownLine,
+  /* 任务信息条：奖励格里那个**固定**的默认图标（没有可改的控件，见 TASK_BAR_ICON）和那个**固定**的
+     数量（奖励数量也去掉了，见 TASK_BAR_VALUE），以及条里那个按钮右上角那枚徽标 —— 徽标里的图标和
+     "锁住"也是它 */
+  TASK_BAR_ICON,
+  TASK_BAR_VALUE,
+  taskBarButtonBadge,
+  taskBarButtonBadgeIcon,
+  taskBarButtonBadgeOn,
+  taskBarButtonLocked,
+  wordsOf,
 } from "./tokens";
+
+/**
+ * 条里那枚徽标在提示里怎么说：说什么（字还是图标）**加上它在哪一层** —— 它压在按钮的**上层**、站在
+ * 按钮的右上角，并且允许探出按钮的框（作者的模型：「徽标并不在按钮里面，它是在按钮的上层……可以在按钮
+ * 的外面的」）。画它的编码方必须知道这一层关系，否则很容易又把它塞回按钮里面、被按钮自己的 overflow
+ * 裁掉。锁图标还要把话说到底：那颗按钮点了没有反应（见 taskBarButtonLocked）。
+ *
+ * `what` 是**那枚徽标自己**的整句名字（「1」のバッジ / a "1" badge / “1” 徽标 / "1" 배지），由
+ * TASK_BAR_BADGE_WHAT 按内容给：图标优先（和绘制同一条规矩），没有图标才说那两个字 —— 说字的那一支
+ * 用**这一段自己的**引号（每个 itemXxx 里那个 `q`）。
+ */
+const TASK_BAR_BADGE_WHAT: Record<Lang, (icon: string | null, quoted: string) => string> = {
+  ja: (icon, quoted) => (icon ? `${icon} アイコンのバッジ` : `${quoted}のバッジ`),
+  en: (icon, quoted) => (icon ? `a ${icon} icon badge` : `a ${quoted} badge`),
+  zh: (icon, quoted) => (icon ? `${icon} 图标徽标` : `${quoted} 徽标`),
+  ko: (icon, quoted) => (icon ? `${icon} 아이콘 배지` : `${quoted} 배지`),
+};
+
+const TASK_BAR_BADGE_SAID: Record<Lang, (what: string, locked: boolean) => string> = {
+  ja: (what, locked) => `（右上に${what}がボタンの上に重なり、ボタンの枠からはみ出していてもよい${locked ? "。ロック中なのでタップしても何も起きない" : ""}）`,
+  en: (what, locked) => ` with ${what} at its top right, on a layer above the button and free to sit outside its box${locked ? "; it is locked, so a tap does nothing" : ""}`,
+  zh: (what, locked) => `（右上角${what}，压在按钮的上层，可以探出按钮的框${locked ? "；锁住时点击不会有任何反应" : ""}）`,
+  ko: (what, locked) => `(오른쪽 위 ${what}가 버튼 위층에 겹치고 버튼 밖으로 나가도 됨${locked ? ", 잠겨 있어 탭해도 아무 반응 없음" : ""})`,
+};
 
 const VARIANT_TEXT: Record<Lang, Record<Variant, string>> = {
   ja: { filled: "塗りつぶし", tonal: "トーナル", elevated: "エレベーテッド", outlined: "アウトライン", text: "テキスト" },
@@ -185,6 +220,7 @@ function itemJa(it: Item): string {
   const noun = KIND_TEXT.ja[it.kind]?.noun ?? it.kind;
   switch (it.kind) {
     case "button":
+      /* 按钮没有右上角那枚徽标了（作者：「去掉此属性」），所以这句话里也不再说它 */
       return `${hasText(it.label) ? q(it.label) : "ラベルなし"}の${v}ボタン${it.icon ? `（${it.icon} アイコン付き）` : ""}${it.size ? `（幅 ${it.size}dp）` : ""}`;
     case "iconButton":
       return `${it.icon ?? "空"} アイコンの${v}アイコンボタン`;
@@ -196,6 +232,19 @@ function itemJa(it: Item): string {
       /* 一つの格子が言うこと：中のアイコン、数、左上と右上のバッジ、下の名前 */
       const mark = (on: boolean | undefined, words: string | undefined) => (on ? `「${words?.trim() ?? ""}」` : "なし");
       return `${q(it.label)}という名前の${v}アイテム（アイコン ${it.icon ?? "なし"}、数量 ${q(it.supporting ?? "")}、左上のバッジ ${mark(it.badge2, it.badge2Text)}、右上のバッジ ${mark(it.badge, it.badgeText)}）`;
+    }
+    case "taskBar": {
+      /* 一つの部品が言うこと：タイトル、報酬マス（**固定**のアイコン・**固定**の 100・左上と右上の
+         バッジ）、右端の「受け取る」ボタン（右上のバッジ付き）—— 複合部品ではなく、すべてこの1つの
+         属性です。マスは常に2つで、アイコンは常に TASK_BAR_ICON、数量は常に TASK_BAR_VALUE（どれも
+         変えられません）。そのバッジはボタンの**上**に重なる別の層で、ボタンの枠からはみ出していても
+         よく、中のアイコンが鎖ならボタンはタップに反応しません（見 taskBarButtonLocked）。 */
+      const badge = taskBarButtonBadge(it);
+      const mark = (on: boolean | undefined, words: string | undefined) => (on ? `「${words?.trim() ?? ""}」` : "なし");
+      /* 徽标整个没挂（没有图标、字也空着）时一个字都不提：那句话是"那枚徽标是什么"，没有徽标就没有它 */
+      const what = taskBarButtonBadgeOn(it) ? TASK_BAR_BADGE_WHAT.ja(taskBarButtonBadgeIcon(it), badge ? q(badge) : "") : "";
+      const button = `${hasText(it.label2) ? q(it.label2!) : "ラベルなし"}の${v}ボタン${what ? TASK_BAR_BADGE_SAID.ja(what, taskBarButtonLocked(it)) : ""}`;
+      return `タイトル${q(it.label)}のタスク情報バー（報酬マス 2 個：${TASK_BAR_ICON} アイコンと数量 ${TASK_BAR_VALUE}（固定）、左上のバッジ ${mark(it.badge, it.badgeText)}、右上のバッジ ${mark(it.badge2, it.badge2Text)}。右端に${button}）。タップに反応するのはそのボタンだけです（タイトルと報酬マスは反応しません）`;
     }
     case "joystick":
       /* 四方のキーは無い：円盤そのものが操作部で、中央のつまみを好きな方向へ引く */
@@ -306,6 +355,7 @@ function itemEn(it: Item): string {
   const noun = KIND_TEXT.en[it.kind]?.noun ?? it.kind;
   switch (it.kind) {
     case "button":
+      /* 按钮没有右上角那枚徽标了（作者：「去掉此属性」），所以这句话里也不再说它 */
       return `a ${v} button ${hasText(it.label) ? q(it.label) : "with no label"}${it.icon ? ` with a ${it.icon} icon` : ""}${it.size ? ` (${it.size}dp wide)` : ""}`;
     case "iconButton":
       return `a ${v} icon button with the ${it.icon ?? "empty"} icon`;
@@ -316,6 +366,20 @@ function itemEn(it: Item): string {
     case "itemCell": {
       const mark = (on: boolean | undefined, words: string | undefined) => (on ? `"${words?.trim() ?? ""}"` : "none");
       return `a ${v} item named ${q(it.label)} (icon ${it.icon ?? "none"}, count ${q(it.supporting ?? "")}, top-left badge ${mark(it.badge2, it.badge2Text)}, top-right badge ${mark(it.badge, it.badgeText)})`;
+    }
+    case "taskBar": {
+      /* One part saying one thing: the title, the reward cells (a **fixed** icon, a **fixed** 100, the
+         top-left and top-right marks) and the 「claim」 button at its right end (with the badge on its
+         top right) — not a composite part, they are all properties of this one part. The cells are
+         always two, the icon is always TASK_BAR_ICON and the amount is always TASK_BAR_VALUE (none of
+         them has a control). That badge sits **above** the button, may hang outside its box, and the
+         lock icon means a tap does nothing (see taskBarButtonLocked). */
+      const badge = taskBarButtonBadge(it);
+      const mark = (on: boolean | undefined, words: string | undefined) => (on ? `"${words?.trim() ?? ""}"` : "none");
+      /* 徽标整个没挂（没有图标、字也空着）时一个字都不提：那句话是"那枚徽标是什么"，没有徽标就没有它 */
+      const what = taskBarButtonBadgeOn(it) ? TASK_BAR_BADGE_WHAT.en(taskBarButtonBadgeIcon(it), badge ? q(badge) : "") : "";
+      const button = `${hasText(it.label2) ? `a ${q(it.label2!)} ${v} button` : `a ${v} button with no label`}${what ? TASK_BAR_BADGE_SAID.en(what, taskBarButtonLocked(it)) : ""}`;
+      return `a task bar titled ${q(it.label)} (2 reward cells holding the fixed ${TASK_BAR_ICON} icon and the fixed amount ${TASK_BAR_VALUE}, top-left badge ${mark(it.badge, it.badgeText)}, top-right badge ${mark(it.badge2, it.badge2Text)}; at its right end sits ${button}). Only that button answers a tap — the title and the reward cells do not`;
     }
     case "joystick":
       /* no direction keys: the plate itself is the control, and its knob is dragged from the middle */
@@ -422,6 +486,7 @@ function itemZh(it: Item): string {
   const noun = KIND_TEXT.zh[it.kind]?.noun ?? it.kind;
   switch (it.kind) {
     case "button":
+      /* 按钮没有右上角那枚徽标了（作者：「去掉此属性」），所以这句话里也不再说它 */
       return `${hasText(it.label) ? q(it.label) : "无标签"}的${v}按钮${it.icon ? `（带 ${it.icon} 图标）` : ""}${it.size ? `（宽 ${it.size}dp）` : ""}`;
     case "iconButton":
       return `${it.icon ?? "空"} 图标的${v}图标按钮`;
@@ -432,6 +497,19 @@ function itemZh(it: Item): string {
     case "itemCell": {
       const mark = (on: boolean | undefined, words: string | undefined) => (on ? `「${words?.trim() ?? ""}」` : "无");
       return `名为${q(it.label)}的${v}物品格（图标 ${it.icon ?? "无"}，数量 ${q(it.supporting ?? "")}，左上徽标 ${mark(it.badge2, it.badge2Text)}，右上徽标 ${mark(it.badge, it.badgeText)}）`;
+    }
+    case "taskBar": {
+      /* 一个部件说的一件事：标题、奖励格（**固定**的图标、**固定**的 100、左上和右上两枚角标）和右端
+         那个「领取」按钮（带右上角那枚徽标）—— 不是组合部件，它们全都是这一个部件的属性。格子永远
+         两个、图标永远是 TASK_BAR_ICON、数量永远是 TASK_BAR_VALUE（都没有可改的控件）。那枚徽标压在
+         按钮的**上层**、可以探出按钮的框（作者的模型），里面是图标时按图标说；锁图标则按钮点击无效
+         （见 taskBarButtonLocked）。 */
+      const badge = taskBarButtonBadge(it);
+      const mark = (on: boolean | undefined, words: string | undefined) => (on ? `“${words?.trim() ?? ""}”` : "无");
+      /* 徽标整个没挂（没有图标、字也空着）时一个字都不提：那句话是"那枚徽标是什么"，没有徽标就没有它 */
+      const what = taskBarButtonBadgeOn(it) ? TASK_BAR_BADGE_WHAT.zh(taskBarButtonBadgeIcon(it), badge ? q(badge) : "") : "";
+      const button = `${hasText(it.label2) ? `${q(it.label2!)}${v}按钮` : `无标签的${v}按钮`}${what ? TASK_BAR_BADGE_SAID.zh(what, taskBarButtonLocked(it)) : ""}`;
+      return `标题为${q(it.label)}的${v}任务信息条（奖励格 2 个：固定的 ${TASK_BAR_ICON} 图标 + 固定的数量 ${TASK_BAR_VALUE}，左上角标 ${mark(it.badge, it.badgeText)}，右上角标 ${mark(it.badge2, it.badge2Text)}；右端是${button}）。只有这颗按钮响应点击（标题和奖励格不响应）`;
     }
     case "joystick":
       /* 没有四个方向键：圆盘本身就是操作区，中间的摇杆往任意方向拖 */
@@ -537,13 +615,28 @@ function itemKo(it: Item): string {
   const v = VARIANT_TEXT.ko[it.variant];
   const noun = KIND_TEXT.ko[it.kind]?.noun ?? it.kind;
   switch (it.kind) {
-    case "button": return `${hasText(it.label) ? q(it.label) : "레이블 없는"} ${v} 버튼${it.icon ? `(${it.icon} 아이콘 포함)` : ""}${it.size ? `(너비 ${it.size}dp)` : ""}`;
+    case "button":
+      /* 按钮没有右上角那枚徽标了（作者：「去掉此属性」），所以这句话里也不再说它 */
+      return `${hasText(it.label) ? q(it.label) : "레이블 없는"} ${v} 버튼${it.icon ? `(${it.icon} 아이콘 포함)` : ""}${it.size ? `(너비 ${it.size}dp)` : ""}`;
     case "iconButton": return `${it.icon ?? "빈"} 아이콘의 ${v} 아이콘 버튼`;
     case "fab": return `${it.icon ?? "빈"} 아이콘의 ${v} FAB${it.size && it.size >= 96 ? "(대형)" : it.size && it.size <= 40 ? "(소형)" : ""}`;
     case "extendedFab": return `${q(it.label)}${it.icon ? ` 및 ${it.icon} 아이콘` : ""} 확장 FAB(${v})`;
     case "itemCell": {
       const mark = (on: boolean | undefined, words: string | undefined) => (on ? `"${words?.trim() ?? ""}"` : "없음");
       return `${q(it.label)}라는 이름의 ${v} 아이템 칸(아이콘 ${it.icon ?? "없음"}, 수량 ${q(it.supporting ?? "")}, 왼쪽 위 배지 ${mark(it.badge2, it.badge2Text)}, 오른쪽 위 배지 ${mark(it.badge, it.badgeText)})`;
+    }
+    case "taskBar": {
+      /* 한 부품이 말하는 것: 제목, 보상 칸(**고정** 아이콘·**고정** 100·왼쪽 위와 오른쪽 위 배지),
+         오른쪽 끝의 받기 버튼(오른쪽 위 배지 포함) — 복합 부품이 아니라 모두 이 한 부품의 속성입니다.
+         칸은 항상 두 개, 아이콘은 항상 TASK_BAR_ICON, 수량은 항상 TASK_BAR_VALUE(모두 바꿀 수 없습니다).
+         그 배지는 버튼 **위층**에 겹치고 버튼 밖으로 나가도 되며, 아이콘이 자물쇠면 버튼이 탭에 반응하지
+         않습니다(taskBarButtonLocked 참고). */
+      const badge = taskBarButtonBadge(it);
+      const mark = (on: boolean | undefined, words: string | undefined) => (on ? `"${words?.trim() ?? ""}"` : "없음");
+      /* 徽标整个没挂（没有图标、字也空着）时一个字都不提：那句话是"那枚徽标是什么"，没有徽标就没有它 */
+      const what = taskBarButtonBadgeOn(it) ? TASK_BAR_BADGE_WHAT.ko(taskBarButtonBadgeIcon(it), badge ? q(badge) : "") : "";
+      const button = `${hasText(it.label2) ? `${q(it.label2!)} ${v} 버튼` : `레이블 없는 ${v} 버튼`}${what ? TASK_BAR_BADGE_SAID.ko(what, taskBarButtonLocked(it)) : ""}`;
+      return `제목이 ${q(it.label)}인 ${v} 태스크 정보 바(보상 칸 2개: 고정 ${TASK_BAR_ICON} 아이콘 + 고정 수량 ${TASK_BAR_VALUE}, 왼쪽 위 배지 ${mark(it.badge, it.badgeText)}, 오른쪽 위 배지 ${mark(it.badge2, it.badge2Text)}; 오른쪽 끝에 ${button}). 탭에 반응하는 것은 그 버튼뿐입니다(제목과 보상 칸은 반응하지 않습니다)`;
     }
     case "joystick":
       /* 방향키는 없습니다: 원판 자체가 조작부이고 가운데 손잡이를 아무 방향으로나 끕니다 */
@@ -750,6 +843,10 @@ function actionText(a: Action, frames: Frame[], lang: Lang): string | null {
   if (a.to === BACK_TARGET) {
     return lang === "ja" ? "前の画面に戻る（入ったときの遷移を逆再生する）" : lang === "zh" ? "返回上一个屏幕（反向播放进入时的过渡动画）" : lang === "ko" ? "이전 화면으로 돌아간다(진입 전환을 반대로 재생)" : "goes back to the previous screen (playing the entry transition in reverse)";
   }
+  /* 关掉这个部件所在的那层面板：和上面那个"回上一屏"不是一回事（面板没有上一屏可回时，返回是没反应的） */
+  if (a.to === CLOSE_PANEL_TARGET) {
+    return lang === "ja" ? "この部品が載っているパネルを閉じる（一番上の層だけ）" : lang === "zh" ? "关闭它所在的那层面板（只关最上面一层）" : lang === "ko" ? "이 부품이 놓인 패널을 닫는다(맨 위 한 겹만)" : "closes the panel it is in (the top layer only)";
+  }
   const target = frames.find((f) => f.id === a.to);
   if (!target) return null;
   const tr = TRANSITION_TEXT[lang][a.transition];
@@ -849,7 +946,8 @@ function notes(g: Group, frames: Frame[], lang: Lang, all: Group[] = [g]): strin
       if (id === START_LOOK) return { ja: "最初の見た目", en: "the drawn look", zh: "起始外观", ko: "처음 모양" }[lang];
       const look = machine.looks.find((l) => l.id === id);
       if (!look) return { ja: "最初の見た目", en: "the drawn look", zh: "起始外观", ko: "처음 모양" }[lang];
-      return look.name?.trim() || lookItem(it, look).label.trim() || name;
+      /* 状态的名字跟着真的换过的那处文字走：任务信息条上是按钮上那两个字（见 wordsOf） */
+      return look.name?.trim() || wordsOf(lookItem(it, look)).trim() || name;
     };
     const stepAction = (a: Exclude<PartStep["do"], undefined>[number]): string | null => {
       if (a.kind === "look") {
@@ -884,7 +982,12 @@ function notes(g: Group, frames: Frame[], lang: Lang, all: Group[] = [g]): strin
         const to = lookWord(machine, st.to);
         const look = machine.looks.find((l) => l.id === st.to);
         const bits = [
-          look?.label !== undefined && { ja: `文字は「${look.label}」`, en: `its words read ${q(look.label)}`, zh: `文字为「${look.label}」`, ko: `글자는 "${look.label}"` }[lang],
+          /* 任务信息条的文字在按钮上：说的是"按钮文字"，照着提示写代码的人才知道改哪一处
+             （判定只有一处，见 lib/tokens 的 wordsKeyOf） */
+          look?.label !== undefined &&
+            (it.kind === "taskBar"
+              ? { ja: `ボタンの文字は「${look.label}」`, en: `the button's words read ${q(look.label)}`, zh: `按钮文字为「${look.label}」`, ko: `버튼 글자는 "${look.label}"` }[lang]
+              : { ja: `文字は「${look.label}」`, en: `its words read ${q(look.label)}`, zh: `文字为「${look.label}」`, ko: `글자는 "${look.label}"` }[lang]),
           look?.icon !== undefined && { ja: `アイコンは ${look.icon || "なし"}`, en: `its icon is ${look.icon || "gone"}`, zh: `图标为 ${look.icon || "无"}`, ko: `아이콘은 ${look.icon || "없음"}` }[lang],
           look?.variant !== undefined && { ja: `スタイルは ${look.variant}`, en: `its style is ${look.variant}`, zh: `样式为 ${look.variant}`, ko: `스타일은 ${look.variant}` }[lang],
           look?.color !== undefined && { ja: `色は ${look.color}`, en: `its colour is ${look.color}`, zh: `颜色为 ${look.color}`, ko: `색은 ${look.color}` }[lang],

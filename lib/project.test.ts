@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { isProject, projectFileName, readableGroups, readProject } from "./project";
+import { isProject, projectFileName, readableGroups, readDoc, readProject, screenProject } from "./project";
 import { updateRail } from "./rail";
 import { DEFAULT_PALETTE_KEY, KIND_ORDER, VARIANTS, railExpansionSide, type Doc, type Item } from "./tokens";
 
@@ -149,6 +149,64 @@ describe("projectFileName", () => {
     ["設計 한국어 🎨.v2", "m3e-canvas 設計 한국어 🎨.v2.json"],
   ])("sanitizes %j to %j", (title, expected) => {
     expect(projectFileName({ ...doc(), title })).toBe(expected);
+  });
+});
+
+describe("screenProject", () => {
+  /* 一屏的 JSON：整份画布有 saveProject，一屏原先只能导出提示词和图片 —— 缺的是"这一屏由哪些部件
+     组成"的原始数据（作者要拿它把一屏交给别人/编码代理，见 lib/project 的 screenProject）。 */
+  const twoScreens = (): Doc => ({
+    ...doc(),
+    title: "整份画布",
+    paletteKey: "mono",
+    dynamicColor: true,
+    customParts: [{ id: "p1", name: "我的组件", w: 10, h: 10, items: [] }],
+    frames: [
+      { id: "first", name: "上传屏幕2", x: 100, y: 0, w: 412, h: 892 },
+      { id: "second", name: "别的屏幕", x: 900, y: 0, w: 412, h: 892 },
+    ],
+    groups: [
+      { id: "g1", x: 120, y: 40, axis: "x", items: [{ ...item(), id: "a" }] },
+      { id: "g2", x: 920, y: 40, axis: "x", items: [{ ...item(), id: "b" }] },
+    ],
+  });
+
+  it("keeps that screen's own parts and drops the other screen's", () => {
+    const source = twoScreens();
+    const frame = source.frames[0];
+    const out = screenProject(source, frame, [source.groups[0]]);
+    /* 只有这一帧、只有落在它上面的组，题目换成这一屏的名字（文件名因此带得出来是哪一屏） */
+    expect(out.frames).toEqual([frame]);
+    expect(out.groups).toHaveLength(1);
+    expect(out.groups[0]).toMatchObject({ id: "g1", frameId: "first" });
+    expect(out.title).toBe("上传屏幕2");
+    expect(projectFileName(out)).toBe("m3e-canvas 上传屏幕2.json");
+    /* 其余原样带着：配色、动态取色、自定义组件、平台 —— 打开它还是同一套画风与同一批组件 */
+    expect(out.paletteKey).toBe("mono");
+    expect(out.dynamicColor).toBe(true);
+    expect(out.customParts).toEqual(source.customParts);
+    expect(out.frame).toBe("phone");
+    /* 原件一个字没动 */
+    expect(source.groups).toHaveLength(2);
+    expect(source.groups[0]).not.toHaveProperty("frameId");
+    expect(source.title).toBe("整份画布");
+  });
+
+  it("writes a file that opens again as the same screen", () => {
+    const source = twoScreens();
+    const out = screenProject(source, source.frames[0], [source.groups[0]]);
+    /* 它是一份**能用的项目文件**：读回来（打开项目走的是同一个 readDoc）还是那一屏、那个部件 */
+    const back = readDoc(JSON.parse(JSON.stringify(out)))!;
+    expect(back.frames.map((f) => f.name)).toEqual(["上传屏幕2"]);
+    expect(back.groups).toHaveLength(1);
+    expect(back.groups[0].items.map((i) => i.id)).toEqual(["a"]);
+    expect(back.title).toBe("上传屏幕2");
+  });
+
+  it("takes the frame's own name even when the canvas has none", () => {
+    /* 画布没有题目时也说得清是哪一屏 */
+    const source = { ...twoScreens(), title: "" };
+    expect(projectFileName(screenProject(source, source.frames[0], []))).toBe("m3e-canvas 上传屏幕2.json");
   });
 });
 

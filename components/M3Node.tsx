@@ -6,10 +6,12 @@ import {
   badge2ColorOf,
   badge2On,
   badge2TextOf,
+  badgeColorOf,
   badgeOn,
   badgeSurface,
   badgeTextOf,
-  buttonScale,
+  buttonBadgeWidth,
+  buttonMetrics,
   countdownLine,
   fnButtonCircle,
   fnButtonLines,
@@ -17,9 +19,20 @@ import {
   FN_BUTTON_LINE,
   fnButtonNameInk,
   ITEM_CELL_FILL,
+  ITEM_CELL_RADIUS,
   itemCellBox,
   itemCellRadius,
   roundShapeRadius,
+  TASK_BAR_CELL_STROKE,
+  TASK_BAR_CELL_STROKE_COLOR,
+  TASK_BAR_FILL,
+  TASK_BAR_ICON,
+  TASK_BAR_VALUE,
+  taskBarButtonBadge,
+  taskBarButtonBadgeIcon,
+  taskBarButtonLocked,
+  taskBarMetrics,
+  type Variant,
   timerOn,
   timerTicks,
   timerUnitOf,
@@ -185,14 +198,14 @@ const NO_BOX: Kind[] = [
 ];
 
 /** Padding follows M3: icon+label is tighter than label alone. */
-export function ButtonContent({ item }: { item: Item }) {
+export function ButtonContent({ item, p }: { item: Item; p: Palette }) {
   const w = useWeight();
   const hasIcon = !!item.icon;
   const hasLabel = item.label.trim().length > 0;
-  /* A button the author made taller or shorter keeps its proportions: the words, the icon and the
-     padding are the medium button's, scaled with its own height — M3's small / medium / large. */
-  const scale = buttonScale(item);
-  const padX = (hasLabel ? (hasIcon ? 22 : 26) : 16) * scale;
+  /* 按钮不再有右上角那枚徽标（作者：「去掉此属性」—— 角上的徽标仍旧是功能按钮、物品格和任务信息条
+     自己的，任务信息条那一枚由 TaskBarContent 画）。所以这里只剩左图标、文字和它们之间的缝，盒子与
+     画法都从 buttonMetrics 取。 */
+  const m = buttonMetrics(item);
   return (
     <span
       style={{
@@ -201,20 +214,273 @@ export function ButtonContent({ item }: { item: Item }) {
         justifyContent: "center",
         width: item.size ? "100%" : undefined,
         boxSizing: "border-box",
-        gap: hasIcon && hasLabel ? Math.round(8 * scale) : 0,
-        paddingLeft: Math.round(padX),
-        paddingRight: Math.round(padX),
+        gap: m.gap,
+        paddingLeft: m.pad,
+        paddingRight: m.pad,
         /* the box's own height, which the author can set */
         height: "100%",
-        fontSize: Math.round(16 * scale),
+        fontSize: m.font,
         fontWeight: w(500, 700),
         letterSpacing: 0.1,
         whiteSpace: "nowrap",
       }}
     >
-      {hasIcon && <Icon name={item.icon!} size={Math.round(24 * scale)} fill={item.variant === "filled"} />}
+      {hasIcon && <Icon name={item.icon!} size={m.icon} fill={item.variant === "filled"} />}
       {hasLabel && <span>{item.label}</span>}
     </span>
+  );
+}
+
+/**
+ * 任务信息条：一条任务的信息、两个奖励格和一个「领取」按钮，全都在一个部件里 —— 这一条不是"一个框
+ * 加四个孩子"，它的每一块都是一个属性（作者要求"将组合组件改为属性的方式融进单组件里面"）。
+ *
+ * 画的每一块都来自 taskBarMetrics —— 包围盒（sizeOf 的 taskBar 一档）用的是同一个助手，所以"盒子
+ * 大小"和"画出来的样子"不会各说各话：留白、标题那一行、格子那一行和里头那个按钮都是那几个数。
+ * 格子的个数、格子里的图标和格子里那个数字都是**常量**（两个 / TASK_BAR_ICON / TASK_BAR_VALUE）：
+ * 那三个属性已经去掉了。
+ *
+ * 复用（不重画）：每个格子角上那两枚药丸就是物品格那两个角标的同一手 —— 绝对定位的 `mark()` 加上
+ * 种类自己的 BadgeContent；格子里的图标就是那个 Icon；条里的按钮交给按钮自己的内容渲染器
+ * ButtonContent，按钮的底、圆角和影子取按钮种类自己的那两样（variantStyle / variantShadow，和
+ * boxStyle 的 button 一档同一套）；按钮右上角那枚徽标是这一条自己在按钮的**上层**画的另一层
+ * （见下面 inner 那一段的注释）。
+ */
+function TaskBarContent({ item, p }: { item: Item; p: Palette }) {
+  const w = useWeight();
+  /* 条里那一枚领取按钮：由谁响应、画不画灰，见 PartPressContext —— 预览里只有它是活的 */
+  const { press, off } = useContext(PartPressContext);
+  /** 这一下按在按钮上（按住时缩一点，和别处的按钮同一手感）；整条不再跟着缩 */
+  const [held, setHeld] = useState(false);
+  const m = taskBarMetrics(item);
+  const title = item.label.trim();
+  /* 格子里的数字：**固定**的 100 —— 奖励数量那个属性已经去掉了，格子里画的就是这个常量，这一条
+     自己的 `value` 一个字都不看（老文档里写着的 23、0 读进来就让掉了，见 TASK_BAR_VALUE / readItem） */
+  const count = String(TASK_BAR_VALUE);
+  /* 格子的底和那圈发丝线照物品格来：同一个 ITEM_CELL_FILL，同一支 strokeOf（1dp 的
+     secondaryContainer 角色），所以条里的格子和单放的一个物品格是同一个样子 */
+  const cellStroke = strokeOf({ ...item, kind: "itemCell", strokeWidth: TASK_BAR_CELL_STROKE, strokeColor: TASK_BAR_CELL_STROKE_COLOR } as Item, p);
+  /* 一枚角上的药丸：照物品格 `mark()` 那套 —— 绝对定位的锚点交出坐标（top 2 / left 3 / right 3），
+     药丸本身交给 BadgeContent。它叠在格子的角上，所以一点都不长格子和条（见 taskBarMetrics）。
+     `where` 是这一枚的角（也是给浏览器探针的稳定标记，纯新增、不参与样式和行为）。 */
+  const mark = (key: string, where: "left" | "right", on: boolean, text: string, colour: string | undefined, style: React.CSSProperties) =>
+    on ? (
+      <span key={key} data-task-mark={where} style={{ position: "absolute", top: 2, ...style }}>
+        <BadgeContent
+          item={{ ...item, kind: "badge", label: text, size: undefined, size2: text ? m.markH : undefined, color: colour, strokeWidth: 0, strokeColor: undefined }}
+          p={p}
+        />
+      </span>
+    ) : null;
+  /* 条里那个按钮：一个真正的按钮 —— 自己的 filled 底、半高的胶囊圆角和影子，内容交给 ButtonContent
+     （带 `size` 所以它铺满这一格）。它站在一个"槽"里（`m.slot`）：槽比按钮宽出、高出的那一截就是给
+     右上角那枚徽标留的地方（作者设计里的 124×48 按钮框正是这么框着 120×40 的按钮，见 taskBarMetrics）。
+
+     那枚徽标**是这一条自己画的**，不再交给 ButtonContent：按钮种类自己那一枚是长在按钮**里面**的
+     （`inset: 0` 加 2dp 内收的角上药丸），会被按钮自己的 `overflow: hidden` 裁住 —— 而作者的徽标在
+     按钮的**上层**、在按钮的右上角，还可以探到按钮外面。所以：
+       1. 它不是按钮的孩子，而是槽里排在按钮**后面**的一个兄弟 —— 兄弟关系加文档顺序就是"画在上层"；
+       2. 按钮自己的 `overflow: hidden` 拦不到它（它不在按钮里），这一条的盒子也拦不到它（槽把这一截
+          留在了条自己的盒子里，见 taskBarMetrics）；
+       3. 它 `pointer-events: none`（和物品格那两枚角标、功能按钮那颗点同一个规矩），所以它既不吃点击
+          也不撑大任何东西 —— 这一条里唯一吃点击的是它下面那颗按钮（见 PartPressContext）。锁住按钮
+          靠的是语义，不是这一层拦不拦事件（见 taskBarButtonLocked）。 */
+  const inner: Item = {
+    ...item,
+    kind: "button",
+    label: (item.label2 ?? "").trim(),
+    icon: null,
+    variant: "filled",
+    size: m.button.w,
+    size2: m.button.h,
+    /* 这一条自己的徽标由下面那一层画：按钮种类自己的右徽标一个字都没改，只是这一条不再用它 */
+    badge: undefined,
+    badgeText: undefined,
+  };
+  const badgeIcon = taskBarButtonBadgeIcon(item);
+  const badgeText = taskBarButtonBadge(item);
+  /* 药丸自己多宽：图标就是一枚圆药丸（高那么宽），字按它自己的字号估宽（和按钮自己那枚同一支笔） */
+  const badgeW = badgeIcon ? m.badge.h : badgeText ? buttonBadgeWidth(badgeText, m.badge.h) : 0;
+  const hasBadge = !!badgeIcon || !!badgeText;
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: "100%",
+        height: "100%",
+        boxSizing: "border-box",
+        /* 上留白 + 标题 + 缝 + 格子那一行 + 下留白 = taskBarMetrics 那个高（见那里） */
+        padding: `${m.padTop}px ${m.padX}px ${m.padBottom}px`,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      {title && (
+        <div
+          style={{
+            height: m.titleLine,
+            flex: "0 0 auto",
+            display: "flex",
+            alignItems: "center",
+            fontSize: m.titleFont,
+            lineHeight: 1,
+            fontWeight: w(400, 600),
+            color: p.onSurface,
+            /* 一行：标题再长也把它省略掉，不把条撑高（所以盒子和画法永远说得上话） */
+            ...ellipsis,
+          }}
+        >
+          {title}
+        </div>
+      )}
+      <div style={{ marginTop: m.gap, height: m.row, flex: "0 0 auto", display: "flex", alignItems: "center", gap: m.cellGap }}>
+        {/* 奖励格永远是那两个（`cells` 现在是个常量 2）：数一数这个属性已经去掉了，没有别的画法 */}
+        {Array.from({ length: 2 }, (_, i) => (
+          <span
+            key={i}
+            data-task-cell={i + 1}
+            style={{
+              position: "relative",
+              width: m.cell,
+              height: m.cell,
+              flex: "0 0 auto",
+              boxSizing: "border-box",
+              borderRadius: ITEM_CELL_RADIUS,
+              background: fillColor(ITEM_CELL_FILL, p, ITEM_CELL_FILL),
+              color: fillInk(ITEM_CELL_FILL, p, ITEM_CELL_FILL),
+              boxShadow: cellStroke ?? undefined,
+            }}
+          >
+            <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
+              {/* 奖励图标：物品格那个图标的同一个大小和同一种墨（primary 角色）。画的是那个**固定**的
+                  默认奖励图标，不是这一条自己的 `icon` —— 奖励图标没有可改的控件，存下来的那个字段
+                  读进来就让掉了（见 TASK_BAR_ICON / readItem）。右下角那个数字同样是那个固定的
+                  TASK_BAR_VALUE（奖励数量那个属性也去掉了，存下来的 `value` 一并让掉）。 */}
+              <Icon name={TASK_BAR_ICON} size={Math.round(m.cell * 0.4)} color={p.primary} />
+            </span>
+            {count && (
+              <span
+                style={{
+                  position: "absolute",
+                  right: Math.round(m.cell * 0.1),
+                  bottom: Math.round(m.cell * 0.06),
+                  fontSize: Math.max(9, Math.min(24, Math.round(m.cell * 0.23))),
+                  lineHeight: 1,
+                  fontWeight: w(500, 700),
+                }}
+              >
+                {count}
+              </span>
+            )}
+            {/* 角标①在左、角标②在右：作者定的那一对（见 Item.badge / badgeColor 的注释） */}
+            {mark("first", "left", badgeOn(item), badgeTextOf(item), badgeColorOf(item), { left: 3 })}
+            {mark("second", "right", badge2On(item), badge2TextOf(item), badge2ColorOf(item) ?? "secondaryContainer", { right: 3 })}
+          </span>
+        ))}
+        <span
+          data-task-button-slot=""
+          data-task-button-off={off ? "" : undefined}
+          style={{
+            /* 按钮和它右上角那枚徽标共用的那一槽：宽 120+9、高 40+4（见 taskBarMetrics 的 slot），
+               行里占地方的是它 —— 徽标探出按钮的那一截就在这个盒子里，所以条自己的 overflow: hidden
+               也裁不到它。按钮靠 marginLeft: auto 靠在行的右端（和从前一样）。 */
+            position: "relative",
+            flex: "0 0 auto",
+            marginLeft: "auto",
+            width: m.slot.w,
+            height: m.slot.h,
+            boxSizing: "border-box",
+            /* 「置灰并停止响应」落在这一槽上（按钮 + 它右上角那枚徽标）：条里唯一活着的东西就是它，
+               灰就该灰它 —— 标题和奖励格照旧画，整条也不因此不吃事件（见 disablesWholePart）。 */
+            ...(off ? { filter: "grayscale(1)", opacity: 0.55 } : undefined),
+          }}
+        >
+          <button
+            type="button"
+            data-task-button=""
+            /* 关掉的时候把"这是个能点的东西"也说清楚：屏幕阅读器听到的是一颗不可用的按钮 */
+            aria-disabled={off || undefined}
+            /* 这一条里唯一吃点击的地方。整条从前的点击目标就是它 —— 于是点标题、点奖励格都会走这一下的
+               action（作者的原话「点击相当于是点击整个容器」）。现在按下的落点收在这一格上：
+                 · 有 `press`（预览里才有人给）时，pointerdown 就 stopPropagation —— 整条不做那个
+                   0.97 的按下反馈，反馈落在按钮自己身上；
+                 · click 也 stopPropagation，再调 press()：那一次点击该做的事（状态机、action）在
+                   Preview 的 Tappable 里，一份逻辑、两个入口，不在这里重写一遍。
+               没有 `press` 的时候（编辑器画布、导出图、市场缩略图）两个处理器都不挂 —— 按钮是死的，
+               但**不能**写 disabled：禁用的表单控件在浏览器里连 pointerdown 都不派发，编辑器就没法
+               从按钮上按下去拖动这一条了。 */
+            onPointerDown={
+              press
+                ? (e) => {
+                    e.stopPropagation();
+                    setHeld(true);
+                  }
+                : undefined
+            }
+            onPointerUp={() => setHeld(false)}
+            onPointerCancel={() => setHeld(false)}
+            onPointerLeave={() => setHeld(false)}
+            onClick={
+              press
+                ? (e) => {
+                    e.stopPropagation();
+                    press();
+                  }
+                : undefined
+            }
+            style={{
+              /* 按钮自己还是那颗胶囊：120×40，落在槽的左下角（槽比它高出的那 4dp 全在它上面，留给了
+                 徽标），自己的 overflow: hidden 只管它自己这一格的底和内容 */
+              position: "absolute",
+              left: 0,
+              bottom: 0,
+              width: m.button.w,
+              height: m.button.h,
+              borderRadius: m.button.h / 2,
+              boxSizing: "border-box",
+              overflow: "hidden",
+              /* 真按钮要自己清掉浏览器给的那几样：内边距、边框、字体（不 inherit 的话标签会换字体），
+                 以及焦点框（点一下不该在画布上留一圈描边；键盘 Tab 过来仍有 :focus-visible） */
+              padding: 0,
+              border: "none",
+              font: "inherit",
+              outline: "none",
+              display: "block",
+              cursor: press ? "pointer" : "default",
+              /* 只有预览里才可能出现"按住"这一下；导出的图里不该带上与交互有关的东西 */
+              ...(press ? { transition: "transform 120ms cubic-bezier(0.2, 0, 0, 1)" } : undefined),
+              transform: held ? "scale(0.94)" : undefined,
+              boxShadow: variantShadow("filled"),
+              ...variantStyle("filled", p),
+            }}
+          >
+            <ButtonContent item={inner} p={p} />
+          </button>
+          {/* 那枚徽标：槽里排在按钮后面的一层，站在槽的右上角 —— 于是它压在按钮的右上角、并且探出
+              按钮的右边 9dp、上面 4dp。药丸交给 BadgeContent（和别处同一支笔），尺寸就是这一槽留给
+              它的那一块，所以"量到的"就是"画出来的"。 */}
+          {hasBadge && (
+            <span
+              data-task-badge=""
+              style={{
+                position: "absolute",
+                top: 0,
+                right: 0,
+                width: badgeW,
+                height: m.badge.h,
+                pointerEvents: "none",
+              }}
+            >
+              <BadgeContent
+                item={{ ...item, kind: "badge", label: badgeText ?? "", size: badgeW, size2: m.badge.h, color: undefined, strokeWidth: 0, strokeColor: undefined }}
+                p={p}
+                icon={badgeIcon}
+              />
+            </span>
+          )}
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -579,21 +845,27 @@ function RadioContent({ item, p }: { item: Item; p: Palette }) {
   );
 }
 
-/** A badge: a 6dp dot when it has no text, a 16dp pill with the count otherwise. */
-export function BadgeContent({ item, p }: { item: Item; p: Palette }) {
-  const text = item.label.trim();
+/** A badge: a 6dp dot when it has no text, a 16dp pill with the count otherwise. `place` moves the
+ *  pill inside the box it was given, on the grid alignment the caller names (a corner badge asks for
+ *  `"start end"` — top trailing corner — where everything else wants the middle). */
+export function BadgeContent({ item, p, place, icon }: { item: Item; p: Palette; place?: "center" | "start end"; icon?: string | null }) {
+  /* 徽标里画的是字还是图标：一枚药丸只说一件事 —— 给了图标就画图标（图标优先，见 taskBarButtonBadgeOn），
+     字让位。别的调用方不传 icon，画法一个像素都不变。 */
+  const text = (icon ? "" : item.label).trim();
   /* a badge the author sized fills the box it was given; otherwise it hugs its number
      (a dot when it is empty) */
   const own = item.size !== undefined;
   const h = item.size2 ?? (text ? 16 : 6);
-  const w = own ? "100%" : text ? undefined : 6;
+  const w = own ? "100%" : icon ? h : text ? undefined : 6;
   /* the number shrinks and grows with the badge, so a short one is not spilling out of its pill */
   const pad = Math.max(2, Math.round(h / 4));
+  /* 图标跟字一样大：同一条 0.7 的规矩，所以换成锁图标时那枚药丸不会忽然变胖或变瘦 */
+  const markSize = Math.max(8, Math.min(20, Math.round(h * 0.7)));
   return (
     /* Centred in the box, whichever way the author sized it: the pill is drawn as tall as they
        asked, from the middle out — a top-anchored pill looked like the badge was shrinking from
-       the bottom only. */
-    <div style={{ display: "grid", placeItems: "center", height: "100%", boxSizing: "border-box" }}>
+       the bottom only. (A badge handed a corner asks for `place: "start end"` instead.) */
+    <div style={{ display: "grid", placeItems: place ?? "center", height: "100%", boxSizing: "border-box" }}>
       <span
         style={{
           display: "inline-flex",
@@ -607,13 +879,13 @@ export function BadgeContent({ item, p }: { item: Item; p: Palette }) {
           boxSizing: "border-box",
           /* the pill is the badge: its colour and its border live here (see badgeSurface) */
           ...badgeSurface(item, p),
-          fontSize: Math.max(8, Math.min(20, Math.round(h * 0.7))),
+          fontSize: markSize,
           fontWeight: 500,
           lineHeight: 1,
           whiteSpace: "nowrap",
         }}
       >
-        {text}
+        {icon ? <Icon name={icon} size={markSize} /> : text}
       </span>
     </div>
   );
@@ -692,7 +964,7 @@ export function AssetPillContent({ item, p }: { item: Item; p: Palette }) {
 export function MeasuredContent({ item, p }: { item: Item; p: Palette }) {
   switch (item.kind) {
     case "button":
-      return <ButtonContent item={item} />;
+      return <ButtonContent item={item} p={p} />;
     case "extendedFab":
       return <ExtendedFabContent item={item} />;
     case "chip":
@@ -943,6 +1215,26 @@ const useClaims = () => {
   const cbs = useContext(ValueContext);
   return { claim: cbs.claim, claimed: cbs.claimed };
 };
+
+/**
+ * 画在部件里面的那颗按钮，此刻是什么状态
+ *
+ * 单部件里"看起来像按钮"的那一块（任务信息条的领取按钮）该由谁响应？预览里每一次点按都要过的那道门
+ * 在 Preview 的 `Tappable` 上（状态机先走、再触发这一部件自己的 action），而那条逻辑只该有一份。
+ * 所以 Tappable 顺着这个 context 把它交下来：条里的按钮调 `press()`，而不是让整条都吃点击 —— 作者报的
+ * 「点哪里都像点了整个容器」就是这么来的（从前整条都是点击目标，标题和奖励格也一起响应）。
+ *
+ * `off` 是那道门关上的时候（状态里的「置灰并停止响应」落在这一颗按钮上，不是整条 —— 见
+ * `disablesWholePart`）：`press` 一起没有，按钮画灰、不响应，标题和奖励格照旧。
+ *
+ * 画在编辑器画布上、导出成图、放进市场缩略图时没有人提供它，按钮因此是死的 —— 和从前一样。
+ */
+export const PartPressContext = createContext<{
+  /** 这一部件自己的那一下（状态机 + action），交给里面那颗**主**按钮（任务信息条的领取按钮） */
+  press?: () => void;
+  /** 「置灰并停止响应」关掉了里面的按钮：画灰、不响应（见 disablesWholePart） */
+  off?: boolean;
+}>({});
 
 /** The value a slider, a slider field or a stepper stands at: what the author set, 0 when unset —
  *  clamped to the part's own range, so a slider that runs to ten thousand is read on its own scale. */
@@ -1230,6 +1522,10 @@ function Body({
 
     case "fnButton":
       return <FnButtonContent item={item} p={p} still={still} />;
+
+    case "taskBar":
+      return <TaskBarContent item={item} p={p} />;
+
 
     case "topAppBar":
       return (
@@ -2684,6 +2980,12 @@ function boxStyle(item: Item, p: Palette): React.CSSProperties {
       const t = item.fill ?? "surfaceContainerHigh";
       return { background: fillColor(t, p, "surfaceContainerHigh"), border: "none", color: fillInk(t, p, "surfaceContainerHigh") };
     }
+    case "taskBar": {
+      /* 任务信息条自己的底：一个刚放下的写的是 TASK_BAR_FILL（那个 composite 画出来的那一层），
+         作者改成别的角色或者自己的颜色就按作者的（见 fillColor）。里面那两个格子各画各的底。 */
+      const t = item.fill ?? TASK_BAR_FILL;
+      return { background: fillColor(t, p, TASK_BAR_FILL), border: "none", color: fillInk(t, p, TASK_BAR_FILL) };
+    }
     default:
       return { background: p.surfaceContainerHigh, border: "none", color: p.onSurface };
   }
@@ -2769,6 +3071,12 @@ export function M3Node({
   const clips = !NO_BOX.includes(item.kind) && item.kind !== "textField" && item.kind !== "select";
   /* a part with a colour of its own draws from a scheme whose primary role is that colour */
   const ep = paletteForItem(item, palette);
+  /* 一条被徽标里的锁锁住的任务信息条：它里面的按钮点了没有反应（作者的原话「当出现这个锁的图标
+     时，该按钮点击时，禁止响应」——见 lib/tokens 的 taskBarButtonLocked）。这一层给的是**画在编辑器
+     里的那一份**：它永远不按下（pressed 也压不动它），鼠标也不摆出"抓一下"的样子。真正的点击拦截在
+     预览的那条路上（Preview.tsx 的 Tappable，那里才是每一次点按都要过的门）。编辑器自己的选中和拖动
+     照旧 —— 那是编辑器的手势，不是按钮的响应；锁着就选不了、也就解不开锁了。 */
+  const locked = taskBarButtonLocked(item);
 
   return (
     <motion.div
@@ -2777,6 +3085,7 @@ export function M3Node({
       data-part-id={item.id}
       data-kind={item.kind}
       data-wide-rail={item.kind === "navRail" && isWideRail(item) ? "true" : undefined}
+      data-locked={item.kind === "taskBar" && locked ? "true" : undefined}
       onPointerDown={onPointerDown}
       onWheel={onWheel}
       onClickCapture={onClickCapture}
@@ -2786,7 +3095,7 @@ export function M3Node({
         borderBottomLeftRadius: r.bl,
         borderTopRightRadius: r.tr,
         borderBottomRightRadius: r.br,
-        scale: pressed ? 0.97 : 1,
+        scale: pressed && !locked ? 0.97 : 1,
         /* motion owns the transform: the turn is animated here rather than written into `style`, so a
            part that is turned still presses and grows the way an upright one does */
         rotate: rotOf(item),
@@ -2813,7 +3122,7 @@ export function M3Node({
         /* the author's own level decides what draws over what; parts at the same level
            keep the order they are listed in */
         zIndex: selected && inRun ? 1_000_000 : layerOf(item),
-        cursor: !interactive ? "default" : dragging ? "grabbing" : "grab",
+        cursor: !interactive || locked ? "default" : dragging ? "grabbing" : "grab",
         userSelect: "none",
         touchAction: "none",
         boxSizing: "border-box",

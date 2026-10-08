@@ -223,7 +223,10 @@ const validItem = (item: unknown): boolean =>
      corrected on the way in (see readItem), because losing a number must never lose the screen */
   (item.timer === undefined || typeof item.timer === "boolean") &&
   (item.timerUnit === undefined || isTimerUnit(item.timerUnit)) &&
-  /* the badge on that button's corner, and the words on it: an empty one draws as the bare dot */
+  /* the badge a part wears and the words on it — a function button's corner mark, an item cell's "new"
+     mark, and the pill on a button's right edge (作者要求按钮上那个可以开关的徽标，和角标共用这一对字段).
+     A value this build cannot read is dropped on the way in rather than kept as a lie (readItem's
+     ITEM_TEXT / ITEM_FLAG), so a broken badgeText leaves the part with no badge at all, never rejected */
   (item.badge === undefined || typeof item.badge === "boolean") &&
   (item.badgeText === undefined || typeof item.badgeText === "string") &&
   /* the item cell's other corner mark, and the colour of its pill: a role key or a #rrggbb literal */
@@ -234,6 +237,15 @@ const validItem = (item: unknown): boolean =>
   (item.badge2 === undefined || typeof item.badge2 === "boolean") &&
   (item.badge2Text === undefined || typeof item.badge2Text === "string") &&
   (item.badge2Color === undefined || isCustomColor(item.badge2Color)) &&
+  /* 任务信息条上第一枚角标的颜色，以及条里那个按钮右上角那枚徽标的开关、字和图标（`buttonBadge` /
+     `buttonBadgeText` / `buttonBadgeIcon`，和 `badge`/`badgeText` 分开的一对，因为那两个在这一条上指的
+     是格子的角标）。读不出来的值在读进来的路上被让掉或夹住（见 readItem），而不是把部件丢掉 */
+  (item.badgeColor === undefined || isCustomColor(item.badgeColor)) &&
+  (item.buttonBadge === undefined || typeof item.buttonBadge === "boolean") &&
+  (item.buttonBadgeText === undefined || typeof item.buttonBadgeText === "string") &&
+  /* 徽标里的那个图标：一个名字，或者空（没写 / 被清掉）。和 `icon` 一样收 null —— 别的版本写下的空
+     槽不该让这一条读不进来 */
+  (item.buttonBadgeIcon === undefined || item.buttonBadgeIcon === null || typeof item.buttonBadgeIcon === "string") &&
   /* the outline a button-like part wears: an outline this build cannot draw would be read as the
      kind's own, which is the wrong shape rather than a missing one */
   (item.shape === undefined || isButtonShape(item.shape)) &&
@@ -301,7 +313,7 @@ const put = (into: Record<string, unknown>, key: string, value: unknown) => {
 };
 
 /** The words a part says. */
-const ITEM_TEXT = ["name", "label2", "supporting", "note", "cellText", "src", "badgeText", "badge2Text"] as const;
+const ITEM_TEXT = ["name", "label2", "supporting", "note", "cellText", "src", "badgeText", "badge2Text", "buttonBadgeText"] as const;
 /** The numbers it lays itself out with, each inside what its own field allows. */
 const ITEM_NUM: [string, number, number][] = [
   ["size", 1, Infinity],
@@ -323,8 +335,8 @@ const ITEM_NUM: [string, number, number][] = [
 /** The switches it carries: a value that is not a switch is not a switch, so the flag is let go. */
 const ITEM_FLAG = [
   "switch", "checked", "noCheck", "noImage", "bold", "wavy", "contained", "panel", "hidden", "modal",
-  "checkboxes", "cellNames", "showValue", "unit", "mix", "timer", "badge", "badge2", "joystickReturn",
-  "barFolded", "railFolded", "railExpanded", "railModal",
+  "checkboxes", "cellNames", "showValue", "unit", "mix", "timer", "badge", "badge2", "buttonBadge",
+  "joystickReturn", "barFolded", "railFolded", "railExpanded", "railModal",
 ] as const;
 
 /** the destinations of a bar, a rail, a tab row or a menu: the readable entries, and no others */
@@ -413,6 +425,10 @@ export function readItem(value: unknown): Item | null {
   put(it, "fill", readOne(value.fill, isCustomColor));
   put(it, "iconFill", value.iconFill === "none" || isCustomColor(value.iconFill) ? value.iconFill : undefined);
   put(it, "badge2Color", readOne(value.badge2Color, isCustomColor));
+  /* 任务信息条的第一枚角标颜色（和 badge2Color 同一条规则），以及按钮右上角那枚徽标里的图标名 ——
+     都要么是说得通的值，要么让掉，绝不因此丢掉部件或整份文档 */
+  put(it, "badgeColor", readOne(value.badgeColor, isCustomColor));
+  put(it, "buttonBadgeIcon", typeof value.buttonBadgeIcon === "string" ? value.buttonBadgeIcon : undefined);
   put(it, "shape", readOne(value.shape, isButtonShape));
   put(it, "timerUnit", readOne(value.timerUnit, isTimerUnit));
   put(it, "trackThickness", readOne(value.trackThickness, isTrackThickness));
@@ -456,6 +472,23 @@ export function readItem(value: unknown): Item | null {
   if (kind === "joystick") {
     delete it.value;
     delete it.max;
+  }
+  /* 按钮不再有"右徽标"这个属性了（作者：「去掉此属性」）：老文档里还写着的 badge / badgeText 让掉，
+     部件一个都不丢。这两个字段是别的种类在用的通用字段（功能按钮与物品格的角标、任务信息条的两枚格子
+     角标），这里删的只是按钮自己那一份，别的种类照旧读它。 */
+  if (kind === "button") {
+    delete it.badge;
+    delete it.badgeText;
+  }
+  /* 任务信息条也不再有"奖励数量"、"画几个奖励格"和"奖励图标"这三个属性：数量永远是那个固定的 100
+     （TASK_BAR_VALUE），格子永远两个，图标永远是那个默认的奖励图标（见 tokens 的 TASK_BAR_ICON）。
+     老文档里还写着的话照样读得进来 —— 部件一个都不丢，只是这几个字段让掉，和上面方向盘那两个字段
+     同一条规矩（读不出来的值尤其不是丢部件的理由）。`value` 是别的种类在用的通用字段，这里删的只是
+     任务信息条自己那一份，别的种类照旧读它。 */
+  if (kind === "taskBar") {
+    delete it.value;
+    delete it.cellCount;
+    it.icon = null;
   }
   return it as unknown as Item;
 }
@@ -576,6 +609,27 @@ export const projectFileName = (doc: Doc) => {
     .trim();
   return name ? `m3e-canvas ${name}.json` : "m3e-canvas.json";
 };
+
+/**
+ * 只留一屏的项目文件
+ *
+ * 「保存项目」给的是整份画布；这一个给的是**画布上的一屏**：那一屏自己的 `frames` 一项、落在它上面的
+ * 组（由调用方按画布上同一套几何挑出来，见 frameOfGroup），其余原样带着（配色、主题、动态取色、自定义
+ * 组件、平台……）—— 所以它是一份**能用的项目文件**：既能「打开项目」回到编辑器里继续画这一屏，也能交给
+ * 别人（或编码代理）看清这一屏到底由哪些部件、哪些字段组成。
+ *
+ * 题目换成这一屏的名字：文件名因此是 `m3e-canvas 上传屏幕2.json`，打开它的人一眼知道这是哪一屏。
+ * `frameId` 一起写上（`Group` 类型里没有这一项，存储里却一直有）：一屏一帧的文件里几何本来就分得清，
+ * 写上只是让这份文件自己说得更明白。
+ */
+export function screenProject(doc: Doc, frame: Frame, groups: Group[]): Doc {
+  return {
+    ...doc,
+    title: frame.name,
+    frames: [frame],
+    groups: groups.map((g) => ({ ...g, frameId: frame.id }) as Group),
+  };
+}
 
 /**
  * A document read back from a file, a share link, an AI answer or storage — the one gate every reader

@@ -28,7 +28,7 @@ import { Field } from "@/components/ui";
 import { AiSettings, DEFAULT_AI, aiConfigured, hasKey, isSecureUrl, loadAiSettings, proposeBehavior, proposeDescription, pushHistory, saveAiSettings } from "@/lib/ai";
 import { barSlotOf, bodyRect, carryFrame, pullInto, shiftForResize, sideFlip, spansSlot, tidyFrame } from "@/lib/tidy";
 import { constrainModalRails, modalRailOf, updateRail } from "@/lib/rail";
-import { readDoc, readableGroups, readProject, saveProject } from "@/lib/project";
+import { readDoc, readableGroups, readProject, saveProject, screenProject } from "@/lib/project";
 import { audit, type AuditIssue } from "@/lib/audit";
 import { magnifyView, revealPadding, revealView, type CanvasView } from "@/lib/view";
 import { existingDialogs, holdersOf } from "@/lib/pages";
@@ -3586,6 +3586,18 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   }, []);
 
 
+  /**
+   * 把这一屏导出成一份 JSON
+   *
+   * 整份画布有「保存项目」；一屏原先只能导出提示词和图片 —— 缺的正是"这一屏由哪些部件、哪些字段组成"
+   * 的那份原始数据。挑这一屏的组用的是画布上同一套几何（frameOfGroup），所以导出的内容和你在图层里
+   * 看到的那一屏逐字一致；文件本身是一份**能用的项目文件**：`m3e-canvas 上传屏幕2.json`，用「打开项目」
+   * 就能回到编辑器里（见 lib/project 的 screenProject）。
+   */
+  const saveFrameJson = (f: Frame) => {
+    saveProject(screenProject(doc, f, groups.filter((g) => frameOfGroup(g, frames, widths)?.id === f.id)));
+  };
+
   /** The screen is re-rendered offscreen at 1:1 with static parts, so the
    *  canvas zoom, selection outlines and in-flight animations never leak into the PNG. */
   const saveFrameImage = async (f: Frame) => {
@@ -5581,6 +5593,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
                   onPreview={() => openPreview(selectedFrame.id)}
                   prompt={buildPrompt(doc, widths, selectedFrame.id, lang)}
                   onSaveImage={() => saveFrameImage(selectedFrame)}
+                  onSaveJson={() => saveFrameJson(selectedFrame)}
                   frames={frames}
                   ai={{ ready: aiReady, reason: aiReason, busy: aiBusy && aiFrameId === selectedFrame.id, onRun: () => runAi("describe", selectedFrame), onCancel: cancelAi }}
                 />

@@ -604,6 +604,65 @@ export function variantStyle(v: Variant, p: Palette): CSSProperties {
  */
 export const buttonScale = (it: Item) => (it.size2 ?? H) / H;
 
+/**
+ * 按钮里每一块占多大 —— 图标、字号、内边距、相邻两块之间留的缝。包围盒（sizeOf，量不到时走
+ * buttonWidth）和绘制（M3Node 的 ButtonContent）都从这里取，所以"盒子大小"和"画出来的样子"不会各说
+ * 各话。
+ *
+ * **这一行只有左图标和文字两块**：按钮不再有自己的右徽标（作者：「去掉此属性」—— 那几个角上的徽标
+ * 仍旧是功能按钮、物品格和任务信息条自己的），所以 gap 是"图标与文字同时存在才留"、pad 是 22 / 26 /
+ * 16、图标是 24 * scale。
+ */
+export const buttonMetrics = (it: Partial<Item>) => {
+  const scale = buttonScale(it as Item);
+  const hasIcon = !!it.icon;
+  const hasLabel = !!(it.label ?? "").trim();
+  const pieces = [hasIcon, hasLabel].filter(Boolean).length;
+  return {
+    scale,
+    icon: Math.round(24 * scale),
+    font: Math.round(16 * scale),
+    /** 相邻两块之间留的缝：只有一块内容时不留 */
+    gap: pieces > 1 ? Math.round(8 * scale) : 0,
+    /** 行里的内容块数（左图标 / 文字），画和量都按它排 */
+    pieces,
+    /** 两端的留白：有字有图标是 22，只有字是 26，连字都没有是 16（M3 的按钮内边距） */
+    pad: Math.round((hasLabel ? (hasIcon ? 22 : 26) : 16) * scale),
+  };
+};
+
+/**
+ * 右徽标那枚药丸的宽：画它的是 BadgeContent（见 M3Node），这里复算的是同一件事 —— 里面的数字/文字
+ * 按它自己的字号估一个宽（assetPillTextWidth，和资产框共用那份"量不到时的兜底"），两边是它自己的内边距
+ * max(2, 高/4)，并且不窄于自己的高（BadgeContent 的 minWidth）—— 所以一位数就是一枚 16dp 的圆药丸。
+ * 没有字就是没有徽标，宽 0。
+ */
+export const buttonBadgeWidth = (text: string, height: number): number => {
+  const t = text.trim();
+  if (!t) return 0;
+  const pad = Math.max(2, Math.round(height / 4));
+  const font = Math.max(8, Math.min(20, Math.round(height * 0.7)));
+  return Math.max(height, assetPillTextWidth(t, font) + pad * 2);
+};
+
+/**
+ * 按钮在没有浏览器测量时的自然宽度（服务端渲染、静态导出、首帧、测试）：两端留白 + 行里每一块内容，
+ * 加上相邻两块之间的间距 —— 缺的图标既不占图标也不占间距，所以把一个图标拿掉按钮就变短。
+ *
+ * 量的就是 ButtonContent 画的那一行：**只有左图标和文字** —— 右上角那枚药丸是绝对定位的，不占行里的
+ * 位置，所以挂不挂徽标都是这个数（看那枚药丸自己多宽，见 buttonBadgeWidth）。真正画在编辑器里时按钮是
+ * MEASURED 的：宽度由浏览器量出这一行的自然宽（同样与徽标无关），作者钉了宽度就用作者的数字（见
+ * sizeOf）；**sizeOf 从不走这里** —— 它给的始终是 kind 自己的 w（或者作者钉的宽），有没有徽标都一样，
+ * 于是徽标开、关，按钮的盒子逐字不变。
+ */
+export const buttonWidth = (it: Partial<Item>): number => {
+  const m = buttonMetrics(it);
+  const label = (it.label ?? "").trim();
+  const pieces = [it.icon ? m.icon : 0, label ? assetPillTextWidth(label, m.font) : 0].filter((n) => n > 0);
+  const inner = pieces.reduce((sum, n) => sum + n, 0) + Math.max(0, pieces.length - 1) * m.gap;
+  return Math.max(SIZE_MIN, Math.round(m.pad * 2 + inner));
+};
+
 export function variantShadow(v: Variant): string {
   if (v === "elevated") return "0 1px 3px rgba(0,0,0,0.20), 0 4px 8px rgba(0,0,0,0.10)";
   return "none";
@@ -699,6 +758,8 @@ export type Kind =
   | "circularProgress"
   | "splitButton"
   | "assetPill"
+  /** 任务信息条：任务的信息、两个奖励格和一个「领取」按钮，全在一个部件里（见 taskBarMetrics） */
+  | "taskBar"
   | "toolbar"
   | "tabs"
   | "sideTabs"
@@ -798,9 +859,14 @@ export type KindSpec = {
   defLabel: string;
   defIcon: string | null;
   defSupporting?: string;
+  /** the words a fresh part's own second button starts with, where a kind has one (the task bar's
+   *  「领取」, a gacha's 10-draw button — see `Item.label2`) */
+  defLabel2?: string;
   /** the words a fresh part's corner marks start with (see `Item.badgeText` / `Item.badge2Text`) */
   defBadgeText?: string;
   defBadge2Text?: string;
+  /** the words a fresh task bar's button badge starts with (see `Item.buttonBadgeText`) */
+  defButtonBadgeText?: string;
   defIcon2?: string;
   defSize?: number;
   defVariant?: Variant;
@@ -967,6 +1033,158 @@ export const ITEM_CELL_RADIUS = 0;
  *  背包格子 composite was drawn with. */
 export const ITEM_CELL_FILL: ColorToken = "surfaceContainerHigh";
 export const ITEM_CELL_QUALITY = "#7BAE7A";
+
+/* ---------- the task bar ---------- */
+
+/* 任务信息条的每一块占多大 —— 留白、标题那一行、格子那一行和里头那个按钮。包围盒（sizeOf）和绘制
+ * （M3Node 的 TaskBarContent）都从这里取，所以"盒子大小"和"画出来的样子"不会各说各话。
+ *
+ * 这些数就是 任务信息条 composite 的那几个：13 的左右留白、14 的上留白、17dp 的标题（一行 22）、
+ * 标题和格子之间 10、格子 56（composite 里的 56×60 的方块）、两个格子之间 23、底部 10 —— 加起来
+ * 正好 112，也就是那个 composite 的高度，一个刚放下的任务信息条就是它。 */
+
+/** 左右留白：标题、格子和最右边的按钮都从这里起步 */
+export const TASK_BAR_PAD_X = 13;
+/** 上留白 */
+export const TASK_BAR_PAD_TOP = 14;
+/** 下留白 */
+export const TASK_BAR_PAD_BOTTOM = 10;
+/** 标题的字号，和一行文字占多高 */
+export const TASK_BAR_TITLE_FONT = 17;
+export const TASK_BAR_TITLE_LINE = 22;
+/** 标题和格子那一行之间留的缝 */
+export const TASK_BAR_GAP = 10;
+/** 一个奖励格的边长（正方形：格子底下没有名字那一行） */
+export const TASK_BAR_CELL = 56;
+/** 两个奖励格之间留的缝 */
+export const TASK_BAR_CELL_GAP = 23;
+/** 条里那个按钮：作者新设计里的 120×40，画它的是按钮自己的内容渲染器（见 M3Node 的 ButtonContent） */
+export const TASK_BAR_BTN_W = 120;
+export const TASK_BAR_BTN_H = 40;
+/** 按钮右上角那枚徽标：作者设计里那枚是 21×20，药丸的高就是这一个数。宽由内容算 —— 是字就按字自己
+ *  量（`buttonBadgeWidth`，和按钮自己那枚徽标同一支笔；"3" 量出来正好 20），是图标就是一枚圆药丸（宽
+ *  就是高）。 */
+export const TASK_BAR_BADGE_H = 20;
+/** 那枚徽标压在按钮的右上角，允许**探出按钮的框**：右边缘越过按钮的右边缘 9dp、上边缘高出按钮的
+ *  上边缘 4dp（作者设计里按钮框 124×48 框着 120×40 的按钮，徽标在框的右上角 —— 换算到按钮这一格
+ *  就是这两个数）。 */
+export const TASK_BAR_BADGE_OVER_RIGHT = 9;
+export const TASK_BAR_BADGE_OVER_TOP = 4;
+/** 徽标画的是这枚图标时，按钮就是"锁住的"：点了没有反应。这是**语义**不是图案，所以只在这里写
+ *  一次（见 taskBarButtonLocked）。 */
+export const TASK_BAR_LOCK_ICON = "lock";
+/** 一个刚放下的任务信息条画出来多高：有标题的那一档（见 taskBarMetrics） */
+export const TASK_BAR_H = TASK_BAR_PAD_TOP + TASK_BAR_TITLE_LINE + TASK_BAR_GAP + TASK_BAR_CELL + TASK_BAR_PAD_BOTTOM;
+/** 条自己的圆角（那个 composite 的框是 16） */
+export const TASK_BAR_RADIUS = 16;
+/** 条自己的底子：composite 那个框画出来的那一层（它的 `color` 压过了 `fill`，见 boxStyle）—— 格子
+ *  是 surfaceContainerHigh，所以在它上面读得出来 */
+export const TASK_BAR_FILL: ColorToken = "surfaceContainerLow";
+/** 奖励格里的那个数字：**固定**的 100 —— 和奖励格的个数（两个）、格子里那个图标（TASK_BAR_ICON）
+ *  同一条规矩，这一条画出来的三个事实都是常量。奖励数量那个属性已经去掉了（作者：「奖励数量属性
+ *  去掉，该数量默认 100就行。」），所以条上既没有改它的控件，也没有让它变的字段：`value` 是别处
+ *  在用的通用字段，任务信息条读进来时把它让掉（见 project.ts 的 readItem），画的时候也不看它 ——
+ *  老文档里写着的 23、0、"9" 读回来一个都不留，格子照旧画 100。 */
+export const TASK_BAR_VALUE = 100;
+/** 奖励格里那个图标：那个 composite 的图标，**固定**这一个 —— 作者要的是"奖励图标也默认一个图标，
+ *  无需更改图标按钮"，所以条上没有改它的控件，存下来的 `icon` 也让掉（见 project.ts 的 readItem 和
+ *  M3Node 的 TaskBarContent）。颜色仍是主题的 primary。 */
+export const TASK_BAR_ICON = "redeem";
+/** 每个奖励格那圈发丝线：和物品格一模一样（1dp 的 secondaryContainer），所以条里的格子和单独放的
+ *  一个物品格看起来是同一个东西。 */
+export const TASK_BAR_CELL_STROKE = 1;
+export const TASK_BAR_CELL_STROKE_COLOR: ColorToken = "secondaryContainer";
+
+/**
+ * 任务信息条有多高，以及里面每一块画在哪 —— 绘制和包围盒共用的一处（sizeOf 的 taskBar 一档）。
+ *
+ * 高 = 上留白 + 标题那一行 + 缝 + 格子那一行 + 下留白，一行都不少：标题空着时那一行和它的缝一起
+ * 不占地方（和物品格的名字那一行同一个规矩），所以"没有标题"是另一个明确的数（80），不是一个魔法
+ * 常量。格子那一行的高度是格子和按钮那一槽里高的那个 —— 按钮再高也撑得住条。
+ *
+ * 奖励格永远是**两个**（那个 composite 的样子）：数一数这个属性已经去掉了，一格和两格也不再是
+ * 两种画法（见下面的 `cells`）。
+ *
+ * 条里那个按钮站在一个**槽**里（`slot`）：槽比按钮宽出"徽标往右探出去"的那 9dp、高出一截"徽标往
+ * 上探出去"的那 4dp —— 作者设计里的 124×48 按钮框正是这么框着 120×40 的按钮的（徽标又是绝对定位
+ * 压在框的右上角）。槽是**行里真正占地方的那一块**，所以那枚徽标虽然探出了按钮（作者的模型：徽标
+ * 在按钮的上层、可以在按钮外面），却仍旧落在这一条自己的盒子里：盒子还是画出来的那个，没有例外。
+ *
+ * 徽标挂不挂、字多长、是字还是图标，这里一个数都不动（药丸自己多宽由 buttonBadgeWidth 算）：槽的
+ * 宽高只跟按钮和那 9/4 有关。
+ */
+export const taskBarMetrics = (it: Partial<Item>) => {
+  const cell = TASK_BAR_CELL;
+  /* 标题空着就没有标题那一行，缝也跟着不留（和 name 空着不留名字那一行同一个道理） */
+  const titleLine = (it.label ?? "").trim() ? TASK_BAR_TITLE_LINE : 0;
+  const gap = titleLine ? TASK_BAR_GAP : 0;
+  const button = { w: TASK_BAR_BTN_W, h: TASK_BAR_BTN_H };
+  /* 徽标压在按钮右上角：药丸的高，以及它越过按钮右上角的那两个数 */
+  const badge = { h: TASK_BAR_BADGE_H, overRight: TASK_BAR_BADGE_OVER_RIGHT, overTop: TASK_BAR_BADGE_OVER_TOP };
+  /* 按钮那一槽 = 按钮和"徽标探出去的那一截"的并集：徽标的右上角正好落在槽的右上角，按钮落在槽的
+     左下角。所以槽就是这一块画出来的外框，行按它排（见上面那段） */
+  const slot = { w: button.w + badge.overRight, h: button.h + badge.overTop };
+  const row = Math.max(cell, slot.h);
+  return {
+    padX: TASK_BAR_PAD_X,
+    padTop: TASK_BAR_PAD_TOP,
+    padBottom: TASK_BAR_PAD_BOTTOM,
+    titleFont: TASK_BAR_TITLE_FONT,
+    titleLine,
+    gap,
+    /** 奖励格永远两个 —— 那个 composite 的样子，不是作者设的数（见上面那段） */
+    cells: 2,
+    cell,
+    cellGap: TASK_BAR_CELL_GAP,
+    /** 格子那一行的高度：格子和按钮那一槽里高的那个（按钮再高也撑得住条） */
+    row,
+    /** 条里那个按钮自己画出来多大（120×40），位置在槽的左下角 */
+    button,
+    /** 按钮那一槽：行里给按钮和它右上角那枚徽标留的地方（129×44） */
+    slot,
+    /** 那枚徽标（药丸的高 h，以及越过按钮右上角的 overRight / overTop） */
+    badge,
+    /** 每个格子角上那枚药丸多高：物品格那条规矩（格子边长的 18%，再小也留 10dp） */
+    markH: Math.max(10, Math.round(cell * 0.18)),
+    h: TASK_BAR_PAD_TOP + titleLine + gap + row + TASK_BAR_PAD_BOTTOM,
+  };
+};
+
+/** 条里那个按钮右上角画的徽标写的是什么字：就是这一条自己的一对字段（`buttonBadge` 开关 +
+ *  `buttonBadgeText` 内容）。没有字的药丸什么也不说明，所以没写、或者存坏了被读掉的空字，都算
+ *  **没有徽标**（宽由 `buttonBadgeWidth` 算，画的也是同一支笔）。
+ *  徽标也有可能是图标（`buttonBadgeIcon`）：图标在时画的是图标，这几个字就不画了，但字段还在 ——
+ *  看 `taskBarButtonBadgeIcon` / `taskBarButtonBadgeOn`。 */
+export const taskBarButtonBadge = (it: Partial<Item>): string | null =>
+  (it.buttonBadge ? (it.buttonBadgeText ?? "").trim() : "") || null;
+
+/** 条里那个按钮右上角那枚徽标里的图标（作者在「图标」一节里选的，和奖励图标同一个选择器）。
+ *  没写、写坏了被读掉的都算没有图标。它**不受 `buttonBadge` 开关管**：图标本身就是内容，选上了
+ *  就画（开关管的是那两个字，那两个没有字就算没有徽标）。 */
+export const taskBarButtonBadgeIcon = (it: Partial<Item>): string | null => {
+  const icon = typeof it.buttonBadgeIcon === "string" ? it.buttonBadgeIcon.trim() : "";
+  return icon || null;
+};
+
+/**
+ * 条里那个按钮右上角有没有那枚徽标，以及画的是谁：**图标优先**。一枚 20dp 的药丸只说一件事，而
+ * 图标是更具体的那一件（锁说的是"这颗按钮现在不能按"，旁边再挤一个数字只会把话说糊）；字是退路。
+ * 图标和字都没有，就是没有徽标。绘制、提示和判定都走这里，所以画的和说的不会各说各话。
+ */
+export const taskBarButtonBadgeOn = (it: Partial<Item>): boolean =>
+  !!(taskBarButtonBadgeIcon(it) || taskBarButtonBadge(it));
+
+/**
+ * 条里那枚徽标画的是锁图标时，那颗按钮是"锁住的"：点着没有反应 —— 这是**语义**，不是一枚图案。
+ * 作者的原话是「当出现这个锁的图标时，该按钮点击时，禁止响应」，所以判定只写在这一处：绘制、编辑
+ * 器的按下反馈、预览的点击路径都问它，谁也不自己认一遍字符串。要换一枚别的图标当"锁"，改这里的
+ * 一个常量就够（见 TASK_BAR_LOCK_ICON）。
+ */
+export const taskBarButtonLocked = (it: Partial<Item>): boolean =>
+  it.kind === "taskBar" && taskBarButtonBadgeIcon(it) === TASK_BAR_LOCK_ICON;
+
+export const tapLivesInside = (kind: Kind): boolean => kind === "taskBar";
+
 /** The count a value stands for: whole, never negative, never past the ceiling — the one place that
  *  policy lives, so the slider, the formatter and the document check all agree. */
 const timerCount = (value: number | undefined) =>
@@ -987,7 +1205,7 @@ export const LEGACY_KINDS: Kind[] = ["sliderInput", "moneyTree", "eggSmash"];
  *  they existed is still a document: the shape check accepts it (see project.ts) and the reader leaves
  *  those parts out, along with whatever they held, so nothing an author drew throws their canvas away.
  *  Kept by name rather than by `Kind`, because the union no longer has them. */
-export const REMOVED_KINDS: string[] = ["fabMenu"];
+export const REMOVED_KINDS: string[] = ["fabMenu", "confirmBox"];
 export const isRemovedKind = (it: { kind?: unknown } | null | undefined): boolean =>
   !!it && typeof it.kind === "string" && REMOVED_KINDS.includes(it.kind);
 
@@ -1893,6 +2111,43 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     defIcon: null,
     defSize: GACHA_W,
   },
+  taskBar: {
+    label: "Task bar",
+    noun: "タスク情報バー",
+    /* 任务信息条：一条任务的信息 —— 标题、两个奖励格（格子自己画图标、数量、两枚角标）和一个
+       「领取」按钮（它右上角还压着一枚徽标，是字或图标，可以探出按钮的框）—— 全都收在一个部件里，
+       像功能按钮那样"一个部件、其余是属性"，而不是一个框加四个孩子。宽度是作者的（默认一个手机
+       内容宽），高度跟着内容走（见 taskBarMetrics）。 */
+    category: "features",
+    paletteIcon: "checklist",
+    w: CONTENT_W,
+    h: TASK_BAR_H,
+    radius: TASK_BAR_RADIUS,
+    /* 条的样子是它的 fill 加上每个格子自己的底，没有"整条换一套样式"这回事 —— 和物品格一样（见
+       KIND_SPEC.itemCell）：里面的按钮画的是按钮自己的 filled 那一套，格子的底是格子自己的。 */
+    hasVariant: false,
+    hasLabel: true,
+    /* 奖励数量不是 supporting，也不是这一条的字段了：两个格子里那个数字是**固定**的常量
+       （TASK_BAR_VALUE，见上），所以这一条既没有"状态"滑杆，也没有别的控件去改它；条上也没有第二行
+       文字 */
+    hasSupporting: false,
+    /* 奖励图标不可改：两个格子永远画那个固定的默认奖励图标（TASK_BAR_ICON），所以这一条没有"图标"
+      这个属性 —— 面板里就少一行改图标的控件（作者：「奖励图标也默认一个图标，无需更改图标按钮」）。
+       条上唯一还能选的图标是按钮右上角那枚徽标里的那一个（见 iconSlotsOf 的 taskBar 一档）。 */
+    hasIcon: false,
+    hasFill: true,
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: [CONTENT_W, PHONE_W] },
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [TASK_BAR_H, 140] },
+    defLabel: "毎日ログイン (1/1)",
+    defLabel2: "受け取る",
+    /* 奖励格的图标是固定的常量，不是每一条自己的字段：新落下的条照样只带标题、数量和按钮文字 */
+    defIcon: null,
+    defBadgeText: "新",
+    defBadge2Text: "普通",
+    /* 按钮右上那枚徽标：和按钮种类一样，默认就戴着（作者要的是一个可以开关的徽标），内容是中性的 1 */
+    defButtonBadgeText: "1",
+    defSize: CONTENT_W,
+  },
     rewardTrack: {
     label: "Reward track",
     /* A progress bar that hands things out: the visitor's progress is the part's value, and every
@@ -2065,6 +2320,8 @@ export const KIND_ORDER: Kind[] = [
   "gacha",
   "slot",
   "calendar",
+  /* 任务信息条是功能那一节的：它和奖励进度条是同一类东西（一条任务/奖励），排在它旁边 */
+  "taskBar",
   "rewardTrack",
 ];
 
@@ -2220,19 +2477,41 @@ export type Item = {
   /** How many units that countdown stands at, and which unit it counts in; unset is three minutes. */
   timerValue?: number;
   timerUnit?: TimerUnit;
-  /** A function button only: whether it wears a badge on the top-right of its circle. (A navigation
+  /** A function button or a button: whether it wears a badge on the top-right of its circle (see
+   *  `badgeOn`). On a task bar the same switch means the **first corner mark of every reward cell**,
+   *  which sits on the cell's top-left and may carry a colour of its own (`badgeColor`) — the corners
+   *  are the part's own business, exactly as an item cell's two marks are. (A navigation
    *  destination's own `badge` is a different field on a different type: that one is the words, this
    *  one is the switch.) */
   badge?: boolean;
   /** What that badge says. Unset or empty draws the bare dot a "new" mark is, which is why switching
    *  the badge on does not write any words. */
   badgeText?: string;
+  /** A task bar only: the colour of that first mark's pill — a palette role or a #rrggbb literal,
+   *  read by the same rule `Item.color` reads by; unset leaves the pill in the theme's own role.
+   *  (The second mark's colour is `badge2Color`, the field an item cell already uses for its own.) */
+  badgeColor?: string;
   /** An item cell only: the second mark it wears, on the top-left of the cell — the quality tag a
    *  game brands an item with. Its own colour is a palette role or a #rrggbb literal, the same rule
-   *  `Item.color` reads by; unset leaves the mark in the theme's own role. */
+   *  `Item.color` reads by; unset leaves the mark in the theme's own role. On a task bar the same
+   *  three fields mean the second corner mark of every reward cell, drawn on the cell's top-right. */
   badge2?: boolean;
   badge2Text?: string;
   badge2Color?: string;
+  /** A task bar only: whether the button inside the bar wears a badge on its top-right corner. This
+   *  is a pair of its own rather than `badge`/`badgeText`, because on a task bar those two are the
+   *  first cell mark (see above). The words are what decides the badge: an empty one draws nothing
+   *  at all, the way a button's own corner badge behaves (see `taskBarButtonBadge`). The badge is
+   *  drawn as a layer *above* the button, at the button's top right, and it may hang outside the
+   *  button's box — the row reserves the room for it (see `taskBarMetrics`). */
+  buttonBadge?: boolean;
+  buttonBadgeText?: string;
+  /** A task bar only: the icon in that same badge. The badge holds words or an icon — the icon wins
+   *  when both are set (see `taskBarButtonBadgeIcon` / `taskBarButtonBadgeOn`). It is chosen through
+   *  the ordinary icon slot (the 「图标」 section), so it is the control every other slot uses. The
+   *  lock icon is not just a picture: the badge then locks the button, which answers no tap at all
+   *  (see `taskBarButtonLocked`). */
+  buttonBadgeIcon?: string | null;
   /** the background this part paints, or `transparent` to let what is behind it show */
   fill?: FillToken;
   /** containers: the axes the visitor can move the content along; unset holds still */
@@ -2384,11 +2663,46 @@ export const lookOf = (flow: PartFlow | undefined, id: string | undefined) => (i
 /** the steps that leave a look, in the order they were written */
 export const stepsFrom = (flow: PartFlow | undefined, from: string) => (flow?.steps ?? []).filter((s) => s.from === from);
 
+/**
+ * 一个部件的"文字"放在哪个字段上
+ *
+ * 大多数部件就是它自己那行 `label`。任务信息条不是：它的文字是右端那颗**领取按钮**上的两个字
+ * （「受け取る」→「受け取り済み」），标题说的是"这是哪一条任务"、不该跟着一次点按改。所以"改文字"
+ * 这类外观（`PartLook.label` 与 `RulePatch.label`）落在按钮文字（`label2`）上 —— 画（lookItem）、
+ * 面板里那个字段的起始值（Inspector 的 lookSeed）、流程图的节点名（flow.ts 的 lookWords）、提示里
+ * 那句话（prompt.ts）全都走这一个判定，改一处就够。
+ */
+export const wordsKeyOf = (it: Pick<Item, "kind">): "label" | "label2" => (it.kind === "taskBar" ? "label2" : "label");
+
+/** 这个部件此刻的文字：任务信息条读按钮上那两个字，其余读自己那行 */
+export const wordsOf = (it: Item): string => (it.kind === "taskBar" ? it.label2 ?? "" : it.label);
+
+/** 一次"改文字"落成补丁：任务信息条落到按钮文字上（见 wordsKeyOf） */
+export const wordsPatch = (it: Pick<Item, "kind">, words: string): Partial<Item> =>
+  it.kind === "taskBar" ? { label2: words } : { label: words };
+
+/**
+ * 「置灰并停止响应」画在哪个范围上：整块部件，还是部件里那颗按钮
+ *
+ * 普通部件整块灰掉、整块不再收事件。融合部件（任务信息条）不是：条里唯一活着的东西是右端那颗
+ * 领取按钮 —— 点击归它（见 Preview 的 PartPressContext）、文字归它（wordsKeyOf）、所以"置灰并停止
+ * 响应"也该只灰它：标题和奖励格照旧，条也不吃 `pointer-events: none`（在那个容器里还能拖着滚）。
+ */
+export const disablesWholePart = (kind: Kind): boolean => !tapLivesInside(kind);
+
+/** 一整份外观补丁落在一个部件上：`label` 走 wordsKeyOf 那一处，其余字段照旧。 */
+export function withLook(it: Item, patch: RulePatch | undefined): Item {
+  if (!patch) return it;
+  const { label, ...rest } = patch;
+  const next = { ...it, ...rest };
+  return label === undefined ? next : { ...next, ...wordsPatch(it, label) };
+}
+
 /** The part as one of its looks draws it: the drawn part with the node's own fields on top. */
 export function lookItem(it: Item, look: PartLook | undefined): Item {
   if (!look) return it;
   let out = it;
-  if (look.label !== undefined && look.label !== it.label) out = { ...out, label: look.label };
+  if (look.label !== undefined && look.label !== wordsOf(out)) out = { ...out, ...wordsPatch(out, look.label) };
   if (look.icon !== undefined && look.icon !== it.icon) out = { ...out, icon: look.icon };
   if (look.color !== undefined && look.color !== it.color) out = { ...out, color: look.color };
   if (look.variant !== undefined && look.variant !== it.variant) out = { ...out, variant: look.variant };
@@ -2748,6 +3062,19 @@ export const TOGGLEABLE: Kind[] = ["button", "iconButton", "fab", "extendedFab"]
 /** target id that pops the preview stack instead of opening a frame */
 export const BACK_TARGET = "back";
 
+/**
+ * 关掉"当前那一层面板"的落点
+ *
+ * 和 `BACK_TARGET` 一样是一个特殊目标，由预览来兑现（见 components/Preview.tsx 的 runAction）：面板是
+ * 这一屏上的一层叠加（`dialog.openId`）就把它收起来；这一屏自己就是被当弹框压上来的，就退回上一层。
+ * 作者画弹框时的老写法 `to: BACK_TARGET` 也是"回去"，但面板没有上一屏可回时"返回"是没反应的 ——
+ * 这个落点说的是"关掉我所在的那层面板"这件事本身。
+ *
+ * 它**只是一个可选的目标**，不是任何部件的默认（作者：「改回默认无操作」）：在「行为」一节里给哪颗按钮
+ * 选上它，那颗按钮才关面板。检查器那颗按钮的候选里有它（见 components/Inspector.tsx 的 FrameSelect）。
+ */
+export const CLOSE_PANEL_TARGET = "close";
+
 /** a swipe on a frame: the finger's direction */
 export type SwipeDir = "left" | "right" | "up" | "down";
 export const SWIPE_DIRS: { key: SwipeDir; icon: string; transition: Transition }[] = [
@@ -2862,7 +3189,7 @@ export function actionsOf(it: Item): { slot: string; action: Action }[] {
 }
 
 /** kinds a user can tap in the preview */
-export const TAPPABLE: Kind[] = ["button", "iconButton", "fab", "extendedFab", "fnButton", "chip", "listItem", "itemCell", "assetPill", "card", "image", "text", "splitButton", "radio", "wheel", "gridWheel", "gacha", "slot", "calendar", "rewardTrack"];
+export const TAPPABLE: Kind[] = ["button", "iconButton", "fab", "extendedFab", "fnButton", "chip", "listItem", "itemCell", "assetPill", "taskBar", "card", "image", "text", "splitButton", "radio", "wheel", "gridWheel", "gacha", "slot", "calendar", "rewardTrack"];
 
 /** Where each day of a check-in calendar sits: seven to a row, the way a month is printed. */
 export function calendarCell(day: number): { row: number; col: number } {
@@ -4014,6 +4341,7 @@ export function makeItem(kind: Kind): Item {
     variant: s.defVariant ?? "filled",
   };
   if (s.defSupporting !== undefined) it.supporting = text?.supporting ?? s.defSupporting;
+  if (s.defLabel2 !== undefined) it.label2 = text?.label2 ?? s.defLabel2;
   if (s.defIcon2 !== undefined) it.icon2 = s.defIcon2;
   if (s.defSize !== undefined) it.size = s.defSize;
   if (s.hasChecked) it.checked = kind !== "chip";
@@ -4056,6 +4384,23 @@ export function makeItem(kind: Kind): Item {
        renderer), not by the plain box around the whole part */
     it.strokeWidth = 1;
     it.strokeColor = "secondaryContainer";
+  }
+  if (kind === "taskBar") {
+    /* 一个刚放下的任务信息条已经是一条完整的任务：标题、两个奖励格（每个都有那个**固定**的奖励
+       图标和一个**固定**的 100）、右端一个「领取」按钮和它右上角那枚徽标，还有条自己的底和圆角 ——
+       它就是那个 composite，只是变成了一个部件。奖励格的个数、图标和数量都是画法，不是字段：这一条
+       不写 `value`、不写 `cellCount`、也不写奖励图标（见 TASK_BAR_VALUE / readItem）。 */
+    it.label2 = text?.label2 ?? s.defLabel2 ?? "";
+    it.badge = true;
+    it.badgeText = text?.badgeText ?? s.defBadgeText ?? "";
+    it.badge2 = true;
+    it.badge2Text = text?.badge2Text ?? s.defBadge2Text ?? "";
+    /* 右边那一枚角标是品质色（和物品格画品质那枚一样），左边那一枚用主题自己的角色 */
+    it.badge2Color = ITEM_CELL_QUALITY;
+    it.buttonBadge = true;
+    it.buttonBadgeText = text?.buttonBadgeText ?? s.defButtonBadgeText ?? "";
+    it.fill = TASK_BAR_FILL;
+    it.radiusTop = TASK_BAR_RADIUS;
   }
   if (kind === "box") {
     it.size2 = 220;
@@ -4143,7 +4488,10 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
   const n = it.size ?? s.defSize ?? s.w;
   switch (it.kind) {
     case "switch":
+      return { w: it.size ?? widths[it.id] ?? s.w, h: it.size2 ?? s.h };
     case "button":
+      /* 按钮是内容决定宽度的（MEASURED）：宽度优先用浏览器量出来的那一行；量不到时（服务端渲染、静态
+         导出、首帧、测试）才是 kind 自己的 s.w。 */
       return { w: it.size ?? widths[it.id] ?? s.w, h: it.size2 ?? s.h };
     case "extendedFab":
     case "chip":
@@ -4186,6 +4534,11 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
     case "itemCell":
       /* the square its own width gives it, plus the name's line when it has one — the author's height wins */
       return { w: n, h: it.size2 ?? itemCellHeight(n, itemCellLines(it)) };
+    case "taskBar":
+      /* 条的高度跟着内容走：标题那一行（空标题就不占）、格子那一行（格子与按钮里高的那个）和条自己
+         的留白，全部来自那个唯一的助手（见 taskBarMetrics）。宽度是作者的。角标和按钮上的徽标是绝
+         对定位的角上药丸，一点不算进来 —— 它们挂不挂、写多长，这里都是同一个数。作者钉的高矮说了算。 */
+      return { w: n, h: it.size2 ?? taskBarMetrics(it).h };
     case "image":
       /* square until the author gives it a height, the way a camera preview starts 4:3 */
       return { w: n, h: it.size2 ?? n };
@@ -4293,6 +4646,10 @@ export function baseRadii(it: Item): Radii {
       /* 物品格的圆角：作者用「圆角」控件设的那个数，按格子画出来的正方形的一半封顶（见
          itemCellRadius）。不设就是直角 —— 用户要求的默认。assetPill 是另一个 kind，各画各的。 */
       return uniformRadii(itemCellRadius(it));
+    case "taskBar":
+      /* 任务信息条的圆角：作者设的那个数（「圆角」控件），不设就是 kind 自己的 16 —— 那个 composite
+         的框就是 16。四条边同一个数：一条信息条是一个圆角矩形，不像框那样上下一对一对地设。 */
+      return uniformRadii(Math.max(0, Math.round(it.radiusTop ?? s.radius)));
     case "chip":
     case "splitButton":
     case "radio":
@@ -4920,6 +5277,9 @@ export const badgeTextOf = (it: Pick<Item, "badgeText">) => (it.badgeText ?? "")
 export const badge2On = (it: Pick<Item, "badge2">) => !!it.badge2;
 export const badge2TextOf = (it: Pick<Item, "badge2Text">) => (it.badge2Text ?? "").trim();
 export const badge2ColorOf = (it: Pick<Item, "badge2Color">) => (isCustomColor(it.badge2Color) ? it.badge2Color : undefined);
+/** 任务信息条第一条角标（格子左上角）的颜色：角色或作者自己的 #rrggbb，读不出来的算没设
+ *  （和上面 `badge2Color` 同一条规则、同一个 `isCustomColor`）。 */
+export const badgeColorOf = (it: Pick<Item, "badgeColor">) => (isCustomColor(it.badgeColor) ? it.badgeColor : undefined);
 
 
 /** Whether a part's own number carries its percent sign: unset is yes, `false` is the author saying
@@ -5446,6 +5806,12 @@ export function iconSlotsOf(it: Item): IconSlot[] {
         { key: "icon", label: t("leftIcon"), value: it.icon },
         { key: "icon2", label: t("rightIcon"), value: it.icon2 ?? null },
       ];
+    case "taskBar":
+      /* 任务信息条只剩一个图标槽了：按钮右上角那枚徽标里的图标（作者要的"比如锁的图标"）。奖励格
+         画的是那个固定的默认图标（TASK_BAR_ICON），没有可改的槽，所以这里不再有 `icon` 那一项 ——
+         面板里也就没有"奖励图标"那一行。槽走的是别处一样的那个选择器（见 setIconSlot 的
+         buttonBadgeIcon 一档）。 */
+      return [{ key: "buttonBadgeIcon", label: t("barBadgeIcon"), value: it.buttonBadgeIcon ?? null }];
     case "listItem":
     case "topAppBar":
     case "searchBar":
@@ -5474,6 +5840,9 @@ export function iconSlotsOf(it: Item): IconSlot[] {
 export function setIconSlot(it: Item, key: string, v: string | null): Partial<Item> {
   if (key === "icon") return { icon: v };
   if (key === "icon2") return { icon2: v };
+  /* 任务信息条按钮右上角那枚徽标里的图标：写进它自己的字段，徽标就由字变成图标（图标优先，见
+     taskBarButtonBadgeIcon）。清掉就退回那两个字 —— 开关 `buttonBadge` 一动不动，它管的是字。 */
+  if (key === "buttonBadgeIcon") return { buttonBadgeIcon: v };
   if (key === "toggle") return { toggle: { ...(it.toggle ?? {}), icon: v } };
   if (key.startsWith("tab:")) {
     const i = Number(key.slice(4));

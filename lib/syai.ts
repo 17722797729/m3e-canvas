@@ -250,6 +250,51 @@ export async function logout(): Promise<void> {
   clearSession();
 }
 
+/* ── OSS 直传 ──────────────────────────────────────────────────────────── */
+
+/**
+ * 阿里云 STS 临时凭证：前端拿它把文件**直接**送到 OSS，后端只负责记账。
+ *
+ * 与「后端转存」那条路的区别：`fileService.createFileApp()` 写的是 `infra_file_config`
+ * 里 master 那一条存储，master 一旦被改成「本地存储」，它返回的地址就是
+ * `http://127.0.0.1:58080/admin-api/infra/file/29/get/...` —— 市场和后台都打不开
+ * （2026-10 真实踩过）。直传不碰那份配置，落的是 OSS + CDN。
+ */
+export interface OssStsToken {
+  accessKeyId: string;
+  accessKeySecret: string;
+  securityToken: string;
+  expiration?: number;
+  expirationStr?: string;
+  /** 虚拟主机风格的 OSS 地址，已经带上 bucket，形如 https://syaii-dev.oss-cn-shenzhen.aliyuncs.com */
+  endpoint?: string;
+  bucket?: string;
+  /** 临时凭证只允许写这个前缀，形如 user/5/ */
+  dirPrefix?: string;
+  /** ali-oss 要的形式：oss-cn-shenzhen（后端从 endpoint 反推好再下发） */
+  region?: string;
+}
+
+/** 拿一份 STS 临时凭证；后端按用户限流、还算当天的上传配额 */
+export const ossStsToken = () => post<OssStsToken>("/syai/oss/sts-token", {});
+
+/** 开始上传：后端登记一条「上传中」的素材记录，返回它的 id，收尾时回传 */
+export const ossUploadStart = (payload: {
+  fileName: string;
+  fileSize?: number;
+  fileType?: string;
+  md5Hash?: string;
+}) => post<number | null>("/syai/oss/upload-start", payload);
+
+/** 上传完成：把地址补进那条素材记录，并记一次当天的上传次数 */
+export const ossUploadSuccess = (payload: {
+  fileId: number;
+  fileUrl: string;
+  fileType?: string;
+  md5Hash?: string;
+  filePath?: string;
+}) => post<boolean>("/syai/oss/upload-success", payload);
+
 /* ── 市场组件 ──────────────────────────────────────────────────────────── */
 
 /** 组件类型：与后端 MarketComponentTypeEnum、以及本项目的 CATEGORIES 一一对应 */

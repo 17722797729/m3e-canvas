@@ -1,4 +1,4 @@
-import { BACK_TARGET, KIND_SPEC, RULE_FIELDS, START_LOOK, actionSlotsOf, actionsOf, frameRect, groupBounds, isOverlayFrame, isWideRail, lookItem, overlayLevelOfFrame, subtreeOf, type Doc, type Group, type Item, type ItemState, type OverlayLevel, type PartFlow, type PartStep, type RuleAction, type RuleField, type RulePatch, type StateEffect, type ValueOp } from "./tokens";
+import { BACK_TARGET, KIND_SPEC, RULE_FIELDS, START_LOOK, actionSlotsOf, actionsOf, frameRect, groupBounds, isOverlayFrame, isWideRail, lookItem, wordsOf, overlayLevelOfFrame, subtreeOf, type Doc, type Group, type Item, type ItemState, type OverlayLevel, type PartFlow, type PartStep, type RuleAction, type RuleField, type RulePatch, type StateEffect, type ValueOp } from "./tokens";
 import { KIND_TEXT, overlayLevelText, t, type Lang } from "./i18n";
 
 /** the level's name in the UI language, for the diagram's node captions */
@@ -158,7 +158,7 @@ export const FLOW_TEXT: Record<
     /** what separates two changes in one look's description */
     changeJoin: string;
     /** the fields one look changes about its part, in words */
-    lookChange: { label: (v: string) => string; icon: (v: string) => string; color: (v: string) => string; variant: (v: string) => string; off: string; grow: string; hide: string };
+    lookChange: { label: (v: string) => string; /** 任务信息条：改的是按钮上那两个字（见 wordsKeyOf） */ buttonWords: (v: string) => string; icon: (v: string) => string; color: (v: string) => string; variant: (v: string) => string; off: string; grow: string; hide: string };
     /** one step of it: how it starts, the look it lands in, what that look changes, and the rest */
     step: (item: string, how: string, to: string, changes: string, extra: string) => string;
     /** a tap that only acts: the part keeps the look it is in */
@@ -203,6 +203,7 @@ export const FLOW_TEXT: Record<
     changeJoin: "、",
     lookChange: {
       label: (v) => `表示が「${v}」`,
+      buttonWords: (v) => `ボタンの文字が「${v}」`,
       icon: (v) => `アイコンは ${v}`,
       color: (v) => `色は ${v}`,
       variant: (v) => `スタイルは ${v}`,
@@ -261,6 +262,7 @@ export const FLOW_TEXT: Record<
     changeJoin: ", ",
     lookChange: {
       label: (v) => `its words read “${v}”`,
+      buttonWords: (v) => `the button’s words read “${v}”`,
       icon: (v) => `its icon is ${v}`,
       color: (v) => `its colour is ${v}`,
       variant: (v) => `its style is ${v}`,
@@ -319,6 +321,7 @@ export const FLOW_TEXT: Record<
     changeJoin: "、",
     lookChange: {
       label: (v) => `显示为「${v}」`,
+      buttonWords: (v) => `按钮文字为「${v}」`,
       icon: (v) => `图标 ${v}`,
       color: (v) => `颜色 ${v}`,
       variant: (v) => `样式 ${v}`,
@@ -377,6 +380,7 @@ export const FLOW_TEXT: Record<
     changeJoin: ", ",
     lookChange: {
       label: (v) => `글자는 "${v}"`,
+      buttonWords: (v) => `버튼 글자는 "${v}"`,
       icon: (v) => `아이콘은 ${v}`,
       color: (v) => `색은 ${v}`,
       variant: (v) => `스타일은 ${v}`,
@@ -439,21 +443,22 @@ export function itemsOf(group: Group): Item[] {
 }
 
 /** The words a look reads as: what its author called it, or the line it shows while the part is
- *  in it. */
+ *  in it（任务信息条上是按钮上那两个字 —— 那才是各状态之间真的换过的东西，见 wordsOf）. */
 function lookWords(it: Item, flow: PartFlow | undefined, id: string, lang: Lang): string {
   if (id === START_LOOK) return FLOW_TEXT[lang].drawnLook;
   const look = flow?.looks.find((l) => l.id === id);
   if (!look) return FLOW_TEXT[lang].drawnLook;
-  return look.name?.trim() || lookItem(it, look).label.trim() || itemNameOf(it, lang);
+  return look.name?.trim() || wordsOf(lookItem(it, look)).trim() || itemNameOf(it, lang);
 }
 
 /** What one look changes about its part, in words. */
-function lookChanges(flow: PartFlow | undefined, id: string, lang: Lang): string {
+function lookChanges(it: Item, flow: PartFlow | undefined, id: string, lang: Lang): string {
   const look = flow?.looks.find((l) => l.id === id);
   if (!look) return "";
   const w = FLOW_TEXT[lang].lookChange;
   const out: string[] = [];
-  if (look.label !== undefined) out.push(w.label(look.label));
+  /* 任务信息条改的是按钮上那两个字，说的是"按钮文字"，不是"文字"（见 wordsKeyOf） */
+  if (look.label !== undefined) out.push((it.kind === "taskBar" ? w.buttonWords : w.label)(look.label));
   if (look.icon !== undefined) out.push(w.icon(look.icon ?? "—"));
   if (look.color !== undefined) out.push(w.color(look.color));
   if (look.variant !== undefined) out.push(w.variant(look.variant));
@@ -471,7 +476,7 @@ function stepText(it: Item, flow: PartFlow | undefined, step: PartStep, who: str
   /* a step with no destination keeps the part where it is: it is a line about what the tap does,
      not about a look it lands in */
   if (step.to === undefined) return x.stay(who, how, extra);
-  return x.step(who, how, lookWords(it, flow, step.to, lang), lookChanges(flow, step.to, lang), extra);
+  return x.step(who, how, lookWords(it, flow, step.to, lang), lookChanges(it, flow, step.to, lang), extra);
 }
 
 /** What else a step does, for the actions that are not a jump of their own. A close says which

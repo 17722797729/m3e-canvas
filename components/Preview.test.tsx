@@ -1,6 +1,6 @@
 import { isValidElement, type ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PALETTES, type Doc } from "../lib/tokens";
+import { PALETTES, makeItem, type Doc } from "../lib/tokens";
 import { Preview } from "./Preview";
 
 const hooks = vi.hoisted(() => ({
@@ -30,7 +30,7 @@ vi.mock("@/lib/tokens", () => import("../lib/tokens"));
 vi.mock("@/lib/rail", () => import("../lib/rail"));
 vi.mock("@/lib/railView", () => import("../lib/railView"));
 vi.mock("@/lib/i18n", async () => ({ ...await import("../lib/i18n"), useLang: () => "en" }));
-vi.mock("./M3Node", () => ({ M3Node: "node", Icon: "icon" }));
+vi.mock("./M3Node", () => ({ M3Node: "node", Icon: "icon", ValueContext: { Provider: "provider" }, PartPressContext: { Provider: "part-press" } }));
 vi.mock("./ui", () => ({ IconBtn: "button" }));
 
 const doc: Doc = {
@@ -50,9 +50,9 @@ function elements(node: unknown): Element[] {
 
 // Like Loading.test.tsx, inspect the actual elements and effect callbacks without
 // a DOM runtime. Browser tests cover Motion's presence propagation and real focus.
-function screenElement(peek = false) {
+function screenElement(peek = false, source: Doc = doc) {
   hooks.peek = peek;
-  const tree = Preview({ doc, widths: {}, palette: PALETTES[0], startId: "first", onClose: vi.fn() });
+  const tree = Preview({ doc: source, widths: {}, palette: PALETTES[0], startId: "first", onClose: vi.fn() });
   const screens = elements(tree).filter((element) => typeof element.type === "function" && "frame" in element.props);
   hooks.peek = false;
   hooks.refs = [];
@@ -174,5 +174,67 @@ describe("preview screen modal lifecycle", () => {
     expect(previous.focus).toHaveBeenCalledTimes(status === "connected" ? 1 : 0);
     // an unusable previous target hands the keyboard to the screen itself, never to the body
     expect(host.focus).toHaveBeenCalledTimes(status === "connected" ? 0 : 1);
+  });
+});
+
+/* 融合部件（任务信息条）里那一下点击归谁：标题、两个奖励格和领取按钮都是**同一个部件**的字段，
+ * 而能点的只有那颗按钮。预览里每一次点按都要过 Tappable 上的那道门，所以这里直接读那道门与它交给
+ * M3Node 的 PartPressContext：整条不接 onClick，按钮拿到那份 press；锁住（徽标里的锁图标）时两份
+ * 都没有 —— 「当出现这个锁的图标时，该按钮点击时，禁止响应」就是这一条。判定本身在 lib/tokens 的
+ * taskBarButtonLocked，普通部件照旧整块都是点击目标。 */
+describe("a task bar's tap belongs to its button", () => {
+  const partDoc = (kind: "taskBar" | "button", patch: Record<string, unknown>) =>
+    ({
+      ...doc,
+      groups: [{ id: "g", x: 0, y: 0, axis: "y", items: [{ ...makeItem(kind), id: "tb", ...patch }] }],
+    }) as unknown as Doc;
+  /** the element the tap would land on: the preview's Tappable for this one part, rendered */
+  const tappable = (kind: "taskBar" | "button" = "taskBar", patch: Record<string, unknown> = {}) => {
+    hooks.refs = [];
+    hooks.cursor = 0;
+    hooks.effects = [];
+    const tree = renderScreen(screenElement(false, partDoc(kind, patch)));
+    const found = elements(tree).find((element) => typeof element.type === "function" && (element.props.item as { id?: string } | undefined)?.id === "tb");
+    if (!found) throw new Error("no tappable for the part");
+    hooks.cursor = 0;
+    hooks.effects = [];
+    /* the component's props are its inputs; the click path and the style are on what it draws */
+    return (found.type as (props: Record<string, unknown>) => Element)(found.props);
+  };
+  /** 画在部件里面的那颗按钮此刻的状态（融合部件用 PartPressContext 把它带下去）：
+   *  `press` 是那一下点击，`off` 是「置灰并停止响应」关掉了它 */
+  const buttonOf = (drawn: Element) => {
+    const provider = elements(drawn).find((element) => element.type === "part-press");
+    return (provider?.props.value ?? {}) as { press?: () => void; off?: boolean };
+  };
+
+  it("hands it to the button inside, never to the bar around it", () => {
+    const bar = tappable();
+    /* 整条不接这一下：点标题、点奖励格都不该走同一个 action */
+    expect(bar.props.onClick).toBeUndefined();
+    expect((bar.props.style as Record<string, unknown>).cursor).toBe("default");
+    /* 画在它里面的领取按钮拿到了（M3Node 的 TaskBarContent 调它，见 PartPressContext） */
+    expect(typeof buttonOf(bar).press).toBe("function");
+    expect(buttonOf(bar).off).toBe(false);
+  });
+
+  it("still answers a tap anywhere when the part is an ordinary one", () => {
+    /* 单一部件里没有"看起来像按钮"的那一块时，整块照旧是点击目标 */
+    const card = tappable("button", { action: "goto:next" });
+    expect(typeof card.props.onClick).toBe("function");
+    expect(buttonOf(card).press).toBeUndefined();
+  });
+
+  it("carries no click path at all when the badge is the lock", () => {
+    const locked = tappable("taskBar", { buttonBadgeIcon: "lock" });
+    expect(locked.props.onClick).toBeUndefined();
+    expect((locked.props.style as Record<string, unknown>).pointerEvents).toBe("none");
+    /* 锁住时连条里那颗按钮也没有那一下：两道门问的是同一个判定 */
+    expect(buttonOf(locked).press).toBeUndefined();
+    /* 别的图标不是锁：一样的徽标、不一样的语义 */
+    const other = tappable("taskBar", { buttonBadgeIcon: "lock_open" });
+    expect(other.props.onClick).toBeUndefined();
+    expect(typeof buttonOf(other).press).toBe("function");
+    expect((other.props.style as Record<string, unknown>).pointerEvents).toBeUndefined();
   });
 });

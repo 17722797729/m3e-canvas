@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import { createElement, type ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 /* M3Node pulls in Motion, the loaders and the palette for the rest of its kinds; the badge's own
@@ -14,8 +14,8 @@ vi.mock("./Loading", () => ({ CircularProgress: "circle", LinearProgress: "bar",
 
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { JOYSTICK_SIZE, KIND_ORDER, KIND_SPEC, PALETTES, VARIANTS, assetPillTextWidth, assetPillWidth, baseRadii, gridCheckZ, layerOf, makeItem, setGlobalShape, sizeOf, uniformRadii, type Item, type Variant } from "../lib/tokens";
-import { BadgeContent, GridCellMarks, M3Static } from "./M3Node";
+import { JOYSTICK_SIZE, KIND_ORDER, KIND_SPEC, PALETTES, TASK_BAR_ICON, TASK_BAR_VALUE, VARIANTS, assetPillTextWidth, assetPillWidth, baseRadii, buttonMetrics, buttonWidth, gridCheckZ, layerOf, makeItem, setGlobalShape, sizeOf, taskBarMetrics, uniformRadii, type Item, type Variant } from "../lib/tokens";
+import { BadgeContent, GridCellMarks, M3Static, PartPressContext } from "./M3Node";
 
 /** What a still drawing shows: the same geometry the canvas, an export and a market thumbnail share. */
 const draw = (it: Item) => renderToStaticMarkup(M3Static({ item: it, palette: PALETTES[0] }));
@@ -48,6 +48,25 @@ describe("a badge's body", () => {
     const own = badge({ color: "primary", strokeWidth: 2 });
     expect(styleOf(own.props.children as El).background).toBe(PALETTES[0].primary);
     expect(styleOf(own.props.children as El).boxShadow).toContain("inset");
+  });
+
+  /* 徽标里也可以是图标（任务信息条那枚"锁"就是这么画出来的）：药丸上还是同一支笔，只是里面站的是
+     一个 Icon 而不是那行字。图标优先 —— 给了图标就不再画字（见 taskBarButtonBadgeOn）。 */
+  it("draws an icon in place of the words when it is handed one", () => {
+    const painted = (label: string, icon?: string) =>
+      renderToStaticMarkup(BadgeContent({ item: { ...makeItem("badge"), label, size: 20, size2: 20 } as never, p: PALETTES[0], icon }) as never);
+    const withIcon = painted("3", "lock");
+    /* 圆药丸：宽就是它自己的高，图标按字那条 0.7 的规矩缩（20 × 0.7 = 14） */
+    expect(withIcon).toContain("width:100%");
+    expect(withIcon).toContain("height:20px;padding:0;border-radius:10px");
+    expect(withIcon).toContain("font-size:14px");
+    expect(withIcon).toContain('<span class="msr" data-fill="0" style="font-size:14px">lock</span>');
+    /* 字让位：不再画那个 3 */
+    expect(withIcon).not.toContain(">3<");
+    /* 没给图标时一个字都不变 */
+    const text = painted("3");
+    expect(text).toContain(">3<");
+    expect(text).not.toContain("msr");
   });
 });
 
@@ -140,6 +159,257 @@ describe("an item cell as drawn", () => {
     expect(off).not.toContain("普通");
     expect(off).not.toContain("新");
     expect(off).toContain("树叶");
+  });
+});
+
+/* 任务信息条是 任务信息条 composite 化成的一个部件：标题、奖励格和「领取」按钮全在一条的属性里，
+ * 一个孩子都没有。画它们的还是那些部件自己的那几支笔 —— 格子角上的药丸走 BadgeContent（物品格那
+ * 手），按钮走 ButtonContent，盒子里的每个数来自 taskBarMetrics。按钮右上角那枚徽标是这一条自己画在
+ * **按钮上层**的另一层（作者：「徽标并不在按钮里面，它是在按钮的上层……可以在按钮的外面的」）。
+ * 奖励格的个数、奖励图标和奖励数量都不是属性：画的是那三个固定的常量（两个 / TASK_BAR_ICON /
+ * TASK_BAR_VALUE），所以 helper 里存下的 `icon: "eco"` 和 `value: 23` 一个字都不画。 */
+describe("a task bar as drawn", () => {
+  const bar = (patch: Partial<Item> = {}) =>
+    ({
+      ...makeItem("taskBar"),
+      id: "tb",
+      label: "每日登录游戏 (1/1)",
+      /* 老文档里可能写着的两个字段：这一条现在都不看了（读回来也会让掉，见 lib/taskBar.test） */
+      icon: "eco",
+      value: 23,
+      label2: "领取",
+      badgeText: "新",
+      badge2Text: "普通",
+      badge2Color: "#7BAE7A",
+      buttonBadgeText: "1",
+      ...patch,
+    }) as Item;
+  const outer = (out: string) => out.slice(0, out.indexOf(">"));
+  const drawnW = (out: string) => Number(outer(out).match(/width:(\d+)px/)![1]);
+  const drawnH = (out: string) => Number(outer(out).match(/height:(\d+)px/)![1]);
+  const count = (out: string, needle: RegExp) => out.match(needle)?.length ?? 0;
+  /* 徽标那一层的稳定标记（纯新增，不参与样式和行为）：浏览器探针靠它量徽标和按钮各自的矩形 */
+  const BADGE = "data-task-badge";
+
+  it("draws one part — title, reward cells and button — with no children at all", () => {
+    const out = draw(bar({ size: 388 }));
+    /* 一个部件：整张图里只有它自己一个 data-part-id，一个孩子都没有 */
+    expect(count(out, /data-part-id=/g)).toBe(1);
+    expect(out).toContain('data-part-id="tb"');
+    expect(out).toContain("每日登录游戏 (1/1)");
+    expect(out).toContain("领取");
+    /* 两个奖励格，每格一个奖励图标和一个数量 */
+    expect(count(out, /width:56px;height:56px/g)).toBe(2);
+    expect(count(out, /class="msr"/g)).toBe(2);
+    expect(count(out, />23</g)).toBe(0);
+    expect(count(out, new RegExp(`>${TASK_BAR_VALUE}<`, "g"))).toBe(2);
+    /* 盒子就是画出来的那个：作者钉的 388 宽，内容算出来的 112 高 */
+    expect(drawnW(out)).toBe(388);
+    expect(drawnH(out)).toBe(sizeOf(bar({ size: 388 }), {}).h);
+    expect(drawnH(out)).toBe(112);
+    /* 高是量出来的那几块加起来的：上留白 14 + 标题 22 + 缝 10 + 格子那一行 56 + 下留白 10 */
+    expect(out).toContain("padding:14px 13px 10px");
+    expect(out).toContain("height:22px;flex:0 0 auto;display:flex;align-items:center;font-size:17px");
+    expect(out).toContain("margin-top:10px;height:56px;flex:0 0 auto;display:flex;align-items:center;gap:23px");
+    expect(14 + 22 + 10 + 56 + 10).toBe(drawnH(out));
+    /* 那条任务信息条一行省略号，不把条撑高 */
+    expect(out).toContain("text-overflow:ellipsis");
+    /* 两格是横排的：同一行里，中间 23dp */
+    expect(out.indexOf(`>${TASK_BAR_VALUE}<`)).toBeLessThan(out.indexOf("领取"));
+    /* 给浏览器探针的稳定标记（纯新增，不参与样式和行为）：每个格子、每枚角标、那个按钮和压在它
+       上层的那枚徽标各一个 */
+    expect(count(out, /data-task-cell=/g)).toBe(2);
+    expect(count(out, /data-task-mark="left"/g)).toBe(2);
+    expect(count(out, /data-task-mark="right"/g)).toBe(2);
+    expect(count(out, /data-task-button=""/g)).toBe(1);
+    expect(count(out, /data-task-button-slot=""/g)).toBe(1);
+    expect(count(out, new RegExp(`${BADGE}=""`, "g"))).toBe(1);
+  });
+
+  it("puts the corner pills on the cells' corners, at the item cell's own size", () => {
+    const out = draw(bar({ size: 388 }));
+    /* 角标①在格子的左上（作者定的那一对），角标②在右上，两格各一枚 —— 就是物品格 `mark()` 那套
+       绝对定位：top 2、left/right 3 */
+    expect(count(out, /top:2px;left:3px/g)).toBe(2);
+    expect(count(out, /top:2px;right:3px/g)).toBe(2);
+    /* 药丸是物品格那一条规矩里的大小：格子 56 的 18% —— 10dp 高，圆角半高，最小宽度也是高 */
+    const markH = taskBarMetrics(bar()).markH;
+    expect(markH).toBe(10);
+    expect(count(out, new RegExp(`min-width:${markH}px;height:${markH}px;padding:0 3px;border-radius:${markH / 2}px`, "g"))).toBe(4);
+    /* 角标①是主题自己的角色（error，和物品格那颗"新"点同一个规矩），角标②是作者设的品质绿 */
+    expect(out).toContain(`background:${PALETTES[0].error}`);
+    expect(out).toContain("background:#7BAE7A");
+    /* 两枚角标都在格子里，不在按钮那一格 */
+    expect(out.indexOf("top:2px;left:3px")).toBeLessThan(out.indexOf("width:120px;height:40px"));
+  });
+
+  it("draws the button with the button kind's own content, and the badge on a layer above its top right", () => {
+    const out = draw(bar({ size: 388 }));
+    const m = taskBarMetrics(bar());
+    /* 按钮就是按钮：120×40 的胶囊（作者新设计里的 120×40），里面是 ButtonContent 那一行 */
+    expect(out).toContain("width:120px;height:40px;border-radius:20px");
+    expect(out).toContain("overflow:hidden");
+    expect(out).toContain("padding-left:19px;padding-right:19px");
+    expect(out).toContain(">领取<");
+    /* 按钮站在一个槽里：槽比按钮宽出 9dp、高出一截 4dp（taskBarMetrics 的 slot 与 badge），那一截
+       就是那枚徽标探出去的地方 —— 作者设计里的 124×48 按钮框正是这么框着 120×40 的按钮的 */
+    expect(m.slot.w).toBe(129);
+    expect(m.slot.h).toBe(44);
+    expect(m.button.w + m.badge.overRight).toBe(m.slot.w);
+    expect(m.button.h + m.badge.overTop).toBe(m.slot.h);
+    expect(out).toContain(`width:${m.slot.w}px;height:${m.slot.h}px;box-sizing:border-box`);
+    const slotAt = out.indexOf("data-task-button-slot");
+    const buttonAt = out.indexOf("data-task-button=");
+    const badgeAt = out.indexOf(BADGE);
+    expect(slotAt).toBeGreaterThan(-1);
+    /* 徽标不是按钮的孩子，而是槽里排在按钮**后面**的兄弟：按钮那一格在徽标之前就关掉了（文档顺序
+       就是"画在按钮的上层"），于是按钮自己的 overflow: hidden 也裁不到它 */
+    expect(buttonAt).toBeGreaterThan(slotAt);
+    expect(badgeAt).toBeGreaterThan(buttonAt);
+    expect(out.slice(buttonAt, badgeAt)).not.toContain(BADGE);
+    /* 按钮那一格在徽标之前就关掉了（`</button>`：它是真按钮，见下面那条用例） */
+    expect(out.slice(buttonAt, badgeAt)).toContain("</button>");
+    /* 徽标站在槽的右上角（top 0 / right 0）：压在按钮的右上角，并且探出按钮的右边 9dp、上面 4dp */
+    expect(out).toContain(`${BADGE}="" style="position:absolute;top:0;right:0;width:20px;height:20px;pointer-events:none"`);
+    expect(m.badge.overRight).toBe(9);
+    expect(m.badge.overTop).toBe(4);
+    /* 那枚药丸有它自己的高（20dp）和由字算出来的宽，字就在里头 */
+    expect(out).toContain("width:100%;height:20px;padding:0;border-radius:10px");
+    expect(out.slice(badgeAt)).toContain(">1<");
+    /* 徽标不是第二个图标：按钮那一块里没有 msr（整张图里的 msr 就是两个格子的那两枚） */
+    expect(count(out.slice(out.indexOf("data-task-button=")), /class="msr"/g)).toBe(0);
+  });
+
+  it("stands its claim button as a real button, the one thing in the bar that answers a tap", () => {
+    const out = draw(bar({ size: 388 }));
+    /* 真 `<button type="button">`，不是画成按钮样子的 `<span>`：浏览器因此把点击、焦点、键盘都在这一格
+       上交待清楚 —— 融合部件里唯一的点击目标就是它（整条不接这一下，见 Preview 的 PartPressContext） */
+    expect(out).toContain('<button type="button" data-task-button=""');
+    expect(count(out, /<button type="button"/g)).toBe(1);
+    /* 浏览器给按钮的那几样都清掉了：内边距、边框、字体（不清的话标签会换字体）、焦点框、行内盒 */
+    const buttonTag = out.slice(out.indexOf("data-task-button="), out.indexOf(">", out.indexOf("data-task-button=")));
+    expect(buttonTag).toContain("padding:0;border:none;font:inherit;outline:none;display:block");
+    /* 没有人给这一下处理器时（编辑器画布、导出图、市场缩略图）它不带 cursor:pointer，也不带按下
+       的 transform —— 画出来就是死的，只有预览里 PartPressContext 出现时那两个处理器才挂上 */
+    expect(buttonTag).toContain("cursor:default");
+    expect(buttonTag).not.toContain("transform");
+    /* 标题和两个奖励格都不是按钮：整条里只有这一处点击目标 */
+    expect(count(out, /data-task-cell=/g)).toBe(2);
+    expect(out.indexOf("data-task-cell=")).toBeLessThan(out.indexOf("data-task-button="));
+  });
+
+  /* 「置灰并停止响应」落在**按钮**上，不是整条（作者：「该组件按钮置灰并响应时，是针对按钮，而不是整个
+     组件」）。画灰的是那一槽（按钮 + 它右上角那枚徽标），条本身、标题和两个奖励格一点滤镜都没有 ——
+     范围判定在 lib/tokens 的 disablesWholePart，交给 M3Node 的是 PartPressContext 的 `off`。 */
+  it("greys the claim button, not the bar, when the state switches it off", () => {
+    const drawn = (off: boolean) =>
+      renderToStaticMarkup(
+        createElement(PartPressContext.Provider, { value: off ? { off: true } : {} }, M3Static({ item: bar({ size: 388 }), palette: PALETTES[0] })),
+      );
+
+    const off = drawn(true);
+    const slotAt = off.indexOf("data-task-button-slot");
+    const buttonAt = off.indexOf("data-task-button=");
+    expect(slotAt).toBeGreaterThan(-1);
+    expect(buttonAt).toBeGreaterThan(slotAt);
+    expect(off).toContain('data-task-button-off=""');
+    /* 那一槽灰了：和整块部件被关掉时同一套灰 */
+    expect(off.slice(slotAt, buttonAt)).toContain("filter:grayscale(1)");
+    expect(off.slice(slotAt, buttonAt)).toContain("opacity:0.55");
+    /* 整张图里就这一处滤镜：条自己、标题、两个奖励格都不灰 */
+    expect(count(off, /grayscale\(1\)/g)).toBe(1);
+    expect(count(off, /opacity:0.55/g)).toBe(1);
+    /* 按钮自己也说清了它是不可用的，不再摆出"能点"的样子 */
+    expect(off.slice(buttonAt)).toContain('aria-disabled="true"');
+    expect(off.slice(buttonAt, off.indexOf(">", buttonAt))).toContain("cursor:default");
+
+    /* 没关的时候一丝灰都没有：同一张图，差的只是那一份 context */
+    const on = drawn(false);
+    expect(count(on, /grayscale\(1\)/g)).toBe(0);
+    expect(on).not.toContain("data-task-button-off");
+    expect(on).not.toContain("aria-disabled");
+  });
+
+  it("draws the badge's icon in place of its words, the icon winning when both are set", () => {
+    const icon = draw(bar({ size: 388, buttonBadgeIcon: "lock" }));
+    /* 徽标里画的是那个图标：一枚圆药丸（高 20 就宽 20），里面是锁 */
+    expect(icon).toContain(`${BADGE}="" style="position:absolute;top:0;right:0;width:20px;height:20px;pointer-events:none"`);
+    expect(icon).toContain('<span class="msr" data-fill="0" style="font-size:14px">lock</span>');
+    /* 字让位：那一枚徽标里不再写 3 */
+    expect(icon.slice(icon.indexOf(BADGE))).not.toContain(">3<");
+    /* 两个都写着时也是图标说了算（见 taskBarButtonBadgeOn） */
+    expect(draw(bar({ size: 388, buttonBadgeIcon: "lock", buttonBadgeText: "3" }))).toBe(icon);
+    /* 格子还是各自那两枚奖励图标：整张图里 msr 一共三枚（两格 + 徽标里那枚锁） */
+    expect(count(icon, /class="msr"/g)).toBe(3);
+    /* 盒子一点都不因此变：徽标挂不挂、是字还是图标，都是同一个盒子 */
+    expect(sizeOf(bar({ size: 388, buttonBadgeIcon: "lock" }), {})).toEqual({ w: 388, h: 112 });
+    /* 清空的图标等于没有图标：还是那两个字（或者什么都没有） */
+    expect(draw(bar({ size: 388, buttonBadgeIcon: "" }))).toBe(draw(bar({ size: 388 })));
+  });
+
+  it("draws the fixed reward icon in both cells, and neither pill when a mark is switched off", () => {
+    /* 奖励格的图标不是这一条的字段：两个格子画的都是那个固定的默认图标，老文档里写下的 `icon`
+       （helper 里那个 "eco"）一个字都不画 */
+    const out = draw(bar({ size: 388 }));
+    expect(count(out, /class="msr"/g)).toBe(2);
+    expect(out).toContain(`>${TASK_BAR_ICON}<`);
+    expect(out).not.toContain(">eco<");
+    /* 老文档里还写着奖励格的个数也一样：画的还是那两个格子，盒子一个数都不变 */
+    const legacy = draw(bar({ size: 388, cellCount: 1 } as unknown as Partial<Item>));
+    expect(count(legacy, /data-task-cell=/g)).toBe(2);
+    expect(count(legacy, /width:56px;height:56px/g)).toBe(2);
+    expect(drawnH(legacy)).toBe(112);
+    expect(legacy).toBe(out);
+
+    const off = draw(bar({ size: 388, badge: false, badge2: false }));
+    expect(off).not.toContain("新");
+    expect(off).not.toContain("普通");
+    expect(off).not.toContain("top:2px;left:3px");
+    expect(off).not.toContain("top:2px;right:3px");
+    /* 格子、图标和数量都还在，盒子也没变 */
+    expect(count(off, /width:56px;height:56px/g)).toBe(2);
+    expect(drawnH(off)).toBe(112);
+
+    /* 按钮上的徽标关掉、或者字清空，画出来的是同一张图：没有字的药丸什么也不说明 */
+    expect(draw(bar({ size: 388, buttonBadge: false }))).toBe(draw(bar({ size: 388, buttonBadge: true, buttonBadgeText: "" })));
+    expect(draw(bar({ size: 388, buttonBadge: false }))).not.toContain(BADGE);
+    /* 徽标那一层不是按钮的孩子：关掉字、又没有图标，那一层整个不画（槽还在，它只是空的） */
+    expect(count(draw(bar({ size: 388, buttonBadgeText: "" })), new RegExp(`${BADGE}=""`, "g"))).toBe(0);
+    expect(count(draw(bar({ size: 388 })), /data-task-button-slot=""/g)).toBe(1);
+  });
+
+  it("takes the title's line away with the title, and keeps its box the same whatever it carries", () => {
+    const empty = draw(bar({ size: 388, label: "" }));
+    expect(empty).not.toContain("每日登录游戏");
+    expect(empty).not.toContain("height:22px");
+    expect(drawnH(empty)).toBe(80);
+    expect(drawnH(empty)).toBe(sizeOf(bar({ label: "" }), {}).h);
+    /* 没有标题就没有缝：格子那一行紧跟着上留白（margin-top 写的是 0，浏览器省掉单位） */
+    expect(empty).toContain("margin-top:0;height:56px");
+    /* 角标开关、按钮徽标开关、徽标里的图标、老文档里的奖励格个数和奖励图标：盒子都是同一个数
+       （画法也是同一条 —— 格子和图标都是常量，那两个老字段一个数都不动） */
+    for (const patch of [
+      { cellCount: 1 },
+      { cellCount: 2 },
+      { icon: "eco" },
+      { icon: "paid" },
+      { cellCount: 1, icon: "eco" },
+      { label: "一条特别特别长的任务标题".repeat(8) },
+      { badge: false, badge2: false },
+      { buttonBadge: false },
+      { badgeText: "" },
+      { badge2Text: "很长的品质名" },
+      { buttonBadgeIcon: "lock" },
+      { buttonBadgeIcon: "lock", buttonBadgeText: "很长的字" },
+    ] as unknown as Partial<Item>[]) {
+      const out = draw(bar({ size: 388, ...patch }));
+      expect(drawnW(out), JSON.stringify(patch)).toBe(388);
+      expect(drawnH(out), JSON.stringify(patch)).toBe(sizeOf(bar({ size: 388, ...patch }), {}).h);
+      expect(drawnH(out), JSON.stringify(patch)).toBe(112);
+    }
+    /* 一个空的标题是唯一一个让条变矮的东西 —— 那是另一个明确的数（80），不是魔法常量 */
+    expect(drawnH(draw(bar({ size: 388 })))).toBe(112);
+    expect(sizeOf(bar(), {}).h).toBe(KIND_SPEC.taskBar.h);
   });
 });
 
@@ -278,6 +548,91 @@ describe("an asset pill as drawn", () => {
     expect(out.match(/width:20px;height:20px;flex:0 0 auto/g)?.length).toBe(2);
     expect(out).toContain("flex:0 1 auto");
     expect(out).toContain("min-width:0");
+  });
+});
+
+/* 按钮**不再**有自己的右上角徽标（作者：「组件-按钮中有个右徽标属性，去掉此属性」）：老文档里还写着
+ * 的 badge / badgeText 照样画成没有徽标的那张老图（读进来时就让掉了，见 lib/project.ts 的 readItem）。
+ * 角上的徽标仍旧是功能按钮、物品格和任务信息条自己的，那几处一个字没动。 */
+describe("a button drawn without its own badge", () => {
+  const btn = (patch: Partial<Item> = {}) => ({ ...makeItem("button"), id: "btn", label: "OK", icon: "swords", ...patch }) as Item;
+  const body = (out: string) => out.slice(out.indexOf(">") + 1);
+  const outer = (out: string) => out.slice(0, out.indexOf(">"));
+  const drawnH = (out: string) => Number(outer(out).match(/height:(\d+)px/)![1]);
+
+  /* 这一手之前 ButtonContent 画出来的那个按钮（medium、有图标有文字：gap 8、留白 22、字号 16、
+     图标 24px、胶囊圆角 28）—— 去掉徽标之后必须逐字节还是它。 */
+  const BASELINE =
+    '<div data-part-id="btn" style="background:#6750A4;color:#FFFFFF;border:none;height:56px;display:inline-flex;align-items:center;overflow:hidden;position:relative;z-index:10;box-sizing:border-box;box-shadow:none;border-top-left-radius:28px;border-top-right-radius:28px;border-bottom-left-radius:28px;border-bottom-right-radius:28px;flex:0 0 auto;transform-origin:center"><span style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;gap:8px;padding-left:22px;padding-right:22px;height:100%;font-size:16px;font-weight:500;letter-spacing:0.1px;white-space:nowrap"><span class="msr" data-fill="1" style="font-size:24px">swords</span><span>OK</span></span></div>';
+
+  it("draws the medium button byte for byte", () => {
+    expect(draw(btn())).toBe(BASELINE);
+    expect(sizeOf(btn(), {})).toEqual({ w: 128, h: 56 });
+  });
+
+  it("ignores a badge an old document still carries", () => {
+    /* 开关开着、写着字、开关关了、字被清空 —— 四种都是同一张老图：这一枚徽标已经不存在了 */
+    for (const patch of [
+      { badge: true, badgeText: "1" },
+      { badge: true, badgeText: "New" },
+      { badge: false, badgeText: "1" },
+      { badge: true, badgeText: "" },
+    ] as Partial<Item>[]) {
+      expect(draw(btn(patch)), JSON.stringify(patch)).toBe(BASELINE);
+      expect(sizeOf(btn(patch), {}), JSON.stringify(patch)).toEqual({ w: 128, h: 56 });
+    }
+    /* 那一枚角上药丸的每一处痕迹都不在了：锚点、右上角的站位、主题的 error 底 */
+    const out = draw(btn({ badge: true, badgeText: "1" }));
+    expect(out).not.toContain("position:absolute;inset:0");
+    expect(out).not.toContain("place-items:start end");
+    expect(out).not.toContain(PALETTES[0].error);
+    /* 徽标不是第二个图标：整张图里仍旧只有左图标那一个 msr */
+    expect(body(out).match(/class="msr"/g)?.length).toBe(1);
+  });
+
+  it("keeps the box and the drawing the same row, at every size", () => {
+    for (const item of [
+      btn(),
+      btn({ size2: 40 }),
+      btn({ size2: 112 }),
+      btn({ icon: null }),
+      btn({ label: "" }),
+      btn({ label: "", icon: null }),
+      btn({ size: 200 }),
+      btn({ badge: true, badgeText: "1" }),
+    ] as Item[]) {
+      const out = draw(item);
+      const at = JSON.stringify(item);
+      expect(drawnH(out), at).toBe(sizeOf(item, {}).h);
+      expect(body(out), at).not.toContain("text-overflow:ellipsis");
+      if (item.size) {
+        expect(outer(out), at).toContain(`width:${item.size}px;height:${sizeOf(item, {}).h}px`);
+        expect(sizeOf(item, {}).w, at).toBe(item.size);
+      } else {
+        /* 没钉宽度时外面不写宽度：宽度由浏览器量那一行，量不到时 sizeOf 给 kind 自己的 w */
+        expect(outer(out), at).not.toContain("width:");
+        expect(sizeOf(item, {}).w, at).toBe(KIND_SPEC.button.w);
+        expect(sizeOf(item, { btn: 300 }).w, at).toBe(300);
+      }
+    }
+  });
+
+  it("measures the very row it draws: one helper's numbers in the box and in the markup", () => {
+    const it = btn();
+    const m = buttonMetrics(it);
+    const out = draw(it);
+    /* 画出来的那一行，用的就是包围盒量它时用的那几个数（同一份 buttonMetrics）—— 行里只有图标和文字 */
+    expect(out).toContain(`gap:${m.gap}px;padding-left:${m.pad}px;padding-right:${m.pad}px`);
+    expect(out).toContain(`font-size:${m.font}px`);
+    expect(m).toMatchObject({ gap: 8, pad: 22, icon: 24, font: 16, pieces: 2 });
+    expect(buttonMetrics(btn({ icon: null }))).toMatchObject({ gap: 0, pad: 26, pieces: 1 });
+    expect(buttonMetrics(btn({ label: "" }))).toMatchObject({ gap: 0, pad: 16, pieces: 1 });
+    /* 盒子 = kind 自己的那个数（128 × 56），宽度估出来只服务于还没被量到时 */
+    expect(sizeOf(it, {})).toEqual({ w: KIND_SPEC.button.w, h: 56 });
+    expect(buttonWidth(it)).toBe(m.pad * 2 + m.icon + assetPillTextWidth("OK", m.font) + m.gap);
+    expect(buttonWidth(it)).toBe(98);
+    expect(buttonWidth(btn({ label: "a very long label indeed" }))).toBeGreaterThan(KIND_SPEC.button.w);
+    expect(sizeOf(btn({ label: "a very long label indeed" }), {}).w).toBe(KIND_SPEC.button.w);
   });
 });
 

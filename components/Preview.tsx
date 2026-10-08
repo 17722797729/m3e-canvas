@@ -61,6 +61,8 @@ import {
   runPartRadii,
   scaleR,
   SHAPED,
+  /* 条里那枚徽标是不是把按钮锁住了（见 lib/tokens 的 taskBarButtonLocked） */
+  taskBarButtonLocked,
   toggleIcon,
   RAIL_TOP,
   isWideRail,
@@ -102,6 +104,10 @@ import {
   rewardClaimKey,
   PROGRESS_DEFAULT,
   type RulePatch,
+  CLOSE_PANEL_TARGET,
+  disablesWholePart,
+  tapLivesInside,
+  withLook,
   withLayers,
   type MachineAt,
   type PartFlow,
@@ -112,7 +118,7 @@ import {
   type OverlayLevel,
   type Kind,
 } from "@/lib/tokens";
-import { GridCellMarks, Icon, M3Node, ValueContext, type WheelRun } from "./M3Node";
+import { GridCellMarks, Icon, M3Node, PartPressContext, ValueContext, type WheelRun } from "./M3Node";
 import { IconBtn } from "./ui";
 import { t, useLang } from "@/lib/i18n";
 import { constrainModalRails, modalRailOf, updateRail } from "@/lib/rail";
@@ -403,7 +409,8 @@ function Tappable({
      look the rules ask for — its own, or another part's rule that names it — so it is the part as
      drawn, and the tap's own effect is resolved on top of it. */
   const pin = states?.pinned[item.id];
-  const asked = pin ? { ...item, ...pin } : item;
+  /* 一次外观补丁落在部件上：任务信息条的"文字"在按钮上，所以补丁里的 `label` 走 withLook（见那里） */
+  const asked = pin ? withLook(item, pin) : item;
   /* the machine's own look sits on top: the part as drawn, then whatever a step latched onto it,
      then the look its own flow has moved it to */
   const own = states ? resolveStates(asked, states.at, states.now) : null;
@@ -411,6 +418,15 @@ function Tappable({
   const current = !!states && states.activeId === item.id && SHAPED.includes(item.kind) && !own?.disabled && !own?.hidden;
   const view = current && !view0.color ? { ...view0, color: "primaryContainer" } : view0;
   const frozen = !!own?.disabled || !!pin?.disabled;
+  /* 「置灰并停止响应」的范围：普通部件整块灰、整块不再收事件；融合部件（任务信息条）只灰里面那颗
+     领取按钮 —— 条里唯一活着的是它（见 disablesWholePart）。灰的是**按钮**，条照原样画、也照旧收
+     指针事件（在可滚动容器里从条上还能拖着滚）。 */
+  const greyed = frozen && disablesWholePart(view.kind);
+  /* 一条被徽标里的锁锁住的任务信息条：它里面的按钮点了没有反应（作者的「当出现这个锁的图标时，该
+     按钮点击时，禁止响应」——判定只写在 lib/tokens 的 taskBarButtonLocked 一处）。这不是"禁用"那种
+     变灰的样子（锁是一枚画出来的徽标，条照原样画），所以它不吃 frozen 那套滤镜，只跟 frozen 一样
+     不活：没有按下反馈、没有指针事件、点击路径在下面那道门前回头。 */
+  const locked = taskBarButtonLocked(view);
   const grown = !!own?.grown || !!pin?.grow;
   const menu = !!menuOpen;
   /* a tab row with more tabs than fit scrolls: by wheel, touch, or dragging the row; a chosen tab is brought into view */
@@ -501,8 +517,40 @@ function Tappable({
     window.addEventListener("pointerup", end);
     window.addEventListener("pointercancel", end);
   };
-  const live = !frozen && (!!onTap || !!onPick || !!view.flow || (TAPPABLE.includes(view.kind) && view.kind !== "text"));
+  const live = !frozen && !locked && (!!onTap || !!onPick || !!view.flow || (TAPPABLE.includes(view.kind) && view.kind !== "text"));
+  /**
+   * 融合部件：看起来像按钮的那一块画在部件**里面**，点击归它，整块部件不接这一下
+   *
+   * 任务信息条就是这样：标题、奖励格和领取按钮都是它自己的字段，而能点的只有里面那颗按钮（作者的原话
+   * 「点击相当于是点击整个容器」是把它当问题报的）。所以这一块不做点击目标，那一下顺着
+   * PartPressContext 交给里面的按钮 —— 见下面 onClick 与 M3Node 的 TaskBarContent。判定只有一处：
+   * lib/tokens 的 tapLivesInside。
+   */
+  const innerTap = tapLivesInside(view.kind);
   const ref = useRef<HTMLDivElement>(null);
+
+  /**
+   * 一次点按真正要做的事
+   *
+   * 两个入口共用这一份：整块部件的 onClick（从前的路），以及画在它里面的按钮（融合部件）。顺序照旧 ——
+   * 部件自己的状态机先走（只改画法的一步不吞掉这一点击，落到别处的一步就是这一点击的全部），
+   * 再是这一部件自己的 action。
+   */
+  const fireTap = () => {
+    /* a click that only finished a scroll is not a tap */
+    if (swallowScrollTap.current) {
+      swallowScrollTap.current = false;
+      return;
+    }
+    /* The part's own machine goes first. A step that only changes how the part is drawn still leaves
+       the tap its own effect — grey out and go, as both cards promise — but a step that lands the
+       visitor somewhere is the whole of the tap: running the plain action as well pushed a page and
+       opened a dialog from one tap, which is how a screen came to slide while the dialog it was meant
+       to open only appeared. */
+    const took = states?.onStep(view.id, view.flow, view.id) ?? "none";
+    if (SHAPED.includes(view.kind)) states?.onActivate(view.id);
+    if (took !== "moved") onTap?.();
+  };
 
   /* the open menu closes on a tap anywhere else or on Escape */
   useEffect(() => {
@@ -717,7 +765,7 @@ function Tappable({
           setPressed(true);
           return;
         }
-        if (live) setPressed(true);
+        if (live && !innerTap) setPressed(true);
       }}
       onPointerMove={(e) => {
         if (onValue && pressed) dragPart(e);
@@ -730,40 +778,41 @@ function Tappable({
       onPointerCancel={() => setPressed(false)}
       onPointerLeave={() => !onValue && setPressed(false)}
       onClick={
-        onPick
+        /* 锁住的条连这一道门都不进：点击路径（每一次点按都要过的这一处）在这里回头，于是它的流程图
+           一步都不走、action 不触发、onTap 不响 —— 编辑器里的预览、分享出去的静态预览和市场预览走
+           的都是这一个 Tappable，所以三处一起锁住。pointerEvents: none 是第二道保险（这个部件根本
+           收不到事件），两道都问同一个 locked。 */
+        locked
+          ? undefined
+          : onPick
           ? (e) => {
               e.stopPropagation();
               onMenu?.(!menu);
             }
+          : /* 融合部件（任务信息条）：这一下属于画在它里面的那颗领取按钮，整条不接（见 innerTap 与
+               下面交给 M3Node 的 PartPressContext）。接在这儿的话，点标题、点奖励格都会走同一个
+               action —— 作者报的「点击相当于是点击整个容器」就是这个。 */
+          innerTap
+          ? undefined
           : (e) => {
               /* The innermost part under the finger takes the tap. Without this a container
                  answers the click as well as what it holds: a board's cell would tick under every
                  button dropped into it, and a box with an action would fire under its own child. */
               e.stopPropagation();
-              /* a click that only finished a scroll is not a tap */
-              if (swallowScrollTap.current) {
-                swallowScrollTap.current = false;
-                return;
-              }
-              /* The part's own machine goes first. A step that only changes how the part is drawn
-                 still leaves the tap its own effect — grey out and go, as both cards promise — but a
-                 step that lands the visitor somewhere is the whole of the tap: running the plain
-                 action as well pushed a page and opened a dialog from one tap, which is how a screen
-                 came to slide while the dialog it was meant to open only appeared. */
-              const took = states?.onStep(view.id, view.flow, view.id) ?? "none";
-              if (SHAPED.includes(view.kind)) states?.onActivate(view.id);
-              if (took !== "moved") onTap?.(e);
+              fireTap();
             }
       }
       style={{
-        cursor: live || onValue ? "pointer" : "default",
+        cursor: (live && !innerTap) || onValue ? "pointer" : "default",
         display: "flex",
         position: "relative",
         touchAction: scrollTabs ? "pan-x" : "none",
-        /* a part its own rule has greyed out still shows, but answers nothing */
-        filter: frozen ? "grayscale(1)" : undefined,
-        opacity: frozen ? 0.55 : 1,
-        pointerEvents: frozen ? "none" : undefined,
+        /* a part its own rule has greyed out still shows, but answers nothing —— 融合部件只灰按钮，
+           见上面 greyed */
+        filter: greyed ? "grayscale(1)" : undefined,
+        opacity: greyed ? 0.55 : 1,
+        /* 灰掉的整块部件和锁住的条一样，一个事件都不收；只灰按钮的那种（融合部件）照旧收事件 */
+        pointerEvents: greyed || locked ? "none" : undefined,
         /* the current button stands a size up, above its neighbours */
         transform: current ? "scale(1.08)" : grown ? "scale(1.15)" : undefined,
         transformOrigin: "center",
@@ -774,6 +823,15 @@ function Tappable({
       {/* the controls inside a part — a stepper's buttons, a slider field's number — reach the value
           through this, so a part works the same on a screen and inside a dialog panel */}
       <ValueContext.Provider value={{ onSet, wheel: wheelOf, reels: reelsOf, claim: claimOf, claimed: claimedOf }}>
+      {/* 融合部件里那颗按钮的点击走的也是这一份 `fireTap`：`live` 为假（灰掉、锁住）时不给它，
+          于是按钮里外一起不响应 —— 两道门问的是同一个判定。 */}
+      <PartPressContext.Provider
+        value={{
+          /* 主按钮：这一部件自己的那一下（状态机 + action） */
+          press: innerTap && live ? fireTap : undefined,
+          off: innerTap && frozen,
+        }}
+      >
       <M3Node
         item={view}
         palette={p}
@@ -805,6 +863,7 @@ function Tappable({
           e.preventDefault();
         }}
       />
+      </PartPressContext.Provider>
       </ValueContext.Provider>
       {/* the navigation's own collapse button: a button of its own, so nothing can cover it */}
       {navToggle && (
@@ -1155,7 +1214,21 @@ function Screen({
   /* an in-page overlay is a group on this very screen: it stays out of the way until a tap
      opens it, and the level it was authored with decides how it takes the screen over */
   const dialogItemIds = new Set(shownGroups.flatMap((g) => g.items.filter((it) => overlayLevelOf(it) !== null).map((it) => it.id)));
-  const runAction = (a: Action) => (dialogItemIds.has(a.to) ? dialog.onOpen(a.to) : onAction(a));
+  /**
+   * 一次点按落到哪儿去
+   *
+   * 「关闭当前面板」这个目标在这里兑现：这一屏上开着一层叠加面板就先把它收起来（和点遮罩同一个动作，
+   * 见下面遮罩那一处）；没有叠加面板时，这一屏自己就是被当弹框压上来的 —— 那就照作者画弹框时的老写法
+   * "回上一屏"，把那层弹框退掉。两条都不是时什么也不做（就是没有面板可关）。它不是任何部件的默认：
+   * 作者在「行为」一节里选上它才走这里（见 lib/tokens 的 CLOSE_PANEL_TARGET）。
+   */
+  const runAction = (a: Action) => {
+    if (a.to === CLOSE_PANEL_TARGET) {
+      if (dialog.openId) return dialog.onOpen(null);
+      return onAction({ ...a, to: BACK_TARGET });
+    }
+    return dialogItemIds.has(a.to) ? dialog.onOpen(a.to) : onAction(a);
+  };
   const hasModal = modalIds.size > 0;
   /* the overlay this screen has open, and the rules its level carries */
   const openOverlay = dialog.openId ? shownGroups.flatMap((g) => g.items).find((it) => it.id === dialog.openId) : undefined;

@@ -430,7 +430,7 @@ const FEATURE_RULES: { id: string; nameKey: string; keywords: string[]; kinds: K
   /* 只看文字：格子框在商店、图鉴、任务里都有，"有格子"不足以说明它是背包 */
   { id: "bag", nameKey: "featBag", keywords: ["背包", "仓库", "道具", "バッグ", "bag", "inventory", "warehouse", "storage", "物品"], kinds: [] },
   { id: "shop", nameKey: "featShop", keywords: ["商城", "商店", "购买", "ショップ", "shop", "store", "mall", "充值", "礼包"], kinds: [] },
-  { id: "quest", nameKey: "featQuest", keywords: ["任务", "ミッション", "quest", "task", "mission", "成就", "每日"], kinds: [] },
+  { id: "quest", nameKey: "featQuest", keywords: ["任务", "ミッション", "quest", "task", "mission", "成就", "每日"], kinds: ["taskBar"] },
   { id: "friends", nameKey: "featFriends", keywords: ["好友", "フレンド", "friend", "社交", "公会", "ギルド", "guild", "聊天"], kinds: [] },
   { id: "pet", nameKey: "featPet", keywords: ["宠物", "萌宠", "ペット", "pet", "坐骑"], kinds: [] },
   { id: "codex", nameKey: "featCodex", keywords: ["图鉴", "図鑑", "codex", "collection", "百科"], kinds: [] },

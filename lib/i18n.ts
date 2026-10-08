@@ -547,6 +547,30 @@ export const UI = {
     en: "The tag a game puts on an item's top-left — its quality or rarity. Its colour is yours to pick.",
     zh: "贴在左上角的品质徽标，可以按品质自己选颜色。",
   },
+  /* 任务信息条：一个部件里装着标题、奖励格和一个「领取」按钮 —— 它们都是这一条自己的属性，
+     所以每一块都在这里有自己的名字（见 KIND_SPEC.taskBar / M3Node 的 TaskBarContent）。 */
+  taskBarHint: {
+    ja: "タイトル・報酬マス・「受け取る」ボタンは、この1つの部品のプロパティです（子部品ではありません）。",
+    en: "The title, the reward cells and the claim button are properties of this one part — not child parts.",
+    zh: "标题、奖励格和「领取」按钮都是这一个组件的属性，不是它的子组件。",
+  },
+  barTitle: { ja: "タイトル", en: "Title", zh: "标题" },
+  barButton: { ja: "ボタンの文字", en: "Button text", zh: "按钮文字" },
+  barBadge: { ja: "ボタン右上のバッジ", en: "Button badge", zh: "按钮右上徽标" },
+  /* ボタン右上のバッジの中のアイコン（「アイコン」の節に並ぶただ一つのスロット）。文字があっても
+     アイコンが優先されること、鎖のアイコンはボタンを無効にすることも、この1行で言っておく。 */
+  barBadgeIcon: { ja: "バッジのアイコン", en: "Badge icon", zh: "徽标图标" },
+  barBadgeHint: {
+    ja: "ボタンの右上に重なる数字か文字のバッジです。文字を空にするとバッジごと消えます。アイコン（「バッジのアイコン」の節）を選ぶとそちらが優先され、鎖のアイコンならボタンはタップに反応しなくなります。",
+    en: "The number or word overlapping the button's top right. Left empty, the badge goes away. An icon (the 「Badge icon」 section) wins over the words, and the lock icon makes the button answer no tap.",
+    zh: "叠在按钮右上角的数字或文字徽标。清空文字，徽标就整个消失。在「徽标图标」一节里选了图标，徽标就画成图标（图标优先于文字）；选了锁图标，按钮点击就不再有反应。",
+  },
+  markRight: { ja: "右上のバッジ", en: "Top-right badge", zh: "右上徽标" },
+  taskMarkHint: {
+    ja: "バッジはマスの角に重なるので、マスも部品も大きくなりません。色は品質色など、好きな色を選べます。",
+    en: "A badge rides on the cell's corner, so neither the cell nor the part grows. Its colour is yours to pick.",
+    zh: "角标叠在格子的角上，不会把格子或组件撑大。颜色可以自己选（品质绿、稀有紫都行）。",
+  },
   fnBadgeText: { ja: "バッジの文字", en: "Badge text", zh: "徽标文字" },
   fnBadgeHint: {
     ja: "文字を空にすると、小さな点だけを描きます。",
@@ -622,6 +646,9 @@ export const UI = {
   edit: { ja: "編集", en: "Edit", zh: "编辑" },
   prompt: { ja: "プロンプト", en: "Prompt", zh: "提示词" },
   closePanel: { ja: "パネルを閉じる", en: "Close panel", zh: "关闭面板" },
+  /* 动作的落点之一：关掉这个部件所在的那层面板（给哪颗按钮选上，那颗才关，见 CLOSE_PANEL_TARGET）。
+     和上面那个"收起侧边面板"不是一回事，所以另起一个键。 */
+  closePanelTarget: { ja: "現在のパネルを閉じる", en: "Close this panel", zh: "关闭当前面板" },
   search: { ja: "検索", en: "Search", zh: "搜索" },
   favorites: { ja: "お気に入り", en: "Favorites", zh: "收藏" },
   addFavorite: { ja: "お気に入りに追加", en: "Add to favorites", zh: "添加到收藏" },
@@ -733,6 +760,8 @@ export const UI = {
   reload: { ja: "再読み込み", en: "Reload", zh: "重新加载" },
   copied: { ja: "コピーしました", en: "Copied", zh: "已复制" },
   saveImage: { ja: "画像で保存", en: "Save as image", zh: "保存为图片" },
+  /* 一屏自己的 JSON：「保存项目」导的是整份画布，这一项只导当前这一屏（见 lib/project 的 screenProject） */
+  saveJson: { ja: "JSON で保存", en: "Save the JSON", zh: "导出 JSON" },
   saving: { ja: "保存中…", en: "Saving…", zh: "保存中…" },
   previewFrom: { ja: "この画面からプレビュー", en: "Preview from this screen", zh: "从此屏幕预览" },
   duplicate: { ja: "複製", en: "Duplicate", zh: "复制" },
@@ -1288,6 +1317,11 @@ export const UI = {
   uploadFail: { ja: "公開に失敗しました。もう一度お試しください", en: "Publishing failed. Please try again", zh: "上传失败，请重试" },
   uploadPickScreen: { ja: "先に画面を選んでください", en: "Select a screen first", zh: "请先选择要上传的屏幕" },
   uploadFailedWith: { ja: "公開に失敗しました：{msg}", en: "Publishing failed: {msg}", zh: "上传失败：{msg}" },
+  uploadDoneNoThumb: {
+    ja: "マーケットに公開しましたが、サムネイルを作れませんでした",
+    en: "Published to the market, but the thumbnail could not be made",
+    zh: "已上传到市场组件，但缩略图没画出来",
+  },
   exportFailed: {
     ja: "画像を書き出せませんでした。画面に他のサイトの画像があると書き出せないことがあります",
     en: "Could not export the image. A picture from another site on the screen can block it",
@@ -1402,7 +1436,7 @@ export const overlayLevelText = (level: OverlayLevel, lang: Lang) => t(OVERLAY_L
 export const KO: Record<UIKey, string> = {
   frameSize: "화면 크기", landscapeFrame: "가로 화면", phoneFrame: "휴대전화", desktopFrame: "데스크톱", columnWidth: "휴대전화 한 화면 너비", cornerLeft: "왼쪽 모서리", cornerRight: "오른쪽 모서리", cornersEach: "모서리별로 지정", cornerTl: "왼쪽 위", cornerTr: "오른쪽 위", cornerBl: "왼쪽 아래", cornerBr: "오른쪽 아래",
   filled: "채움", tonal: "색조", elevated: "그림자", outlined: "윤곽선", standard: "표준", vibrant: "선명함",
-  parts: "부품", layers: "레이어", audit: "점검", edit: "편집", prompt: "프롬프트", closePanel: "패널 닫기",
+  parts: "부품", layers: "레이어", audit: "점검", edit: "편집", prompt: "프롬프트", closePanel: "패널 닫기", closePanelTarget: "현재 패널 닫기",
   offScreens: "화면 밖 부품", offScreensHint: "어느 화면에도 속하지 않는 부품입니다. 프롬프트에서는 공용 부품으로 다룹니다.",
   tabStyle: "탭 모양", tabStyleUnderline: "밑줄", tabStyleButtons: "버튼", tabPanelsAuto: "탭 패널은 탭과 함께 만들어집니다. 탭을 추가하면 그 패널도 아래에 함께 놓입니다.", tabPanelsHint: "탭마다 패널이 하나씩, 탭 줄 아래에 있습니다. 탭을 바꾸면 그 패널만 표시됩니다.",
   ruleWhen: "조건", ruleThen: "실행", ruleGoto: "이동", ruleBack: "뒤로", ruleClose: "현재 오버레이 닫기", ruleCloseAll: "모든 오버레이 닫기", ruleLook: "속성 바꾸기", ruleAfter: "N초 뒤 자동 실행", flowStay: "모양 그대로", lookTarget: "바꿀 대상", lookText: "텍스트", lookColor: "사용자 지정 색", lookSelf: "이 부품", actionKeep: "그대로 두기", propColor: "색", propChecked: "켜짐/꺼짐", propSelected: "선택된 항목", propValue: "값", valueMinus: "1 줄이기", valueOpSet: "값 설정", valueOpAdd: "더하기", valueOpSub: "빼기", valueStep: "단계", valuePlus: "1 늘리기", boolYes: "켜기", showsValue: "값 표시", showsUnit: "％ 표시", showsUnitHint: "끄면 슬라이더의 숫자에서 ％가 사라집니다. 값을 읽는 텍스트는 항상 숫자만 받습니다.", mixOwn: "자기 글자와 함께", mixHint: "자기 글자 안의 {v} 자리에 숫자가 들어갑니다. 쓰지 않으면 끝에 붙습니다.", mixInsert: "끝에 {v} 넣기", maxValue: "최댓값", maxHint: "값·드래그·＋／−의 상한입니다. 비우면 {n}.", autoClose: "시간으로 닫기", searchLayers: "페이지와 부품 검색", searchCount: "{n}개 결과", searchNoHit: "{q}와 일치하는 항목이 없습니다", searchClear: "검색 지우기", tabPanel: "패널", rotation: "회전", tabSide: "탭 위치", sideRail: "탭 열 너비", sideRailHint: "탭 열이 가로 폭에서 차지하는 비율입니다. 나머지가 페이지입니다.", tabSideHint: "탭은 고른 쪽에 놓이고 페이지는 반대쪽에 들어갑니다(기본: 가로 탭은 위, 사이드 탭은 왼쪽).", showIcon: "아이콘 표시", showBadge: "배지 표시", badge: "3", posTop: "위", posBottom: "아래", posLeft: "왼쪽", posRight: "오른쪽", rotationReset: "똑바로", joystickReturn: "손을 떼면 가운데로", joystickReturnHint: "끄면 손잡이가 놓은 자리에 그대로 있습니다.", prizes: "경품", gachaTen: "한꺼번에 뽑기 버튼", manyCount: "한꺼번에 뽑는 횟수", prizeHint: "가중치가 당첨 확률을 정합니다. 오른쪽 %는 지금 가중치로 계산한 실제 확률입니다.", prizeName: "경품", prizeWeight: "가중치", addPrize: "경품 추가", removePrize: "이 경품 삭제", wonPrize: "당첨!", spinHint: "미리보기에서 이 부품을 탭하면 돌아갑니다. 멈추면 어떤 경품인지 팝업으로 알려 줍니다.", rotationHint: "부품은 자기 중심으로 돌아갑니다. 그려지는 것(모서리·글자·안의 자식)이 함께 돌고, 레이아웃에서 차지하는 자리는 그대로입니다.", lookAwayHint: "이 부품은 「{page}」에 있습니다. 미리보기에서 그 화면을 열면 적용되어 있습니다(한 화면에서 줍고 다른 화면 가방 칸이 채워지는 식).", panelSizeHint: "탭의 패널은 탭 줄 아래의 공간 자체라 크기는 탭 줄이 정합니다(탭 줄 크기를 바꾸면 패널도 따라갑니다). 그래서 따로 끌거나 크기를 바꿀 수 없습니다.", panelKeeps: "탭의 패널은 탭 자체의 자리라 지워도 다시 생깁니다. 그래서 안의 내용만 지웠습니다(완전히 없애려면 탭 목록에서 그 탭을 삭제하세요).", autoCloseHint: "그 시간이 지나면 이 부품은 스스로 사라집니다(컨테이너라면 안의 자식까지 함께, 보이지도 탭되지도 않습니다).", autoCloseBubbleHint: "팝오버이므로 바깥을 탭한 것처럼 닫힙니다. 다시 열면 처음부터 셉니다.", autoClosePageHint: "이 페이지가 열린 뒤부터 세어, 시간이 되면 스스로 닫힙니다(위에 열린 것도 함께 닫힘).", autoCloseSpeedHint: "시간은 미리보기 시계로 흐릅니다. 미리보기 위쪽의 시간으로 빠르게 돌릴 수 있습니다.", fnTimer: "카운트다운", fnTimerOn: "카운트다운 표시", fnTimerUnit: "단위", fnUnitDay: "일", fnUnitHour: "시", fnUnitMinute: "분", fnUnitSecond: "초", fnTimerHint: "이름 아래 두 번째 줄입니다. 끄면 줄 자체가 사라집니다. 분과 초는 표시되는 동안에만 초 단위로 줄어듭니다.", fnBadge: "배지", fnBadgeText: "배지 글자", fnBadgeHint: "글자를 비우면 작은 점만 그립니다.", markLeft: "왼쪽 위 배지", quantity: "수량", markLeftHint: "아이템 왼쪽 위에 붙는 품질 배지입니다. 색은 직접 고를 수 있습니다.", showsNothing: "자기 글자", showsPickHint: "슬라이더나 바를 고르면 이 텍스트가 그 현재 값을 표시합니다.", ruleStayHint: "이 선의 동작은 다른 부품만 바꿉니다. 모양을 그대로 두면 누를 때마다 적용됩니다.", ruleOrderHint: "여는 동작 뒤에 닫기를 두면 방금 연 겹친 화면을 닫아 버립니다. 닫기를 먼저 두세요.", ruleOrderFix: "닫기를 먼저", ruleCloseHint: "「현재 오버레이 닫기」는 맨 위 한 겹만 닫습니다. 아래 겹은 그대로 남습니다(모두 닫으려면 「모든 오버레이 닫기」).", showsHint: "이 텍스트는 자기 글자 대신 고른 부품의 현재 값을 표시합니다. 슬라이더를 움직이면 숫자도 함께 움직입니다.", boolNo: "끄기", flowAddProp: "바꿀 속성 추가", actionShow: "표시", actionHide: "숨기기", ruleCheckHint: "슬롯 그리드의 체크박스 표시를 켜고 끕니다. 게임의 선택 버튼처럼 프레임 밖 버튼으로 일괄 선택 모드를 열고 닫을 수 있으며, 체크는 보는 사람이 셀을 탭해 채웁니다.", ruleLookHint: "이 단계가 여기서 정한 모양으로 바꾸고 그대로 둡니다(되돌리려면 되돌리는 단계를 더하세요).", ruleAfterShort: "N초 후",
@@ -1440,7 +1474,7 @@ export const KO: Record<UIKey, string> = {
   invalidProject: "프로젝트 파일을 열 수 없습니다.", readOnlyTitle: "다른 탭에서 편집 중입니다",
   readOnlyBody: "이 캔버스는 다른 탭에서 편집 중입니다. 해당 탭을 닫은 다음 이 페이지를 새로고침하세요.",
   reload: "새로고침",
-  copied: "복사됨", saveImage: "이미지로 저장", saving: "저장 중…", previewFrom: "이 화면부터 미리보기",
+  copied: "복사됨", saveImage: "이미지로 저장", saveJson: "JSON으로 저장", saving: "저장 중…", previewFrom: "이 화면부터 미리보기",
   duplicate: "복제", duplicateKey: "복제 (Ctrl+D)", delete: "삭제 (Delete)", deleteSelection: "선택 항목 삭제",
   deleteSelectionAsk: "선택한 부품 {n}개를 삭제할까요? 되돌릴 수 있습니다.",
   deleteLinkAsk: "이 연결을 끊을까요? 화면은 그대로 남습니다.",
@@ -1523,6 +1557,7 @@ export const KO: Record<UIKey, string> = {
   uploadSubmit: "공개하기", uploadBusy: "공개 중…", uploadDone: "마켓에 공개했습니다",
   uploadFail: "공개에 실패했습니다. 다시 시도하세요", uploadPickScreen: "먼저 화면을 선택하세요",
   uploadFailedWith: "공개에 실패했습니다: {msg}",
+  uploadDoneNoThumb: "마켓에 공개했습니다. 다만 썸네일을 만들지 못했습니다",
   exportFailed: "이미지를 내보내지 못했습니다. 화면에 다른 사이트의 이미지가 있으면 막힐 수 있습니다",
   myParts: "내 부품", myPartsHint: "마켓에서 가져온 부품과 직접 저장한 부품입니다.",
   myPartsEmpty: "아직 내 부품이 없습니다", myPartDelete: "삭제", myPartDeleteTitle: "이 부품을 삭제할까요?",
@@ -1618,6 +1653,12 @@ docPresets: "프리셋", docStep: "간격", docGrid: "칸 격자", docGridHint: 
   canvasAdded: "새 캔버스를 추가했습니다",
   canvasCopied: "「{name}」을 복사했습니다", canvasCopy: "복사본 만들기", canvasBuiltin: "기본 제공",
     canvasNew: "캔버스 추가",
+  taskBarHint: "제목·보상 칸·받기 버튼은 이 한 부품의 속성입니다(자식 부품이 아닙니다).",
+  barTitle: "제목", barButton: "버튼 텍스트", barBadge: "버튼 오른쪽 위 배지",
+  barBadgeIcon: "배지 아이콘",
+  barBadgeHint: "버튼 오른쪽 위에 겹치는 숫자나 글자 배지입니다. 글자를 비우면 배지가 통째로 사라집니다. 「배지 아이콘」에서 아이콘을 고르면 그쪽이 우선이고, 자물쇠 아이콘이면 버튼이 탭에 반응하지 않습니다.",
+  markRight: "오른쪽 위 배지",
+  taskMarkHint: "배지는 칸 모서리에 겹치므로 칸이나 부품이 커지지 않습니다. 색은 품질 색 등 원하는 대로 고를 수 있습니다.",
 };
 
 export const t = (key: UIKey, lang: Lang = current): string => (lang === "ko" ? KO[key] : UI[key][lang]);
@@ -1643,7 +1684,7 @@ export const REWARD_TEXT: Record<Lang, string[]> = {
 
 export const KIND_TEXT: Record<
   Lang,
-  Record<string, { noun: string; label?: string; label2?: string; supporting?: string; badgeText?: string; badge2Text?: string }>
+  Record<string, { noun: string; label?: string; label2?: string; supporting?: string; badgeText?: string; badge2Text?: string; buttonBadgeText?: string }>
 > = {
   ja: {
     box: { noun: "ボックス" },
@@ -1689,6 +1730,7 @@ export const KIND_TEXT: Record<
     gacha: { noun: "ガチャ", label: "1回まわす", label2: "{n}回まわす" },
     slot: { noun: "シェイク", label: "シェイク" },
     calendar: { noun: "カレンダー", label: "チェックイン" },
+    taskBar: { noun: "タスク情報バー", label: "毎日ログイン (1/1)", label2: "受け取る", badgeText: "新", badge2Text: "普通", buttonBadgeText: "1" },
     rewardTrack: { noun: "報酬トラック", label: "受け取る" },
     radio: { noun: "ラジオボタン", label: "選択肢" },
     badge: { noun: "バッジ", label: "3" },
@@ -1737,6 +1779,7 @@ export const KIND_TEXT: Record<
     gacha: { noun: "capsule machine", label: "Turn one", label2: "Turn {n} times" },
     slot: { noun: "shake to draw", label: "Shake" },
     calendar: { noun: "check-in calendar", label: "Check in" },
+    taskBar: { noun: "task bar", label: "Daily login (1/1)", label2: "Claim", badgeText: "New", badge2Text: "Common", buttonBadgeText: "1" },
     rewardTrack: { noun: "reward track", label: "Claim" },
     radio: { noun: "radio button", label: "Option" },
     badge: { noun: "badge", label: "3" },
@@ -1785,6 +1828,7 @@ export const KIND_TEXT: Record<
     gacha: { noun: "扭蛋机", label: "扭一个", label2: "扭 {n} 个" },
     slot: { noun: "摇一摇", label: "摇一摇" },
     calendar: { noun: "日历签到", label: "签到" },
+    taskBar: { noun: "任务信息条", label: "每日登录游戏 (1/1)", label2: "领取", badgeText: "新", badge2Text: "普通", buttonBadgeText: "1" },
     rewardTrack: { noun: "进度奖励条", label: "领取" },
     radio: { noun: "单选按钮", label: "选项" },
     badge: { noun: "徽标", label: "3" },
@@ -1833,6 +1877,7 @@ export const KIND_TEXT: Record<
     gacha: { noun: "캡슐 뽑기", label: "한 번", label2: "{n}번 뽑기" },
     slot: { noun: "흔들기", label: "흔들기" },
     calendar: { noun: "출석 달력", label: "출석" },
+    taskBar: { noun: "태스크 정보 바", label: "일일 로그인 (1/1)", label2: "받기", badgeText: "새로움", badge2Text: "일반", buttonBadgeText: "1" },
     rewardTrack: { noun: "보상 트랙", label: "받기" },
     radio: { noun: "라디오 버튼", label: "옵션" },
     badge: { noun: "배지", label: "3" },

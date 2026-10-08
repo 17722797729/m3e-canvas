@@ -7,7 +7,8 @@ import { Frame, Group, PlacedItem, Theme, Palette, foldPlace, frameOfGroup } fro
 import { Lang, t, useLang } from "@/lib/i18n";
 import { ComponentTypeCode, uploadMarketComponent } from "@/lib/syai";
 import { CATEGORY_NAMES, CODE_OF_CATEGORY, categoryIcon, packData, tightenGroups } from "@/lib/market";
-import { captureOptions, iconFontEmbedCss, squareThumbnail, thumbScale, warmIconFont } from "@/lib/marketThumbnail";
+import { captureBox, captureOptions, iconFontEmbedCss, iconFontReady, squareThumbnail, thumbScale, warmIconFont, type SquaredStill } from "@/lib/marketThumbnail";
+import { dataUrlBlob, uploadThumbnailToOss } from "@/lib/ossUpload";
 import { useSession } from "@/lib/session";
 import { Icon } from "./M3Node";
 import { LoginDialog } from "./LoginDialog";
@@ -15,17 +16,19 @@ import { StaticFrame } from "./StaticFrame";
 import { inputBox } from "./ui";
 
 /**
- * 截图：按节点在页面上的真实盒子取尺寸
+ * 截图：按节点在页面上的排版盒子取尺寸
  *
  * 节点本身已经按 `thumbScale` 缩到最终尺寸画好了，所以这里的像素就是缩略图的像素 ——
  * 没有"先画大再缩小"的那一次重采样，字和图标才清楚。
+ *
+ * 尺寸走 `captureBox`（排版盒子），不走 `getBoundingClientRect()`：后者带着祖先的 transform，
+ * 对话框自己的入场弹簧还在跑时是 0.94 倍，按那个数画会把克隆的视口一起缩小、把内容裁掉一圈
+ * （见 lib/marketThumbnail.ts 的 captureBox）。
  */
-async function renderThumbnail(node: HTMLElement, w: number, h: number): Promise<HTMLImageElement> {
-  const rect = node.getBoundingClientRect();
-  const box = {
-    w: Math.max(1, Math.round(rect.width || node.scrollWidth || node.offsetWidth || w)),
-    h: Math.max(1, Math.round(rect.height || node.scrollHeight || node.offsetHeight || h)),
-  };
+async function renderThumbnail(node: HTMLElement, w: number, h: number): Promise<SquaredStill> {
+  /* 先等图标字体真的能画：`iconFontEmbedCss` 只保证那段 CSS 到位，连字变成图标还要等字体加载完 */
+  await iconFontReady();
+  const box = captureBox(node, w, h);
   /* 图标字体单独内联：`skipFonts` 挡掉了跨域样式表的报错，也顺带挡掉了图标 */
   const url = await toPng(node, captureOptions(box.w, box.h, await iconFontEmbedCss()));
   const img = new Image();
@@ -34,33 +37,65 @@ async function renderThumbnail(node: HTMLElement, w: number, h: number): Promise
     img.onerror = () => reject(new Error("thumbnail decode failed"));
     img.src = url;
   });
-  return img;
+  const squared = squareThumbnail(img);
+  if (!squared) throw new Error("thumbnail canvas unavailable");
+  return squared;
+}
+
+/** 缩略图这一步的结果：要么有一张图，要么有一句说得出口的原因 */
+type ShotResult = { url: string; problem?: undefined } | { url?: undefined; problem: string };
+
+/** 抛出来的东西说成人话 */
+const reasonOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+/**
+ * 缩略图落在哪里：优先直传 OSS/CDN，退不回去才交给后端转存
+ * ---------------------------------------------------------------------------
+ * 后端转存（`createFileApp`）写的是 `infra_file_config` 里 master 那一条存储。那一条被改成
+ * 「本地存储」的那天，市场缩略图就全变成了 `http://127.0.0.1:58080/admin-api/infra/file/29/get/...`
+ * —— 上传不报错、市场和后台都是破图（2026-10 真实踩过）。直传走 STS 凭证，不碰那份配置，
+ * 发出去的地址直接就是 CDN 上能打开的那一种（见 lib/ossUpload.ts）。
+ *
+ * 直传不成（没登录、凭证被限流、网络/CORS、数据 URL 解不开……）就退回把 data URL 交给后端，
+ * 与从前完全一样 —— 少一次尝试，不该把上传拦下来。
+ */
+async function hostThumbnail(dataUrl: string | undefined): Promise<string | undefined> {
+  if (!dataUrl) return undefined;
+  try {
+    return await uploadThumbnailToOss(dataUrlBlob(dataUrl));
+  } catch (err) {
+    console.warn("缩略图没能直传到 OSS，改为交给后端转存：", reasonOf(err));
+    return dataUrl;
+  }
 }
 
 /**
- * 一帧画成缩略图：屏幕外 1:1 画好，再用 canvas 缩到 400px 以内，转成 data URL。
- * 缩略图终究只是列表页的门面：真画不出来就返回 undefined，上传照常进行。
+ * 一帧画成缩略图：屏幕外 1:1 画好，再用 canvas 缩到 640 的方形里，转成 data URL。
+ *
+ * 画不出来（或者画出来是一张白图）**不在这里咽掉**：原因原样交出去，由 `submit` 说给作者听
+ * 并在控制台留一条能查的线索。「上传后缩略图看不见，还没有任何错误」正是从前那两处
+ * `catch { return undefined }` 造成的样子 —— 缩略图是列表页的门面，它没画出来，作者至少要知道。
+ *
+ * 第一张不行可能只是元素/字体还没画好：等字体就绪、再等两帧，重画一次。只重画一次 ——
+ * 真的画不出来时，多等两帧也一样画不出来。
  */
-async function toThumbnail(node: HTMLElement, w: number, h: number): Promise<string | undefined> {
-  let img: HTMLImageElement;
+async function toThumbnail(node: HTMLElement, w: number, h: number): Promise<ShotResult> {
+  let first = "";
   try {
-    img = await renderThumbnail(node, w, h);
-  } catch (first) {
-    /* 表头、首屏图片这类元素在被转换的一瞬间还可能没画好，等两帧再试一次就稳了 */
-    try {
-      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-      img = await renderThumbnail(node, w, h);
-    } catch {
-      /* 缩略图是列表页的门面，画不出来就不带它，不该把上传拦下来，
-         也不该在控制台喷一条让作者以为上传失败的错误 */
-      return undefined;
-    }
+    const shot = await renderThumbnail(node, w, h);
+    if (!shot.blank) return { url: shot.url };
+    first = "第一张是空白的";
+  } catch (err) {
+    first = reasonOf(err);
   }
   try {
-    /* 统一成正方形：又高又窄的组件（导航栏）和又扁又宽的（按钮行）在卡片里都完整 */
-    return squareThumbnail(img);
-  } catch {
-    return undefined;
+    await iconFontReady();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const shot = await renderThumbnail(node, w, h);
+    if (!shot.blank) return { url: shot.url };
+    return { problem: `重画一次仍是空白（第一次：${first || "空白"}）` };
+  } catch (err) {
+    return { problem: reasonOf(err) };
   }
 }
 
@@ -123,8 +158,9 @@ export function UploadMarketDialog({
 
   useEffect(() => {
     if (!open) return;
-    /* 先把图标字体取回来：不然第一次点「上传」要等它下载 + 编码 */
+    /* 先把图标字体取回来、并等它真的加载完：不然第一次点「上传」要等它下载 + 编码，图标还要等它 */
     warmIconFont();
+    void iconFontReady();
     setMsg("");
     setBusy(false);
     setDescription("");
@@ -163,7 +199,17 @@ export function UploadMarketDialog({
         setBusy(false);
         return;
       }
-      const thumbnail = shotRef.current ? await toThumbnail(shotRef.current, tight.w, tight.h) : undefined;
+      const thumbnail = shotRef.current
+        ? await toThumbnail(shotRef.current, tight.w, tight.h)
+        : { problem: "截图节点不在页面上" };
+      if (thumbnail.problem) {
+        /* 画不出来不该把上传拦下来（照旧上传，市场那边落到自己的占位图上），但也绝不再悄悄咽掉：
+           控制台留一条能查的（上传成功的那句话会盖掉提示，日志不会被盖掉），作者眼前那句话见
+           下面的 toast —— 「缩略图看不见，还没有任何错误」正是从前那种安静造成的。 */
+        console.warn("上传缩略图没画出来，这一次不带缩略图上传：", thumbnail.problem);
+      }
+      /* 画出来了就先送 CDN；送不上去才把 data URL 交给后端转存 */
+      const hostedThumbnail = await hostThumbnail(thumbnail.url);
 
       await uploadMarketComponent({
         name: name.trim(),
@@ -187,11 +233,17 @@ export function UploadMarketDialog({
             }),
           })),
         }),
-        thumbnail,
+        thumbnail: hostedThumbnail,
         description: description.trim() || undefined,
         screenName: frame.name,
       });
-      onToast?.(t("uploadDone", lang), 2200, "cloud_upload");
+      /* 上传成功的那一句话：缩略图没画出来时把它一起说出来（否则「已上传」会把「没有缩略图」
+         盖掉 —— 作者就只看到一句漂亮话，去市场里才发现缩略图是空的） */
+      onToast?.(
+        thumbnail.problem ? t("uploadDoneNoThumb", lang) : t("uploadDone", lang),
+        thumbnail.problem ? 4200 : 2200,
+        thumbnail.problem ? "hide_image" : "cloud_upload",
+      );
       onClose();
     } catch (err) {
       /* 后端把拒绝的原因写在 msg 里（没登录、类型不对、数据不合法…），照原样说出来，
