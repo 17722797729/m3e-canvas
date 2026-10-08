@@ -183,13 +183,13 @@ describe("preview screen modal lifecycle", () => {
  * 都没有 —— 「当出现这个锁的图标时，该按钮点击时，禁止响应」就是这一条。判定本身在 lib/tokens 的
  * taskBarButtonLocked，普通部件照旧整块都是点击目标。 */
 describe("a task bar's tap belongs to its button", () => {
-  const partDoc = (kind: "taskBar" | "button", patch: Record<string, unknown>) =>
+  const partDoc = (kind: "taskBar" | "confirmBox" | "bottomNav" | "button", patch: Record<string, unknown>) =>
     ({
       ...doc,
       groups: [{ id: "g", x: 0, y: 0, axis: "y", items: [{ ...makeItem(kind), id: "tb", ...patch }] }],
     }) as unknown as Doc;
   /** the element the tap would land on: the preview's Tappable for this one part, rendered */
-  const tappable = (kind: "taskBar" | "button" = "taskBar", patch: Record<string, unknown> = {}) => {
+  const tappable = (kind: "taskBar" | "confirmBox" | "button" = "taskBar", patch: Record<string, unknown> = {}) => {
     hooks.refs = [];
     hooks.cursor = 0;
     hooks.effects = [];
@@ -201,11 +201,41 @@ describe("a task bar's tap belongs to its button", () => {
     /* the component's props are its inputs; the click path and the style are on what it draws */
     return (found.type as (props: Record<string, unknown>) => Element)(found.props);
   };
-  /** 画在部件里面的那颗按钮此刻的状态（融合部件用 PartPressContext 把它带下去）：
-   *  `press` 是那一下点击，`off` 是「置灰并停止响应」关掉了它 */
+  /** 画在部件里面的那几颗按钮此刻的状态（融合部件用 PartPressContext 把它带下去）：
+   *  `press` 是主按钮那一下，`pressSlot` 取某一颗槽位按钮（确认框的「取消」）那一下，
+   *  `off` 是「置灰并停止响应」关掉了它们 */
   const buttonOf = (drawn: Element) => {
     const provider = elements(drawn).find((element) => element.type === "part-press");
-    return (provider?.props.value ?? {}) as { press?: () => void; off?: boolean };
+    return (provider?.props.value ?? {}) as { press?: () => void; pressSlot?: (slot: string) => (() => void) | undefined; off?: boolean };
+  };
+  /** 这一下点击**归属**给谁：把这个部件的 Tappable 画出来，同时记下它那个 runtime —— 调用里面的按钮
+   *  或槽位就落在同一个 runtime 上，于是能读到 `onStep(key, flow, owner)` 收到的那三个参数。 */
+  const tapOwnerOf = (kind: "confirmBox" | "bottomNav" | "taskBar" | "button", id: string, patch: Record<string, unknown> = {}) => {
+    hooks.refs = [];
+    hooks.cursor = 0;
+    hooks.effects = [];
+    const tree = renderScreen(screenElement(false, partDoc(kind, { id, ...patch })));
+    const found = elements(tree).find((element) => typeof element.type === "function" && (element.props.item as { id?: string } | undefined)?.id === id);
+    if (!found) throw new Error("no tappable for the part");
+    const runtime = found.props.states as { onStep: (key: string, flow: unknown, owner: string | null) => string };
+    const spy = vi.spyOn(runtime, "onStep");
+    /* 里面的按钮用的是同一批 ref（见上面的 useRef 桩）：不复位就会拿到上一件测试留下的"刚滚过"标志 */
+    hooks.refs = [];
+    hooks.cursor = 0;
+    hooks.effects = [];
+    const drawn = (found.type as (props: Record<string, unknown>) => Element)(found.props);
+    return {
+      drawn,
+      props: found.props,
+      calls: () => spy.mock.calls as unknown as [string, unknown, string | null][],
+      /** 这一部件在某份"点住了的外观补丁"下画成什么：一份 hidden 就该整块收起来 */
+      render: (pinned: Record<string, unknown>) => {
+        hooks.refs = [];
+        hooks.cursor = 0;
+        hooks.effects = [];
+        return (found.type as (props: Record<string, unknown>) => Element | null)({ ...found.props, states: { ...runtime, pinned } });
+      },
+    };
   };
 
   it("hands it to the button inside, never to the bar around it", () => {
@@ -218,11 +248,31 @@ describe("a task bar's tap belongs to its button", () => {
     expect(buttonOf(bar).off).toBe(false);
   });
 
+  /* 作者这一版的设计：新落下的确认框**两颗都把这一块收起来**（「里面我加了隐藏面板的逻辑」）。
+     这里走的是整条链：点任一颗 → 派发到这一部件自己 → 那一步把 `hidden` 落在这一块上 → 画出来就是
+     "没有这一块"。 */
+  it("comes wired: a fresh confirm box's own two buttons both put it away", () => {
+    const seen = tapOwnerOf("confirmBox", "cb");
+    buttonOf(seen.drawn).press?.();
+    buttonOf(seen.drawn).pressSlot?.("cancel")?.();
+    /* 两台机器各是各的机位（主按钮是这一部件自己、取消是那个槽），归属都是这一块 */
+    expect(seen.calls().map(([key, , owner]) => [key, owner])).toEqual([["cb", "cb"], ["cb:cancel", "cb"]]);
+    /* 两台带着的都是同一步：点一下、隐藏这一块 */
+    for (const [, flow] of seen.calls()) {
+      expect((flow as { steps: { trigger: unknown; do: unknown }[] }).steps.map((s) => [s.trigger, s.do])).toEqual([
+        [{ kind: "tap" }, [{ kind: "look", hidden: true }]],
+      ]);
+    }
+    expect(seen.render({ cb: { hidden: true } })).toBeNull();
+    expect(seen.render({})).not.toBeNull();
+  });
+
   it("still answers a tap anywhere when the part is an ordinary one", () => {
     /* 单一部件里没有"看起来像按钮"的那一块时，整块照旧是点击目标 */
     const card = tappable("button", { action: "goto:next" });
     expect(typeof card.props.onClick).toBe("function");
     expect(buttonOf(card).press).toBeUndefined();
+    expect(buttonOf(card).pressSlot).toBeUndefined();
   });
 
   it("carries no click path at all when the badge is the lock", () => {
@@ -236,5 +286,88 @@ describe("a task bar's tap belongs to its button", () => {
     expect(other.props.onClick).toBeUndefined();
     expect(typeof buttonOf(other).press).toBe("function");
     expect((other.props.style as Record<string, unknown>).pointerEvents).toBeUndefined();
+  });
+
+  /* 确认框：同一个部件里画着**两颗**普通按钮（左取消、右确认）。整块框一样不接这一下，两颗各拿各的
+     那一下 —— 主按钮走 `press`（这一部件自己的状态机 + action），取消走 `pressSlot("cancel")`
+     （`slotFlows.cancel` / `actions.cancel`，见 pickSlot）。 */
+  it("hands the confirm box's two buttons their own taps, never to the frame", () => {
+    const box = tappable("confirmBox");
+    expect(box.props.onClick).toBeUndefined();
+    expect((box.props.style as Record<string, unknown>).cursor).toBe("default");
+    /* 主按钮（确认）那一下 */
+    expect(typeof buttonOf(box).press).toBe("function");
+    /* 取消那颗有它自己那一份 —— 哪怕还没配任何去处：槽位入口不能只看 `actions`（作者常常只配状态机，
+       甚至先什么都不配），少看一样那颗按钮就根本没人接（见 confirm-box.md 里那两个坑之一） */
+    expect(typeof buttonOf(box).pressSlot?.("cancel")).toBe("function");
+    expect(buttonOf(box).off).toBe(false);
+  });
+
+  it("gives the cancel slot its own machine, wherever the author put it", () => {
+    const step = { looks: [{ id: "s1", hidden: true }], steps: [{ id: "st", from: ":start", to: "s1", trigger: { kind: "tap" }, do: [] }] };
+    /* 只配了状态机（「点击后变化 → 隐藏」） */
+    const byFlow = tappable("confirmBox", { slotFlows: { cancel: step } });
+    expect(typeof buttonOf(byFlow).pressSlot?.("cancel")).toBe("function");
+    /* 只配了去处 */
+    const byAction = tappable("confirmBox", { actions: { cancel: { to: "next", transition: "none" } } });
+    expect(typeof buttonOf(byAction).pressSlot?.("cancel")).toBe("function");
+    /* 两颗各管各的：主按钮那一份和取消那一份不是同一个 */
+    expect(buttonOf(byFlow).press).not.toBe(buttonOf(byFlow).pressSlot?.("cancel"));
+  });
+
+  /* 作者报的那一件：两颗按钮都配「点击后变化 → 改变属性 → 隐藏」，确认生效、取消却不生效。
+     根因是槽位那一步走的是 `pickSlot`，它把这台机器的"归属"传成了 null，于是那一步里那份外观补丁
+     没有落点（见 Preview 的 runRuleAction：`const target = a.target ?? owner`）。融合部件里画在自己
+     里面的那颗按钮**不是画布上独立的部件**，它的"自己"就是这一块 —— 归属必须是这一部件自己，和主
+     按钮那一下同一处（见 lib/tokens 的 slotLookOwner）。 */
+  it("latches a slot step onto the part, exactly as the main button's own step does", () => {
+    const hide = { looks: [], steps: [{ id: "st", from: ":start", to: ":start", trigger: { kind: "tap" }, do: [{ kind: "look", hidden: true }] }] };
+    const seen = tapOwnerOf("confirmBox", "tb", { flow: hide, slotFlows: { cancel: hide } });
+    const drawn = seen.drawn;
+    /* 主按钮（确认）那一下：归属是这一部件自己 */
+    buttonOf(drawn).press?.();
+    expect(seen.calls()).toEqual([["tb", expect.anything(), "tb"]]);
+    /* 取消那一下：同样是这一部件自己 —— 不是 null，不然那份"隐藏"落不下去 */
+    buttonOf(drawn).pressSlot?.("cancel")?.();
+    expect(seen.calls()[1]).toEqual(["tb:cancel", expect.anything(), "tb"]);
+    /* 那份补丁落到这一块上时，画出来就是"没有这一块"（Tappable 的 `own?.hidden || pin?.hidden`）——
+       作者看到的那条链于是完整了：取消那一下 → onStep('tb:cancel', …, 'tb') → pinned.tb =
+       {hidden: true} → 整块收起来。 */
+    expect(seen.render({})).not.toBeNull();
+    expect(seen.render({ tb: { hidden: true } })).toBeNull();
+  });
+
+  it("leaves a bar's cell unowned, so its own patch can never cover the whole bar", () => {
+    /* 栏／标签页的每一格是一个**落点**：它那份"改变属性"说的是那一格，所以归属照旧是 null */
+    const tap = { looks: [], steps: [{ id: "st", from: ":start", to: ":start", trigger: { kind: "tap" }, do: [{ kind: "look", hidden: true }] }] };
+    const seen = tapOwnerOf("bottomNav", "nav", { slotFlows: { "tab:0": tap } });
+    (seen.props.onSlot as (slot: string) => void)("tab:0");
+    expect(seen.calls()).toEqual([["nav:tab:0", expect.anything(), null]]);
+  });
+
+  /* 时间到的那一步走的是另一条路（Screen 的定时循环），归属也得是同一处：一个确认框"三秒后自己收
+     起来"不该因为写在「取消」那颗上就落空。 */
+  it("gives a slot's timed step the same owner as its tap", () => {
+    const after = {
+      looks: [],
+      steps: [{ id: "st", from: ":start", to: ":start", trigger: { kind: "after", seconds: 0 }, do: [{ kind: "look", hidden: true }] }],
+    };
+    hooks.refs = [];
+    hooks.cursor = 0;
+    hooks.effects = [];
+    const tree = renderScreen(screenElement(false, partDoc("confirmBox", { slotFlows: { cancel: after } })));
+    const screenEffects = hooks.effects.slice();
+    const found = elements(tree).find((element) => typeof element.type === "function" && (element.props.item as { id?: string } | undefined)?.id === "tb");
+    if (!found) throw new Error("no tappable for the part");
+    const runtime = found.props.states as { take: (key: string, owner: string | null, step: unknown) => void };
+    const taken = vi.spyOn(runtime, "take");
+    /* 这一屏自己的 effect 也在这批里（其中一条要看焦点），所以给它一个最小 document */
+    vi.stubGlobal("document", { activeElement: null, body: null, querySelector: () => null });
+    try {
+      screenEffects.forEach((effect) => effect());
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(taken.mock.calls.some(([key, owner]) => key === "tb:cancel" && owner === "tb")).toBe(true);
   });
 });

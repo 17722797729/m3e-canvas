@@ -14,8 +14,8 @@ vi.mock("./Loading", () => ({ CircularProgress: "circle", LinearProgress: "bar",
 
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { JOYSTICK_SIZE, KIND_ORDER, KIND_SPEC, PALETTES, TASK_BAR_ICON, TASK_BAR_VALUE, VARIANTS, assetPillTextWidth, assetPillWidth, baseRadii, buttonMetrics, buttonWidth, gridCheckZ, layerOf, makeItem, setGlobalShape, sizeOf, taskBarMetrics, uniformRadii, type Item, type Variant } from "../lib/tokens";
-import { BadgeContent, GridCellMarks, M3Static, PartPressContext } from "./M3Node";
+import { JOYSTICK_SIZE, KIND_ORDER, KIND_SPEC, PALETTES, TASK_BAR_ICON, TASK_BAR_VALUE, VARIANTS, assetPillTextWidth, assetPillWidth, baseRadii, buttonMetrics, buttonWidth, confirmBoxMetrics, gridCheckZ, layerOf, makeItem, setGlobalShape, sizeOf, taskBarMetrics, uniformRadii, type Item, type Variant } from "../lib/tokens";
+import { BadgeContent, GridCellMarks, M3Static, PartPressContext, swallowsInnerTap } from "./M3Node";
 
 /** What a still drawing shows: the same geometry the canvas, an export and a market thumbnail share. */
 const draw = (it: Item) => renderToStaticMarkup(M3Static({ item: it, palette: PALETTES[0] }));
@@ -410,6 +410,159 @@ describe("a task bar as drawn", () => {
     /* 一个空的标题是唯一一个让条变矮的东西 —— 那是另一个明确的数（80），不是魔法常量 */
     expect(drawnH(draw(bar({ size: 388 })))).toBe(112);
     expect(sizeOf(bar(), {}).h).toBe(KIND_SPEC.taskBar.h);
+  });
+});
+
+/* 确认框是作者在「上传屏幕2」里手摆的那一版原稿（docs/reference-prototypes/confirm-box-component.json）
+ * 化成的一个部件：标题、正文和两颗普通按钮全在它的属性里，一个孩子都没有。两块看起来像按钮的地方
+ * 交给按钮自己的 ButtonContent 画（底、圆角、影子取按钮种类自己的那两样），正文档在框自己里，量它的
+ * 是 confirmBoxMetrics —— 包围盒和画法同一个助手，所以"盒子大小"和"画出来的样子"不会各说各话。
+ * 整块框不吃点击，只有那两颗按钮吃（见 taps 那一节与 Preview 的 PartPressContext）。 */
+describe("a confirm box as drawn", () => {
+  const cb = (patch: Partial<Item> = {}) =>
+    ({
+      ...makeItem("confirmBox"),
+      id: "cb",
+      label: "温馨提示",
+      supporting: "确认当前操作？",
+      label2: "确认",
+      label3: "取消",
+      ...patch,
+    }) as Item;
+  const outer = (out: string) => out.slice(0, out.indexOf(">"));
+  const drawnW = (out: string) => Number(outer(out).match(/width:(\d+)px/)![1]);
+  const drawnH = (out: string) => Number(outer(out).match(/height:(\d+)px/)![1]);
+  const count = (out: string, needle: RegExp) => out.match(needle)?.length ?? 0;
+  /** 一份 PartPressContext：预览里 Tappable 就是照这个形状把两颗按钮的那一下递下来的 */
+  const drawn = (value: { press?: () => void; pressSlot?: (slot: string) => (() => void) | undefined; off?: boolean; preview?: boolean }) =>
+    renderToStaticMarkup(createElement(PartPressContext.Provider, { value }, M3Static({ item: cb(), palette: PALETTES[0] })));
+
+  it("draws one part — title, body and two buttons — with no children at all", () => {
+    const out = draw(cb());
+    /* 一个部件：整张图里只有它自己一个 data-part-id，一个孩子都没有 */
+    expect(count(out, /data-part-id=/g)).toBe(1);
+    expect(out).toContain('data-part-id="cb"');
+    expect(out).toContain("温馨提示");
+    expect(out).toContain("确认当前操作？");
+    /* 作者原稿那个框：320×200，圆的 28 */
+    expect(drawnW(out)).toBe(320);
+    expect(drawnH(out)).toBe(200);
+    expect(drawnH(out)).toBe(sizeOf(cb(), {}).h);
+    expect(outer(out)).toContain("border-top-left-radius:28px");
+    /* 上留白 14、左右 20、下留白 21 —— confirmBoxMetrics 那几块加起来正好 200 */
+    expect(out).toContain("padding:14px 20px 21px");
+    /* 标题：20dp、**居中**、一行 24（再长也省略号，不把框撑高） */
+    expect(out).toContain("height:24px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;text-align:center;font-size:20px");
+    expect(out).toContain("text-overflow:ellipsis");
+    /* 正文带：280×72（320 − 2×20），正文 18dp 左对齐，带内左 25、上 10 */
+    expect(out).toContain('data-confirm-band=""');
+    expect(out).toContain("margin-top:10px;width:280px;height:72px;flex:0 0 auto;box-sizing:border-box;padding-top:10px;padding-left:25px");
+    expect(out).toContain("font-size:18px;line-height:26px");
+    /* 两颗**真**按钮，不是画成按钮样子的 span：浏览器因此把点击、焦点、键盘都在它们身上交待清楚 */
+    expect(count(out, /<button type="button"/g)).toBe(2);
+    /* 给浏览器探针的稳定标记（纯新增，不参与样式和行为）：正文带一个、每颗按钮一个 */
+    expect(count(out, /data-confirm-band=""/g)).toBe(1);
+    expect(count(out, /data-confirm-button=/g)).toBe(2);
+  });
+
+  it("stands the two buttons where the author's draft had them: cancel left, confirm right", () => {
+    const out = draw(cb());
+    /* 左「取消」右「确认」：和编辑器自己那个确认框同一个顺序（ui.tsx 的 ConfirmDialog） */
+    const cancelAt = out.indexOf('data-confirm-button="cancel"');
+    const mainAt = out.indexOf('data-confirm-button="main"');
+    expect(cancelAt).toBeGreaterThan(-1);
+    expect(mainAt).toBeGreaterThan(cancelAt);
+    /* 两颗的字各画各的（ButtonContent 画的是按钮自己的那一份） */
+    expect(out.slice(cancelAt, mainAt)).toContain(">取消<");
+    expect(out.slice(mainAt)).toContain(">确认<");
+    /* 一颗 104×49 的胶囊，半高的圆角 */
+    for (const at of [cancelAt, mainAt]) {
+      const tag = out.slice(at, out.indexOf(">", at));
+      expect(tag).toContain("width:104px;height:49px;border-radius:24.5px");
+      /* 浏览器给按钮的那几样都清掉了（和任务信息条那颗按钮同一个理由） */
+      expect(tag).toContain("padding:0;border:none;font:inherit;outline:none;display:block");
+    }
+    /* 两颗各占一头：左右各留 20dp，中间那道缝 320 − 2×20 − 2×104 = 72 */
+    expect(out).toContain("height:49px;flex:0 0 auto;display:flex;align-items:center;justify-content:space-between");
+    expect(320 - 2 * 20 - 2 * 104).toBe(72);
+    /* 整张图里就这两颗按钮：标题和正文都不是点击目标 */
+    expect(count(out, /<button/g)).toBe(2);
+  });
+
+  it("draws both buttons dead until someone hands them the tap", () => {
+    /* 没有人给处理器时（编辑器画布、导出图、市场缩略图）两颗都不摆出"能点"的样子，也没有按下的
+       transform —— 编辑器里按住它们是从按钮上拖走这一块的手势 */
+    const out = draw(cb());
+    expect(count(out, /cursor:default/g)).toBe(2);
+    expect(out).not.toContain("transform:scale");
+    expect(out).not.toContain("transition:transform");
+    expect(out).not.toContain("aria-disabled");
+  });
+
+  it("gives both buttons the same press, whichever of them has a destination", () => {
+    /* 预览里（PartPressContext 出现，`preview` 为真）两颗**一模一样**：同样的 pointer、同样的按下
+       手感 —— 不看它有没有配去处（作者：「取消和确认是完全一样的普通按钮，跟名称没有关系」）。主按钮
+       那一下走 `press`，取消走 `pressSlot("cancel")`。 */
+    const preview = drawn({ press: () => {}, pressSlot: () => () => {}, preview: true });
+    expect(count(preview, /cursor:pointer/g)).toBe(2);
+    expect(count(preview, /transition:transform 120ms/g)).toBe(2);
+    /* 只给了主按钮那一下时，取消照旧有它自己那一份手感（它走的是槽位那一份，和主按钮无关） */
+    const onlyMain = drawn({ press: () => {}, preview: true });
+    expect(count(onlyMain, /cursor:pointer/g)).toBe(2);
+  });
+
+  it("greys the two buttons, not the frame, when the state switches them off", () => {
+    const off = drawn({ off: true, preview: true });
+    /* 两颗各灰一次 —— 框自己、标题和正文带一点都不灰（作者：「是针对按钮，而不是整个组件」） */
+    expect(count(off, /grayscale\(1\)/g)).toBe(2);
+    expect(count(off, /opacity:0.55/g)).toBe(2);
+    expect(count(off, /data-confirm-button-off=""/g)).toBe(2);
+    /* 每颗按钮自己也说清了它是不可用的 */
+    expect(count(off, /aria-disabled="true"/g)).toBe(2);
+    const frame = off.slice(0, off.indexOf('data-confirm-band=""'));
+    expect(frame).not.toContain("grayscale(1)");
+    expect(frame).not.toContain("opacity:0.55");
+    /* 没关的时候一丝灰都没有 */
+    const on = drawn({ press: () => {}, preview: true });
+    expect(count(on, /grayscale\(1\)/g)).toBe(0);
+    expect(on).not.toContain("data-confirm-button-off");
+  });
+
+  it("grows the band and the frame with the body's wrapped lines, instead of clipping them", () => {
+    /* 29 个全角字折成三行：带从 72 长到 98，框从 200 长到 226（14+24+10+98+10+49+21） */
+    const long = draw(cb({ supporting: "确".repeat(29) }));
+    expect(drawnH(long)).toBe(226);
+    expect(drawnH(long)).toBe(sizeOf(cb({ supporting: "确".repeat(29) }), {}).h);
+    expect(long).toContain("height:98px;flex:0 0 auto;box-sizing:border-box;padding-top:10px;padding-left:25px");
+    /* 两行以内还是那条 72 的下限：原稿那一档一点没变 */
+    expect(drawnH(draw(cb({ supporting: "确".repeat(28) })))).toBe(200);
+    /* 空标题、空正文各有自己的数（166 / 118） */
+    const noTitle = draw(cb({ label: "" }));
+    expect(drawnH(noTitle)).toBe(166);
+    expect(noTitle).not.toContain("justify-content:center;text-align:center");
+    const noBody = draw(cb({ supporting: "" }));
+    expect(drawnH(noBody)).toBe(118);
+    expect(noBody).not.toContain("data-confirm-band");
+  });
+
+  it("keeps the box's own numbers whatever the buttons say, and honours a pinned height", () => {
+    for (const patch of [
+      { label2: "" },
+      { label3: "" },
+      { label2: "确定" },
+      { label3: "再想想" },
+      { label2: "Confirm and continue", label3: "Cancel everything" },
+    ] as unknown as Partial<Item>[]) {
+      const out = draw(cb(patch));
+      expect(drawnW(out), JSON.stringify(patch)).toBe(320);
+      expect(drawnH(out), JSON.stringify(patch)).toBe(200);
+    }
+    /* 作者钉的高说了算，宽度也是 */
+    expect(drawnW(draw(cb({ size: 388 })))).toBe(388);
+    expect(drawnH(draw(cb({ size2: 240 })))).toBe(240);
+    /* 更宽的框：带跟着宽（388 − 2×20 = 348），盒子的高还是内容算出来的那个 */
+    expect(draw(cb({ size: 388 }))).toContain("width:348px;height:72px");
+    expect(confirmBoxMetrics(cb()).h).toBe(KIND_SPEC.confirmBox.h);
   });
 });
 

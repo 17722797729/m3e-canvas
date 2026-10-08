@@ -1,4 +1,4 @@
-import { BACK_TARGET, KIND_SPEC, RULE_FIELDS, START_LOOK, actionSlotsOf, actionsOf, frameRect, groupBounds, isOverlayFrame, isWideRail, lookItem, wordsOf, overlayLevelOfFrame, subtreeOf, type Doc, type Group, type Item, type ItemState, type OverlayLevel, type PartFlow, type PartStep, type RuleAction, type RuleField, type RulePatch, type StateEffect, type ValueOp } from "./tokens";
+import { BACK_TARGET, KIND_SPEC, RULE_FIELDS, START_LOOK, actionSlotsOf, actionsOf, frameRect, groupBounds, isOverlayFrame, isWideRail, lookItem, wordsOf, tapLivesInside, overlayLevelOfFrame, subtreeOf, type Doc, type Group, type Item, type ItemState, type OverlayLevel, type PartFlow, type PartStep, type RuleAction, type RuleField, type RulePatch, type StateEffect, type ValueOp } from "./tokens";
 import { KIND_TEXT, overlayLevelText, t, type Lang } from "./i18n";
 
 /** the level's name in the UI language, for the diagram's node captions */
@@ -457,8 +457,9 @@ function lookChanges(it: Item, flow: PartFlow | undefined, id: string, lang: Lan
   if (!look) return "";
   const w = FLOW_TEXT[lang].lookChange;
   const out: string[] = [];
-  /* 任务信息条改的是按钮上那两个字，说的是"按钮文字"，不是"文字"（见 wordsKeyOf） */
-  if (look.label !== undefined) out.push((it.kind === "taskBar" ? w.buttonWords : w.label)(look.label));
+  /* 融合部件（任务信息条、确认框）改的是那颗主按钮上那两个字，说的是"按钮文字"，不是"文字"
+     （见 wordsKeyOf / tapLivesInside） */
+  if (look.label !== undefined) out.push((tapLivesInside(it.kind) ? w.buttonWords : w.label)(look.label));
   if (look.icon !== undefined) out.push(w.icon(look.icon ?? "—"));
   if (look.color !== undefined) out.push(w.color(look.color));
   if (look.variant !== undefined) out.push(w.variant(look.variant));

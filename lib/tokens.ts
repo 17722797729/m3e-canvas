@@ -760,6 +760,10 @@ export type Kind =
   | "assetPill"
   /** 任务信息条：任务的信息、两个奖励格和一个「领取」按钮，全在一个部件里（见 taskBarMetrics） */
   | "taskBar"
+  /** 确认框：标题、正文和两颗按钮全在一个部件里（见 confirmBoxMetrics）。这是第二个**融合部件**：
+   *  它和任务信息条一样没有孩子，看起来像按钮的那两块画在自己里面，点击归它们
+   *  （见 tapLivesInside / PartPressContext），整块框不吃点击。 */
+  | "confirmBox"
   | "toolbar"
   | "tabs"
   | "sideTabs"
@@ -862,6 +866,9 @@ export type KindSpec = {
   /** the words a fresh part's own second button starts with, where a kind has one (the task bar's
    *  「领取」, a gacha's 10-draw button — see `Item.label2`) */
   defLabel2?: string;
+  /** the words a fresh part's own **third** button starts with: one kind has one — the confirm box's
+   *  取消 (see `Item.label3`) */
+  defLabel3?: string;
   /** the words a fresh part's corner marks start with (see `Item.badgeText` / `Item.badge2Text`) */
   defBadgeText?: string;
   defBadge2Text?: string;
@@ -965,6 +972,22 @@ export const assetPillMetrics = (it: Partial<Item>) => {
 };
 
 /**
+ * 一个字大约占几个 em —— 全角（汉字、假名、谚文）算 1、大写和数字 0.6〜0.68、小写 0.52、空格标点更窄。
+ *
+ * 这是**估算**，不是测量：资产框量不到宽度时用它兜底（见 assetPillTextWidth），确认框用它算正文折成
+ * 几行（见 wrapTextLines）。两处共用同一支笔，所以"盒子多高"和"字画了几行"不会各说各话。
+ */
+export const glyphEm = (ch: string): number => {
+  const code = ch.codePointAt(0) ?? 0;
+  if (ch === " ") return 0.28;
+  if (code >= 0x2e80) return 1; /* 汉字、假名、谚文、全角符号 */
+  if (ch >= "0" && ch <= "9") return 0.6;
+  if (ch >= "A" && ch <= "Z") return 0.68;
+  if (ch >= "a" && ch <= "z") return 0.52;
+  return 0.35; /* 小数点、逗号、币种符号…… */
+};
+
+/**
  * 资产框里文字有多宽的**估算** —— 不是测量，而是量不到时的兜底（服务端渲染、静态导出、首帧、测试）。
  * 一个字宽约一个字号：全角（汉字、假名、谚文）算 1em，大写和数字 0.6〜0.68em，小写 0.52em，空格标点
  * 更窄。空标签就是 0（不占位置）。
@@ -975,15 +998,7 @@ export const assetPillMetrics = (it: Partial<Item>) => {
  */
 export const assetPillTextWidth = (text: string, font: number): number => {
   let em = 0;
-  for (const ch of text) {
-    const code = ch.codePointAt(0) ?? 0;
-    if (ch === " ") em += 0.28;
-    else if (code >= 0x2e80) em += 1; /* 汉字、假名、谚文、全角符号 */
-    else if (ch >= "0" && ch <= "9") em += 0.6;
-    else if (ch >= "A" && ch <= "Z") em += 0.68;
-    else if (ch >= "a" && ch <= "z") em += 0.52;
-    else em += 0.35; /* 小数点、逗号、币种符号…… */
-  }
+  for (const ch of text) em += glyphEm(ch);
   return Math.round(em * font);
 };
 
@@ -1183,7 +1198,176 @@ export const taskBarButtonBadgeOn = (it: Partial<Item>): boolean =>
 export const taskBarButtonLocked = (it: Partial<Item>): boolean =>
   it.kind === "taskBar" && taskBarButtonBadgeIcon(it) === TASK_BAR_LOCK_ICON;
 
-export const tapLivesInside = (kind: Kind): boolean => kind === "taskBar";
+/**
+ * 哪些部件是**融合部件**：看起来像按钮的那一块画在部件**里面**，点击归那一块，整块部件不接这一下
+ *
+ * 任务信息条（右端那颗「领取」按钮）和确认框（那两颗普通按钮）都是。判定只有这一处：预览里
+ * `Tappable` 据此不做点击目标（`innerTap`）、把「置灰并停止响应」的范围收在里面的按钮上
+ * （`disablesWholePart`）、并把槽位那几台机器并进这一块（`resolveSlotStates` 那一路）。
+ */
+export const tapLivesInside = (kind: Kind): boolean => kind === "taskBar" || kind === "confirmBox";
+
+/* ---------- the confirm box ---------- */
+
+/* 确认框的每一块占多大 —— 标题那一行、正文带和底下那两颗按钮。包围盒（sizeOf）和绘制（M3Node 的
+ * ConfirmBoxContent）都从这里取，所以"盒子大小"和"画出来的样子"不会各说各话。
+ *
+ * 这些数是按作者在「上传屏幕2」里手摆的那一版原稿量出来的
+ * （docs/reference-prototypes/confirm-box-component.json，交接说明见同目录的 confirm-box.md）：
+ *   box 320×200、圆角 28、surfaceContainerHigh
+ *   14 的上留白 → 20dp 的标题（一行 24）→ 10 的缝 → 正文带 72（y=48）→ 10 的缝 → 两颗 104×49 的
+ *   按钮（y=130）→ 21 的下留白
+ * 加起来正好 200：14 + 24 + 10 + 72 + 10 + 49 + 21。标题空着时那一行和它的缝一起不占；正文空着时带和
+ * 它后面那道缝一起不占 —— 所以"没标题"和"没正文"也都是明确的数（见 confirmBoxMetrics）。
+ */
+
+/** 框的默认宽度（作者原稿的 320）；高度跟着内容走 */
+export const CONFIRM_BOX_W = 320;
+/** 上留白 */
+export const CONFIRM_BOX_PAD_TOP = 14;
+/** 下留白 */
+export const CONFIRM_BOX_PAD_BOTTOM = 21;
+/** 左右留白：底下那两颗按钮和正文带都从这里起步（原稿两颗按钮就是左右各 20、对称） */
+export const CONFIRM_BOX_PAD_X = 20;
+/** 标题的字号，和一行占多高（20dp 的字，一行 24）—— 标题**居中**，和对话框一样 */
+export const CONFIRM_BOX_TITLE_FONT = 20;
+export const CONFIRM_BOX_TITLE_LINE = 24;
+/** 标题→正文带、正文带→按钮之间留的缝 */
+export const CONFIRM_BOX_GAP = 10;
+/** 正文的字号，以及它一行占多高：18dp 的字，一行 26（原稿那条 72 高的带正好装两行） */
+export const CONFIRM_BOX_BODY_FONT = 18;
+export const CONFIRM_BOX_BODY_LINE = 26;
+/** 正文在带里**左对齐**：带内左 25、上 10。原稿的正文落在框内 45 的地方（它的带在 x=26、正文在带内
+ *  x=19）；融合后带跟着左右留白（20）走，带内 25 就还是那个 45 —— 所以这是个位置，不是"带内再留白"。 */
+export const CONFIRM_BOX_BODY_PAD_LEFT = 25;
+export const CONFIRM_BOX_BODY_PAD_TOP = 10;
+export const CONFIRM_BOX_BODY_PAD_BOTTOM = 10;
+/** 正文带的高：原稿是 72，正文折行折到两行以上时带（和框）跟着长，不裁字 —— 72 正好是"两行 + 上下
+ *  各 10"（2 × 26 + 20），所以它是个**下限**，不是一个固定的数（见 confirmBoxMetrics）。 */
+export const CONFIRM_BOX_BODY_MIN_H = 72;
+/** 底下那两颗按钮：各 104×49。原稿是手摆的（左 20 / 右 27，差 7dp），融合后**左右各 20**、对称，
+ *  中间那道缝因此在 320 宽时是 72。两颗都是普通按钮，长得一模一样，只有各自的词和去处不同。 */
+export const CONFIRM_BOX_BTN_W = 104;
+export const CONFIRM_BOX_BTN_H = 49;
+/** 框自己的圆角（作者原稿的 28） */
+export const CONFIRM_BOX_RADIUS = 28;
+/** 框自己的底：原稿那个框画出来的那一层。正文带的底和它**同色**（原稿就是这样画的），所以带在框上
+ *  其实看不见 —— 它只是正文的排版盒子，量折行用的（见 confirmBoxMetrics）。 */
+export const CONFIRM_BOX_FILL: ColorToken = "surfaceContainerHigh";
+/** 一个刚放下的确认框画出来多高：标题和正文都在的那一档（见 confirmBoxMetrics）。没标题是 166、
+ *  没正文是 118、两个都没有是 84 —— 都是同一道式子算出来的。 */
+export const CONFIRM_BOX_H =
+  CONFIRM_BOX_PAD_TOP + CONFIRM_BOX_TITLE_LINE + CONFIRM_BOX_GAP + CONFIRM_BOX_BODY_MIN_H + CONFIRM_BOX_GAP + CONFIRM_BOX_BTN_H + CONFIRM_BOX_PAD_BOTTOM;
+
+/** 确认框里**主按钮**（确认）的槽位键：空键，说的是"这一部件自己的状态机与动作"（`flow` / `action`），
+ *  和栏上的"整条自己的那一下"同一个约定。 */
+export const CONFIRM_BOX_MAIN = "";
+/** 确认框里**取消**按钮的槽位键：它自己那台机器与它自己那个动作落在 `slotFlows.cancel` /
+ *  `actions.cancel`（见 Preview 的 pickSlot）。 */
+export const CONFIRM_BOX_CANCEL_SLOT = "cancel";
+
+/**
+ * 一段文字按 `width` 折成几行 —— 用 glyphEm 同一支笔估宽，再贪心地断行。
+ *
+ * 确认框的正文折行靠它：汉字一个字一个字地断，和浏览器画出来的一样；西文在空格处断，估出来的行数
+ * 偶尔会和浏览器差一行，所以带给了 72 这个下限（两行），小差别看不出来。
+ *
+ * 绘制和包围盒走的是同一个函数：不然"盒子多高"和"字画了几行"会各说各话，最后就是裁字。
+ */
+export function wrapTextLines(text: string, font: number, width: number): number {
+  if (!text) return 0;
+  const limit = Math.max(1, width);
+  let lines = 1;
+  let used = 0;
+  for (const ch of text) {
+    if (ch === "\n") {
+      lines += 1;
+      used = 0;
+      continue;
+    }
+    const w = glyphEm(ch) * font;
+    if (used > 0 && used + w > limit) {
+      lines += 1;
+      used = w;
+    } else {
+      used += w;
+    }
+  }
+  return lines;
+}
+
+/**
+ * 确认框有多高，以及里面每一块画在哪 —— 绘制和包围盒共用的一处（sizeOf 的 confirmBox 一档）。
+ *
+ * 高 = 上留白 + 标题那一行 + 缝 + 正文带 + 缝 + 按钮那一行 + 下留白，一行都不少；标题空着时那一行和
+ * 它的缝一起不占地方，正文空着时带和它后面那道缝一起不占地方（和任务信息条同一个规矩）。
+ *
+ * 正文带是左右留白量出来的那一块（框宽减去左右各 20），正文在带里左对齐（带内左 25、上 10）；带的
+ * 高取 CONFIRM_BOX_BODY_MIN_H（两行的量），折行折过头就跟着长。
+ */
+export const confirmBoxMetrics = (it: Partial<Item>) => {
+  const title = (it.label ?? "").trim();
+  const body = (it.supporting ?? "").trim();
+  const titleLine = title ? CONFIRM_BOX_TITLE_LINE : 0;
+  const gap = CONFIRM_BOX_GAP;
+  /* 带就是左右留白量出来的那一块：框宽变了，带跟着变（原稿 320 宽时它是 280） */
+  const bandW = Math.max(1, (it.size ?? CONFIRM_BOX_W) - CONFIRM_BOX_PAD_X * 2);
+  /* 正文能占的宽度：带内左 25 之后剩下的那一截 */
+  const bodyW = Math.max(1, bandW - CONFIRM_BOX_BODY_PAD_LEFT);
+  const bodyLines = wrapTextLines(body, CONFIRM_BOX_BODY_FONT, bodyW);
+  const bandH = bodyLines
+    ? Math.max(CONFIRM_BOX_BODY_MIN_H, CONFIRM_BOX_BODY_PAD_TOP + bodyLines * CONFIRM_BOX_BODY_LINE + CONFIRM_BOX_BODY_PAD_BOTTOM)
+    : 0;
+  return {
+    padTop: CONFIRM_BOX_PAD_TOP,
+    padBottom: CONFIRM_BOX_PAD_BOTTOM,
+    padX: CONFIRM_BOX_PAD_X,
+    titleFont: CONFIRM_BOX_TITLE_FONT,
+    titleLine,
+    gap,
+    /** 正文带：宽是框宽减去左右留白；高是"两行"的下限（详见函数头） */
+    band: { w: bandW, h: bandH },
+    bodyFont: CONFIRM_BOX_BODY_FONT,
+    bodyLine: CONFIRM_BOX_BODY_LINE,
+    bodyPadLeft: CONFIRM_BOX_BODY_PAD_LEFT,
+    bodyPadTop: CONFIRM_BOX_BODY_PAD_TOP,
+    bodyLines,
+    /** 两颗按钮画出来多大（各 104×49） */
+    button: { w: CONFIRM_BOX_BTN_W, h: CONFIRM_BOX_BTN_H },
+    /** 上留白 + 标题 + 缝 + 带 + 缝 + 按钮 + 下留白：空的那几块连缝一起不占 */
+    h:
+      CONFIRM_BOX_PAD_TOP +
+      titleLine +
+      (titleLine ? gap : 0) +
+      bandH +
+      (bandH ? gap : 0) +
+      CONFIRM_BOX_BTN_H +
+      CONFIRM_BOX_PAD_BOTTOM,
+  };
+};
+
+/**
+ * 确认框那两颗按钮各是谁、摆在哪、字在哪个字段上
+ *
+ * 左边「取消」、右边「确认」—— 顺序照着编辑器自己那个确认框（components/ui.tsx 的 ConfirmDialog：
+ * 取消在左、确认在右）。作者原稿那两颗是普通按钮、没有名字，所以哪一颗在左由这一处定。
+ *
+ * 两颗的机制**一模一样**（作者：「取消和确认是完全一样的普通按钮，跟名称没有关系」）：点下去都是
+ * "那颗按钮自己的状态机 → 那颗按钮自己的动作"，各自独立配置。唯一的差别是键 —— 确认（主按钮）用
+ * 空键、走这一部件自己的 `flow` / `action`；取消用 `cancel` 槽、走 `slotFlows.cancel` /
+ * `actions.cancel`（见 CONFIRM_BOX_MAIN / CONFIRM_BOX_CANCEL_SLOT）。
+ */
+export const CONFIRM_BOX_BUTTONS: { slot: string; field: "label2" | "label3"; where: "left" | "right" }[] = [
+  { slot: CONFIRM_BOX_CANCEL_SLOT, field: "label3", where: "left" },
+  { slot: CONFIRM_BOX_MAIN, field: "label2", where: "right" },
+];
+
+/** 确认框里一颗按钮上的字：主按钮（确认）是 `label2`，取消是 `label3`（见 CONFIRM_BOX_BUTTONS） */
+export const confirmBoxButtonWords = (it: Partial<Item>, slot: string): string =>
+  slot === CONFIRM_BOX_CANCEL_SLOT ? (it.label3 ?? "").trim() : (it.label2 ?? "").trim();
+
+/** 确认框里**主按钮**（确认）上的字：一次"改文字"的外观补丁落在它身上（见 wordsOf） */
+export const confirmBoxMainWords = (it: Partial<Item>): string => (it.label2 ?? "").trim();
 
 /** The count a value stands for: whole, never negative, never past the ceiling — the one place that
  *  policy lives, so the slider, the formatter and the document check all agree. */
@@ -1205,7 +1389,7 @@ export const LEGACY_KINDS: Kind[] = ["sliderInput", "moneyTree", "eggSmash"];
  *  they existed is still a document: the shape check accepts it (see project.ts) and the reader leaves
  *  those parts out, along with whatever they held, so nothing an author drew throws their canvas away.
  *  Kept by name rather than by `Kind`, because the union no longer has them. */
-export const REMOVED_KINDS: string[] = ["fabMenu", "confirmBox"];
+export const REMOVED_KINDS: string[] = ["fabMenu"];
 export const isRemovedKind = (it: { kind?: unknown } | null | undefined): boolean =>
   !!it && typeof it.kind === "string" && REMOVED_KINDS.includes(it.kind);
 
@@ -1589,6 +1773,35 @@ export const KIND_SPEC: Record<Kind, KindSpec> = {
     defLabel: "確認",
     defIcon: "info",
     defSupporting: "この操作を実行しますか？",
+  },
+  confirmBox: {
+    size: { min: SIZE_MIN, max: PHONE_W, step: 4, icon: "width", presets: [CONFIRM_BOX_W, CONTENT_W] },
+    size2: { min: SIZE_MIN, max: PHONE_H, step: 4, icon: "height", presets: [CONFIRM_BOX_H, 166] },
+    label: "Confirm box",
+    noun: "確認ボックス",
+    /* 确认框：标题、正文和两颗普通按钮全收在一个部件里 —— 像功能按钮那样"一个部件、其余是属性"，而不是
+       一个框加三个孩子（作者要求"融合成单组件"，见 docs/reference-prototypes/confirm-box.md）。宽度是
+       作者的（默认 320），高度跟着内容走（见 confirmBoxMetrics）。 */
+    category: "containment",
+    paletteIcon: "fact_check",
+    w: CONFIRM_BOX_W,
+    h: CONFIRM_BOX_H,
+    radius: CONFIRM_BOX_RADIUS,
+    /* 框的样子是它的 fill：那条正文带和它同色（于是在框上看不见，见 CONFIRM_BOX_FILL），两颗按钮画的
+       是按钮自己的 filled 那一套 —— 没有"整块换一套样式"这回事，和任务信息条、物品格同一条规矩。 */
+    hasVariant: false,
+    hasLabel: true,
+    hasSupporting: true,
+    /* 框上没有图标：作者原稿里就没有，也没有哪个字段是画图标用的 */
+    hasIcon: false,
+    hasFill: true,
+    defLabel: "お知らせ",
+    defSupporting: "この操作を実行しますか？",
+    defLabel2: "確認",
+    /* 取消按钮的字（见 Item.label3）：左边那颗，和确认一样是普通按钮 */
+    defLabel3: "キャンセル",
+    defIcon: null,
+    defSize: CONFIRM_BOX_W,
   },
   snackbar: {
 
@@ -2297,6 +2510,8 @@ export const KIND_ORDER: Kind[] = [
   "itemCell",
   "assetPill",
   "dialog",
+  /* 确认框挨着「对话框」：都是"问一句"的那一类（见 docs/reference-prototypes/confirm-box.md） */
+  "confirmBox",
   "snackbar",
   "textField",
   "select",
@@ -2384,6 +2599,10 @@ export type Item = {
   checked?: boolean;
   /** the words of a second button, where a part offers two ways to draw (ten at once) */
   label2?: string;
+  /** The words of a **third** button. One kind asks for it: the confirm box (「确认框」), whose two
+   *  ordinary buttons are `label2` (确认) and `label3` (取消) — the author's own mapping, kept by
+   *  `confirmBoxMetrics`. Fused like `label2`, so a document that holds it needs no new shape. */
+  label3?: string;
 
   /** how many times that second button draws */
   many?: number;
@@ -2666,27 +2885,29 @@ export const stepsFrom = (flow: PartFlow | undefined, from: string) => (flow?.st
 /**
  * 一个部件的"文字"放在哪个字段上
  *
- * 大多数部件就是它自己那行 `label`。任务信息条不是：它的文字是右端那颗**领取按钮**上的两个字
- * （「受け取る」→「受け取り済み」），标题说的是"这是哪一条任务"、不该跟着一次点按改。所以"改文字"
- * 这类外观（`PartLook.label` 与 `RulePatch.label`）落在按钮文字（`label2`）上 —— 画（lookItem）、
- * 面板里那个字段的起始值（Inspector 的 lookSeed）、流程图的节点名（flow.ts 的 lookWords）、提示里
- * 那句话（prompt.ts）全都走这一个判定，改一处就够。
+ * 大多数部件就是它自己那行 `label`。融合部件不是：任务信息条的文字是右端那颗**领取按钮**上的两个字
+ * （「受け取る」→「受け取り済み」），确认框的文字是那颗**确认按钮**上的两个字（「确认」→「已确认」）——
+ * 标题说的是"这是哪一条任务 / 这是个什么框"，不该跟着一次点按改。所以"改文字"这类外观
+ * （`PartLook.label` 与 `RulePatch.label`）落在按钮文字（`label2`）上 —— 画（lookItem）、面板里那个
+ * 字段的起始值（Inspector 的 lookSeed）、流程图的节点名（flow.ts 的 lookWords）、提示里那句话
+ * （prompt.ts）全都走这一个判定，改一处就够。
  */
-export const wordsKeyOf = (it: Pick<Item, "kind">): "label" | "label2" => (it.kind === "taskBar" ? "label2" : "label");
+export const wordsKeyOf = (it: Pick<Item, "kind">): "label" | "label2" => (tapLivesInside(it.kind) ? "label2" : "label");
 
-/** 这个部件此刻的文字：任务信息条读按钮上那两个字，其余读自己那行 */
-export const wordsOf = (it: Item): string => (it.kind === "taskBar" ? it.label2 ?? "" : it.label);
+/** 这个部件此刻的文字：融合部件读那颗主按钮上的字，其余读自己那行 */
+export const wordsOf = (it: Item): string => (tapLivesInside(it.kind) ? it.label2 ?? "" : it.label);
 
-/** 一次"改文字"落成补丁：任务信息条落到按钮文字上（见 wordsKeyOf） */
+/** 一次"改文字"落成补丁：融合部件落到那颗主按钮的文字上（见 wordsKeyOf） */
 export const wordsPatch = (it: Pick<Item, "kind">, words: string): Partial<Item> =>
-  it.kind === "taskBar" ? { label2: words } : { label: words };
+  tapLivesInside(it.kind) ? { label2: words } : { label: words };
 
 /**
  * 「置灰并停止响应」画在哪个范围上：整块部件，还是部件里那颗按钮
  *
- * 普通部件整块灰掉、整块不再收事件。融合部件（任务信息条）不是：条里唯一活着的东西是右端那颗
- * 领取按钮 —— 点击归它（见 Preview 的 PartPressContext）、文字归它（wordsKeyOf）、所以"置灰并停止
- * 响应"也该只灰它：标题和奖励格照旧，条也不吃 `pointer-events: none`（在那个容器里还能拖着滚）。
+ * 普通部件整块灰掉、整块不再收事件。融合部件（任务信息条、确认框）不是：条里唯一活着的、框里能点的
+ * 都是那几颗**按钮** —— 点击归它们（见 Preview 的 PartPressContext）、文字归它们（wordsKeyOf）、所以
+ * "置灰并停止响应"也该只灰它们：标题、奖励格、正文带照旧，整块部件也不吃 `pointer-events: none`
+ * （在那个容器里还能拖着滚）。
  */
 export const disablesWholePart = (kind: Kind): boolean => !tapLivesInside(kind);
 
@@ -2740,7 +2961,9 @@ export function hasTimedSteps(items: Item[]): boolean {
   return items.some(
     (it) =>
       (it.flow?.steps ?? []).some(isTimedStep) ||
-      Object.values(it.slotFlows ?? {}).some((f) => f.steps.some(isTimedStep)) ||
+      /* 槽位那几台机器照旧一台一台看；`?? []` 和 audit.ts / prompt.ts 那几处同一支笔，读坏的文档不该
+         让预览整个挂掉（`readSlotFlows` 之后本来就不会有那种形状了，这是第二道保险） */
+      Object.values(it.slotFlows ?? {}).some((f) => (f?.steps ?? []).some(isTimedStep)) ||
       (it.children ? hasTimedSteps(it.children) : false),
   );
 }
@@ -2760,6 +2983,24 @@ export function hasAutoClose(items: Item[]): boolean {
 export const AUTO_CLOSE_DEF = 5;
 
 export const AUTO_HIDE_STEP: PartStep = { id: "auto-close", from: START_LOOK, trigger: { kind: "after", seconds: 0 }, do: [{ kind: "look", hidden: true }] };
+
+/**
+ * 确认框那两颗按钮各自那一下：**点下去就把这一块收起来**
+ *
+ * 一个步骤、不另立状态（`looks` 空着 —— 换的不是"画成什么样"，而是"还在不在"，所以机位仍旧是画出来的
+ * 那一个）：`from: :start`、不写 `to`，和自动关闭那一步（AUTO_HIDE_STEP）同一个写法——那一步"点住了的
+ * 外观"就落在这一块自己身上（见 Preview 的 runRuleAction 与 lib/tokens 的 slotLookOwner）。两颗配的是
+ * 同一步：作者在这一版里加上的"隐藏面板"逻辑，也就是「不管是确认还是取消，默认关闭此面板」
+ * （见 docs/reference-prototypes/confirm-box.md）。
+ *
+ * 去处仍旧归作者：在「点击后变化」里把这一步改成"关闭当前面板"、跳去某一屏、或者干脆清掉，都是作者自己
+ * 的事 —— 这一份只是新落下的那颗确认框的起点。
+ */
+export const CONFIRM_BOX_HIDE_STEP: PartStep = { id: "confirm-box-hide", from: START_LOOK, trigger: { kind: "tap" }, do: [{ kind: "look", hidden: true }] };
+
+/** 一台"点一下就把这一块收起来"的机器：就一个步骤，没有自己的状态（见 CONFIRM_BOX_HIDE_STEP）。
+ *  每次调用都造一份新的，两颗按钮的两台机器（以及两个部件之间）因此不共用同一个对象。 */
+export const confirmBoxHideFlow = (): PartFlow => ({ looks: [], steps: [{ ...CONFIRM_BOX_HIDE_STEP }] });
 
 /** Where a part is: the look it is in, and the moment on the preview's clock it got there. */
 export type AtLook = { look: string; since: number };
@@ -3158,6 +3399,11 @@ export function applySlotTransition(it: Item, transition: Transition): Partial<I
 /** slots on a bar that can each carry their own tap action */
 export function actionSlotsOf(it: Item): IconSlot[] {
   if (it.kind === "topAppBar" || it.kind === "bottomNav" || it.kind === "navRail" || it.kind === "toolbar") return iconSlotsOf(it).filter((s) => !!s.value);
+  /* 确认框里那颗「取消」按钮是一个落点：它自己那台机器、它自己那个动作，落在 `slotFlows.cancel` /
+     `actions.cancel`（见 CONFIRM_BOX_CANCEL_SLOT 与 Preview 的 pickSlot）。**主按钮不在这里** —— 它那
+     一下就是这一部件自己的（`flow` / `action`），面板把空键那一条摆在槽位前面，于是「目标按钮」里两颗
+     都能选（见 Inspector 的 StateRules 与 docs/reference-prototypes/confirm-box.md）。 */
+  if (it.kind === "confirmBox") return [{ key: CONFIRM_BOX_CANCEL_SLOT, label: confirmBoxButtonWords(it, CONFIRM_BOX_CANCEL_SLOT) || t("cancel"), value: null }];
   if (isTabRow(it)) return (it.tabs ?? []).map((t, i) => ({ key: `tab:${i}`, label: t.label || `${i + 1}`, value: null }));
   return [];
 }
@@ -3189,7 +3435,7 @@ export function actionsOf(it: Item): { slot: string; action: Action }[] {
 }
 
 /** kinds a user can tap in the preview */
-export const TAPPABLE: Kind[] = ["button", "iconButton", "fab", "extendedFab", "fnButton", "chip", "listItem", "itemCell", "assetPill", "taskBar", "card", "image", "text", "splitButton", "radio", "wheel", "gridWheel", "gacha", "slot", "calendar", "rewardTrack"];
+export const TAPPABLE: Kind[] = ["button", "iconButton", "fab", "extendedFab", "fnButton", "chip", "listItem", "itemCell", "assetPill", "taskBar", "confirmBox", "card", "image", "text", "splitButton", "radio", "wheel", "gridWheel", "gacha", "slot", "calendar", "rewardTrack"];
 
 /** Where each day of a check-in calendar sits: seven to a row, the way a month is printed. */
 export function calendarCell(day: number): { row: number; col: number } {
@@ -3654,6 +3900,52 @@ export function resolveStates(it: Item, at: MachineAt, now: number): PartState {
     cooldown: look?.disabled && left > 0 ? Math.ceil(left) : 0,
   };
 }
+
+/**
+ * 一个槽位那台机器「点击后变化 → 改变属性」落下的那份外观补丁算在**谁**头上
+ *
+ * 栏、标签页、工具栏的每一格是一个**落点**：它的 hidden/disabled 说的是那一格（见 Preview 的
+ * tabLook），所以那一格自己的步骤里那份"改变属性"不该盖到整条栏上 —— 它没有归属（`null`），什么也不落
+ * （预览里那份补丁的落点是 `a.target ?? owner`，见 Preview 的 runRuleAction）。
+ *
+ * 融合部件（任务信息条、确认框）不一样：画在自己里面的那几颗按钮**不是画布上独立的部件**，它们的"自己"
+ * 就是这一块 —— 作者给「取消」配「隐藏」时，说的是把这一块收起来（作者：「取消按钮就是个普通按钮就
+ * 行」，见 docs/reference-prototypes/confirm-box.md）。所以归属是这一部件自己，和主按钮那一下同一处
+ * （Preview 的 fireTap 传的也是它自己）。
+ */
+export const slotLookOwner = (it: Pick<Item, "id" | "kind">): string | null => (tapLivesInside(it.kind) ? it.id : null);
+
+/**
+ * 融合部件里那几颗按钮各自的状态机解出来的状态
+ *
+ * 一个槽位（栏的某一格，或者一个融合部件里那几颗按钮）的机位是 `<部件id>:<槽位>`（见 Preview 的
+ * pickSlot 与 tabLook）。对融合部件来说那几颗按钮**不是画布上独立的部件** —— 它们的"自己"就是这一块，
+ * 所以作者在「点击后变化」里给它配「隐藏」时，说的是把这一块收起来。
+ *
+ * 今天只有确认框带槽位（它那颗「取消」按钮，见 CONFIRM_BOX_CANCEL_SLOT）；任务信息条的领取按钮是主
+ * 按钮，走的是这一部件自己的机位。这两个助手是当初为融合部件留下的（见
+ * docs/reference-prototypes/confirm-box.md 里那两条坑）。
+ */
+export const resolveSlotStates = (it: Item, at: MachineAt, now: number): PartState[] =>
+  Object.entries(it.slotFlows ?? {}).map(([slot, flow]) => resolveStates({ ...it, id: `${it.id}:${slot}`, flow }, at, now));
+
+/**
+ * 把槽位那几台机器的状态并进部件自己的状态
+ *
+ * **只对融合部件用**（见 Preview 的 Tappable）：它们的槽位是画在自己里面的按钮，那几台机器做的事
+ * （隐藏 / 置灰 / 冷却）落在这一块上 —— 作者配「取消 → 隐藏面板」正是这个意思，不并进来就会出现
+ * "机器跑了但屏幕上什么都没变"。栏的每一格不在此列：那是一个落点，它的 hidden/disabled 说的是那一格
+ * （见 Preview 的 tabLook）。
+ */
+export const mergeSlotStates = (own: PartState, slots: PartState[]): PartState =>
+  slots.length === 0
+    ? own
+    : {
+        ...own,
+        hidden: own.hidden || slots.some((st) => st.hidden),
+        disabled: own.disabled || slots.some((st) => st.disabled),
+        cooldown: Math.max(own.cooldown, ...slots.map((st) => st.cooldown)),
+      };
 
 /** whether a part answers a tap at all: a hidden part is gone, a disabled one ignores it */
 export const tappable = (state: PartState) => !state.hidden && !state.disabled;
@@ -4342,6 +4634,8 @@ export function makeItem(kind: Kind): Item {
   };
   if (s.defSupporting !== undefined) it.supporting = text?.supporting ?? s.defSupporting;
   if (s.defLabel2 !== undefined) it.label2 = text?.label2 ?? s.defLabel2;
+  /* 第三颗按钮的字（确认框的取消）：只有这一类有（见 Item.label3） */
+  if (s.defLabel3 !== undefined) it.label3 = text?.label3 ?? s.defLabel3;
   if (s.defIcon2 !== undefined) it.icon2 = s.defIcon2;
   if (s.defSize !== undefined) it.size = s.defSize;
   if (s.hasChecked) it.checked = kind !== "chip";
@@ -4401,6 +4695,17 @@ export function makeItem(kind: Kind): Item {
     it.buttonBadgeText = text?.buttonBadgeText ?? s.defButtonBadgeText ?? "";
     it.fill = TASK_BAR_FILL;
     it.radiusTop = TASK_BAR_RADIUS;
+  }
+  if (kind === "confirmBox") {
+    /* 一个刚放下的确认框就是作者在这一版里做成的那一个：标题、正文带和两颗普通按钮（确认 = label2、
+       取消 = label3），**两颗点下去都把这一块收起来**（作者加上的"隐藏面板"逻辑，见
+       CONFIRM_BOX_HIDE_STEP），底和圆角也写成它自己画出来的那两样，和任务信息条同一条规矩。主按钮的
+       机器是这一部件自己的 `flow`，取消那台在 `slotFlows.cancel`（见 CONFIRM_BOX_MAIN /
+       CONFIRM_BOX_CANCEL_SLOT）—— 两颗各是一台，谁也不比谁特殊。 */
+    it.fill = CONFIRM_BOX_FILL;
+    it.radiusTop = CONFIRM_BOX_RADIUS;
+    it.flow = confirmBoxHideFlow();
+    it.slotFlows = { [CONFIRM_BOX_CANCEL_SLOT]: confirmBoxHideFlow() };
   }
   if (kind === "box") {
     it.size2 = 220;
@@ -4539,6 +4844,11 @@ export function sizeOf(it: Item, widths: Record<string, number>) {
          的留白，全部来自那个唯一的助手（见 taskBarMetrics）。宽度是作者的。角标和按钮上的徽标是绝
          对定位的角上药丸，一点不算进来 —— 它们挂不挂、写多长，这里都是同一个数。作者钉的高矮说了算。 */
       return { w: n, h: it.size2 ?? taskBarMetrics(it).h };
+    case "confirmBox":
+      /* 框的高跟着内容走：标题那一行（空标题就不占）、正文带（正文折几行就多高，两行是下限）和框
+         自己的留白，全都来自那个唯一的助手（见 confirmBoxMetrics）。宽度是作者的。里面那两颗按钮画
+         在框自己里面，一点不算进来 —— 它们写多长、有没有配去处，这里都是同一个数。作者钉的高说了算。 */
+      return { w: n, h: it.size2 ?? confirmBoxMetrics(it).h };
     case "image":
       /* square until the author gives it a height, the way a camera preview starts 4:3 */
       return { w: n, h: it.size2 ?? n };
@@ -4646,6 +4956,9 @@ export function baseRadii(it: Item): Radii {
       /* 物品格的圆角：作者用「圆角」控件设的那个数，按格子画出来的正方形的一半封顶（见
          itemCellRadius）。不设就是直角 —— 用户要求的默认。assetPill 是另一个 kind，各画各的。 */
       return uniformRadii(itemCellRadius(it));
+    case "confirmBox":
+      /* 确认框的圆角：作者设的那个数（「圆角」控件），不设就是 kind 自己的 28 —— 作者原稿那个框就是
+         28。四条边同一个数：一个确认框是一个圆角矩形。 */
     case "taskBar":
       /* 任务信息条的圆角：作者设的那个数（「圆角」控件），不设就是 kind 自己的 16 —— 那个 composite
          的框就是 16。四条边同一个数：一条信息条是一个圆角矩形，不像框那样上下一对一对地设。 */

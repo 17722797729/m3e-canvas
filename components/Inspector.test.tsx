@@ -121,6 +121,16 @@ describe("the value 「改变文字」 starts from", () => {
     expect(lookFieldTitle("icon", "state_icon", taskBar)).toBe("state_icon");
   });
 
+  it("is the confirm button's words for a confirm box", () => {
+    /* 确认框上是那颗**确认**按钮的字（label2），不是标题、也不是取消那颗（见 wordsOf） */
+    const box = { ...makeItem("confirmBox"), id: "cb", label: "温馨提示", label2: "确认", label3: "取消" } as Item;
+    expect(lookSeed("label", box)).toBe("确认");
+    expect(lookFieldTitle("label", "state_label", box)).toBe("confirmButton");
+    /* 取消那颗有它自己的字；「改变文字」只改主按钮那一颗 */
+    expect(box.label3).toBe("取消");
+    expect(lookSeed("hidden", box)).toBe(true);
+  });
+
   it("leaves the seeds of the other fields alone", () => {
     expect(lookSeed("hidden", taskBar)).toBe(true);
     expect(lookSeed("color", taskBar)).toBe("primary");
@@ -152,11 +162,62 @@ describe("a state card that greys its part", () => {
     expect(offTag).toContain("filter:grayscale(1)");
     expect(offTag).toContain("opacity:0.55");
   });
+
+  it("greys both of a confirm box's buttons, not the frame", () => {
+    /* 作者：「是针对按钮，而不是整个组件」—— 确认框里画着自己那两颗，所以面板里两处灰，一处一颗 */
+    const out = inspector({ ...makeItem("confirmBox"), id: "cb", label: "温馨提示", label2: "确认", label3: "取消", ...flow(true) } as Item);
+    expect((out.match(/filter:grayscale\(1\)/g) ?? []).length).toBe(2);
+    expect((out.match(/data-confirm-button-off=""/g) ?? []).length).toBe(2);
+    /* 任务信息条那一槽的标记一个都不在 */
+    expect(out).not.toContain("data-task-button-off");
+  });
+});
+
+/* 「行为 → 目标按钮」：融合部件里画在自己里面的那颗**主按钮**也要能配去处。确认框里那颗是「确认」
+   （它走这一部件自己的 `flow` / `action`），空键那一条因此摆在槽位前面，取消那颗（`cancel` 槽）排在
+   它后面 —— 作者于是能在两个目标里挑（见 docs/reference-prototypes/confirm-box.md）。 */
+describe("the tap targets a fused part offers", () => {
+  it("offers a confirm box's two buttons, the main one first and chosen", () => {
+    const out = inspector({ ...makeItem("confirmBox"), id: "cb", label: "温馨提示", supporting: "确认当前操作？", label2: "确认", label3: "取消" } as Item, "zh");
+    const at = out.indexOf(t("tapTarget", "zh"));
+    expect(at).toBeGreaterThan(-1);
+    const seg = out.slice(at);
+    /* 两颗各是一个目标，名字就是那颗按钮自己的字 */
+    expect(seg).toContain('title="确认"');
+    expect(seg).toContain('title="取消"');
+    expect(seg.indexOf('title="确认"')).toBeLessThan(seg.indexOf('title="取消"'));
+    /* 打开时选中的是主按钮（确认）—— 主按钮的规则就落在 item.flow / item.action 上 */
+    const main = seg.slice(seg.indexOf('title="确认"'), seg.indexOf('title="取消"'));
+    expect(main).toContain(`background:${PALETTES[0].primary}`);
+  });
+
+  it("offers the claim button alone on a task bar", () => {
+    /* 任务信息条只有那一颗：一个目标不摆"目标按钮"那一行，和从前一样 */
+    const out = inspector({ ...makeItem("taskBar"), id: "tb", label: "每日登录游戏 (1/1)", label2: "领取" } as Item, "zh");
+    expect(out).not.toContain(t("tapTarget", "zh"));
+  });
+});
+
+/* 「点击后变化」那一句话只在**什么都没配**的时候才说：一份机器可以只有步骤、没有自己的状态
+   （"留在原地，只做动作"），而新落下的确认框就带着这样一步（「点一下 → 隐藏这一块」）。 */
+describe("the invitation to configure a tap", () => {
+  it("is there for a part that does nothing yet", () => {
+    expect(inspector({ ...makeItem("button"), id: "b", label: "OK" } as Item, "zh")).toContain(t("transitionsHint", "zh"));
+  });
+
+  it("is gone once the machine has a step, even with no state of its own", () => {
+    const box = makeItem("confirmBox") as Item;
+    expect(box.flow?.steps).toHaveLength(1);
+    expect(box.flow?.looks).toEqual([]);
+    const out = inspector({ ...box, id: "cb" }, "zh");
+    expect(out).not.toContain(t("transitionsHint", "zh"));
+    /* 那一台机器照旧画在下面（点一下、隐藏），只是不再招呼作者"加一条" */
+    expect(out).toContain(t("transitions", "zh"));
+  });
 });
 
 /* 一屏的导出那一节：提示词（复制）、图片，和**这一屏自己的 JSON**（作者要一屏一屏地交给别人看由哪些
-   部件组成，见 lib/project 的 screenProject）。三者并排在一个按钮行里。 */
-describe("the screen's export row", () => {
+   部件组成，见 lib/project 的 screenProject）。三者并排在一个按钮行里。 */describe("the screen's export row", () => {
   const frame = { id: "f", name: "上传屏幕2", x: 0, y: 0, w: 412, h: 892 } as never;
   const screen = (onSaveJson: () => void) =>
     renderToStaticMarkup(

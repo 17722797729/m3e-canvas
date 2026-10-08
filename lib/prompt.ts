@@ -63,6 +63,7 @@ import {
   taskBarButtonBadgeIcon,
   taskBarButtonBadgeOn,
   taskBarButtonLocked,
+  tapLivesInside,
   wordsOf,
 } from "./tokens";
 
@@ -283,6 +284,14 @@ function itemJa(it: Item): string {
       return `${q(it.label)}${hasText(it.supporting) ? `（サブテキスト${q(it.supporting!)}）` : ""}${it.icon ? `、先頭に ${it.icon} アイコン${it.iconFill === "none" ? "（背景なし）" : it.iconFill ? `（背景 ${it.iconFill}）` : ""}` : ""}${it.switch ? `、末尾にスイッチ（初期状態${it.checked ? "オン" : "オフ"}）` : it.icon2 ? `、末尾に ${it.icon2}` : ""}${it.fill && it.fill !== "surfaceContainerLow" ? `、背景は ${it.fill}` : ""}`;
     case "dialog":
       return `見出し${q(it.label)}${hasText(it.supporting) ? `、本文${q(it.supporting!)}` : ""}${it.icon ? `、${it.icon} アイコン付き` : ""}のダイアログ（キャンセル／OK のテキストボタン）`;
+    case "confirmBox": {
+      /* 一つの部品が言うこと：タイトル、本文、そして**同じ**普通のボタン2つ（確認 = label2、キャンセル
+         = label3）—— 複合部品ではなく、すべてこの1つの属性です。2つは名前だけが違い、既定ではどちらも
+         このボックスを閉じます（作者が入れた「隠す」の機構）。行き先はそれぞれ別に設定します。タップに
+         反応するのはこの2つだけです。 */
+      const words = (text?: string) => (hasText(text) ? q(text!) : "ラベルなし");
+      return `タイトル${q(it.label)}の確認ボックス（本文${hasText(it.supporting) ? q(it.supporting!) : "なし"}。${v}ボタンが2つ、左が${words(it.label3)}、右が${words(it.label2)}）。この2つは同じ普通のボタンで、既定ではどちらもこのボックスを閉じます。行き先はそれぞれ別に設定します。タップに反応するのはこの2つのボタンだけです（枠と本文は反応しません）`;
+    }
     case "snackbar":
       return `${q(it.label)}のスナックバー${hasText(it.supporting) ? `（${q(it.supporting!)}のアクション付き）` : ""}`;
     case "textField":
@@ -416,6 +425,14 @@ function itemEn(it: Item): string {
       return `${q(it.label)}${hasText(it.supporting) ? ` with supporting text ${q(it.supporting!)}` : ""}${it.icon ? `, a leading ${it.icon} icon${it.iconFill === "none" ? " (no background circle)" : it.iconFill ? ` (on a ${it.iconFill} circle)` : ""}` : ""}${it.switch ? `, a trailing switch (initially ${it.checked ? "on" : "off"})` : it.icon2 ? `, a trailing ${it.icon2} icon` : ""}${it.fill && it.fill !== "surfaceContainerLow" ? `, on a ${it.fill} background` : ""}`;
     case "dialog":
       return `a dialog headed ${q(it.label)}${hasText(it.supporting) ? ` with the body ${q(it.supporting!)}` : ""}${it.icon ? ` and a ${it.icon} icon` : ""}, with Cancel and OK text buttons`;
+    case "confirmBox": {
+      /* One part saying one thing: the title, the body and **two of the same** ordinary button (confirm =
+         label2, cancel = label3) — not a composite part, they are all properties of this one part. The two
+         differ only in their words; by default both put this box away (the hide machine the author gave it),
+         and each has a destination of its own. Only those two answer a tap. */
+      const words = (text?: string) => (hasText(text) ? q(text!) : "no label");
+      return `a confirm box titled ${q(it.label)} (body ${hasText(it.supporting) ? q(it.supporting!) : "none"}; two ${v} buttons, ${words(it.label3)} on the left and ${words(it.label2)} on the right). Those two are the same ordinary button, and by default both put this box away; each has a destination of its own. Only the two buttons answer a tap — the frame and the body do not`;
+    }
     case "snackbar":
       return `a snackbar ${q(it.label)}${hasText(it.supporting) ? ` with a ${q(it.supporting!)} action` : ""}`;
     case "textField":
@@ -546,6 +563,13 @@ function itemZh(it: Item): string {
       return `${q(it.label)}${hasText(it.supporting) ? `（辅助文本${q(it.supporting!)}）` : ""}${it.icon ? `，左侧显示 ${it.icon} 图标${it.iconFill === "none" ? "（无背景）" : it.iconFill ? `（背景 ${it.iconFill}）` : ""}` : ""}${it.switch ? `，显示列表项开关（初始${it.checked ? "开启" : "关闭"}）` : it.icon2 ? `，右侧显示 ${it.icon2} 图标` : ""}${it.fill && it.fill !== "surfaceContainerLow" ? `，背景为 ${it.fill}` : ""}`;
     case "dialog":
       return `标题${q(it.label)}${hasText(it.supporting) ? `、正文${q(it.supporting!)}` : ""}${it.icon ? `、带 ${it.icon} 图标` : ""}的对话框（取消／确定文字按钮）`;
+    case "confirmBox": {
+      /* 一个部件说一件事：标题、正文和两颗**一模一样**的普通按钮（确认 = label2、取消 = label3）——
+         不是组合部件，它们全都是这一个部件的属性。两颗只有文字不同，**默认两颗都把这一块收起来**
+         （作者加上的隐藏面板逻辑），去处各自配各自的。只有这两颗响应点击。 */
+      const words = (text?: string) => (hasText(text) ? q(text!) : "无标签");
+      return `标题为${q(it.label)}的${v}确认框（正文${hasText(it.supporting) ? q(it.supporting!) : "无"}；两颗按钮，左边是${words(it.label3)}、右边是${words(it.label2)}）。这两颗是一模一样的普通按钮，默认两颗都把这一块收起来，去处各自配各自的。只有这两颗按钮响应点击（框和正文不响应）`;
+    }
     case "snackbar":
       return `${q(it.label)}消息条${hasText(it.supporting) ? `（带${q(it.supporting!)}操作）` : ""}`;
     case "textField":
@@ -668,6 +692,13 @@ function itemKo(it: Item): string {
     }
     case "listItem": return `${q(it.label)}${hasText(it.supporting) ? `(보조 텍스트 ${q(it.supporting!)})` : ""}${it.icon ? `, 앞쪽 ${it.icon} 아이콘${it.iconFill === "none" ? "(배경 없음)" : it.iconFill ? `(배경 ${it.iconFill})` : ""}` : ""}${it.switch ? `, 끝에 스위치(초기 상태 ${it.checked ? "켜짐" : "꺼짐"})` : it.icon2 ? `, 뒤쪽 ${it.icon2}` : ""}${it.fill && it.fill !== "surfaceContainerLow" ? `, 배경 ${it.fill}` : ""}`;
     case "dialog": return `제목 ${q(it.label)}${hasText(it.supporting) ? `, 본문 ${q(it.supporting!)}` : ""}${it.icon ? `, ${it.icon} 아이콘 포함` : ""} 대화상자(취소/확인 텍스트 버튼)`;
+    case "confirmBox": {
+      /* 한 부품이 하는 말: 제목, 본문, 그리고 **똑같은** 보통 버튼 2개(확인 = label2, 취소 = label3) —
+         복합 부품이 아니라 전부 이 한 부품의 속성입니다. 둘은 글자만 다르고, 기본값으로는 둘 다 이 상자를
+         닫습니다(작가가 넣은 숨김 장치). 갈 곳은 각각 따로 설정합니다. 이 두 버튼만 탭에 반응합니다. */
+      const words = (text?: string) => (hasText(text) ? q(text!) : "라벨 없음");
+      return `제목 ${q(it.label)}의 ${v} 확인 상자(본문 ${hasText(it.supporting) ? q(it.supporting!) : "없음"}; 버튼 2개, 왼쪽 ${words(it.label3)}, 오른쪽 ${words(it.label2)}). 두 버튼은 똑같은 보통 버튼이고 기본값으로는 둘 다 이 상자를 닫습니다. 갈 곳은 각각 따로 설정합니다. 이 두 버튼만 탭에 반응합니다(틀과 본문은 반응하지 않습니다)`;
+    }
     case "snackbar": return `${q(it.label)} 스낵바${hasText(it.supporting) ? `(${q(it.supporting!)} 동작 포함)` : ""}`;
     case "textField": return `레이블이 ${q(it.label)}인 ${it.variant === "filled" ? "채움" : "윤곽선"} 텍스트 입력란${it.icon ? `(앞쪽 ${it.icon} 아이콘)` : ""}${hasText(it.supporting) ? `. 보조 텍스트는 ${q(it.supporting!)}` : ""}`;
     case "select": {
@@ -982,10 +1013,10 @@ function notes(g: Group, frames: Frame[], lang: Lang, all: Group[] = [g]): strin
         const to = lookWord(machine, st.to);
         const look = machine.looks.find((l) => l.id === st.to);
         const bits = [
-          /* 任务信息条的文字在按钮上：说的是"按钮文字"，照着提示写代码的人才知道改哪一处
-             （判定只有一处，见 lib/tokens 的 wordsKeyOf） */
+          /* 融合部件（任务信息条、确认框）的文字在按钮上：说的是"按钮文字"，照着提示写代码的人才知道
+             改哪一处（判定只有一处，见 lib/tokens 的 wordsKeyOf / tapLivesInside） */
           look?.label !== undefined &&
-            (it.kind === "taskBar"
+            (tapLivesInside(it.kind)
               ? { ja: `ボタンの文字は「${look.label}」`, en: `the button's words read ${q(look.label)}`, zh: `按钮文字为「${look.label}」`, ko: `버튼 글자는 "${look.label}"` }[lang]
               : { ja: `文字は「${look.label}」`, en: `its words read ${q(look.label)}`, zh: `文字为「${look.label}」`, ko: `글자는 "${look.label}"` }[lang]),
           look?.icon !== undefined && { ja: `アイコンは ${look.icon || "なし"}`, en: `its icon is ${look.icon || "gone"}`, zh: `图标为 ${look.icon || "无"}`, ko: `아이콘은 ${look.icon || "없음"}` }[lang],
@@ -1336,6 +1367,8 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind, string>>> = {
     listItem:
       "リスト項目: 高さ 72dp、先頭アイコンは 24dp（指定がなければ primaryContainer の 40dp の円の上）、主テキストは bodyLarge、サブテキストは bodyMedium の onSurfaceVariant。背景は指定のロール（指定がなければ surfaceContainerLow）。上下に連結したリストは 3dp の隙間で並べ、外側の角を 28dp、隣り合う内側の角を 8dp にする（M3 Expressive のリスト表現）。",
     dialog: "ダイアログ: 幅 312dp、角丸 28dp、背景は surfaceContainerHigh。見出しは headlineSmall、本文は bodyMedium、下部右寄せにテキストボタン。",
+    /* 確認框の寸法は作者の原稿から（見 docs/reference-prototypes/confirm-box.md） */
+    confirmBox: "確認ボックス: 幅 320dp・角丸 28dp・背景 surfaceContainerHigh。タイトルは 20dp で中央、本文は 18dp で左寄せ（左 25・上 10、72dp の本文帯の中）、その下に 104×49 の普通のボタンが 2 つ（左がキャンセル・右が確認、左右の余白 20dp・間隔 72dp）、下余白 21dp（合計 200dp、タイトルなしで 166dp、本文なしで 118dp）。",
     snackbar: "スナックバー: 高さ 48dp、角丸 8dp、背景は inverseSurface、文字は inverseOnSurface。アクションは inversePrimary のテキストボタン。画面下部から 16dp 上に表示し、数秒で消える。",
     textField:
       "テキスト入力: 高さ 56dp。アウトラインは角丸 16dp・枠 outline、塗りつぶしは surfaceContainerHighest に下線。フォーカス時はラベルが上に浮き、枠が primary の 2dp になる。補助テキストは bodySmall で下に出す。",
@@ -1385,6 +1418,7 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind, string>>> = {
     listItem:
       "List items: 72dp tall, 24dp leading icon (on a 40dp primaryContainer circle unless stated), headline in bodyLarge, supporting text in bodyMedium on onSurfaceVariant, on the specified background role (surfaceContainerLow unless stated). A stacked list is a vertical run with 3dp gaps, 28dp outer corners and 8dp inner corners (the M3 Expressive list treatment).",
     dialog: "Dialogs: 312dp wide, 28dp corners, on surfaceContainerHigh. Headline in headlineSmall, body in bodyMedium, text buttons aligned right at the bottom.",
+    confirmBox: "Confirm boxes: 320dp wide, 28dp corners, on surfaceContainerHigh. A 20dp centred title, an 18dp body left-aligned inside a 72dp strip (left 25, top 10), then two 104×49 ordinary buttons (cancel on the left, confirm on the right, 20dp at each side and a 72dp gap) and 21dp of bottom padding — 200dp tall in all, 166dp without a title and 118dp without a body.",
     snackbar: "Snackbar: 48dp tall, 8dp corners, inverseSurface background with inverseOnSurface text; the action is an inversePrimary text button. Show it 16dp above the bottom edge and dismiss after a few seconds.",
     textField:
       "Text fields: 56dp tall. Outlined has 16dp corners and an outline border; filled sits on surfaceContainerHighest with an underline. On focus the label floats up and the border becomes 2dp primary. Supporting text goes underneath in bodySmall.",
@@ -1433,6 +1467,7 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind, string>>> = {
     listItem:
       "列表项：高 72dp，左侧图标 24dp（未指定时放在 40dp 的 primaryContainer 圆形上），主文本用 bodyLarge，辅助文本用 bodyMedium 的 onSurfaceVariant，背景为指定的颜色角色（未指定则为 surfaceContainerLow）。上下相连的列表以 3dp 间距排列，外侧圆角 28dp，相邻内侧圆角 8dp（M3 Expressive 的列表样式）。",
     dialog: "对话框：宽 312dp，圆角 28dp，背景为 surfaceContainerHigh。标题用 headlineSmall，正文用 bodyMedium，底部右对齐放文字按钮。",
+    confirmBox: "确认框：宽 320dp，圆角 28dp，背景 surfaceContainerHigh。标题 20dp 居中，正文 18dp 左对齐放在 72dp 高的正文带里（带内左 25、上 10），下面两颗 104×49 的普通按钮（左取消、右确认，左右各留 20dp、中间 72dp），下留白 21dp —— 总高 200dp，没标题 166dp，没正文 118dp。",
     snackbar: "消息条：高 48dp，圆角 8dp，背景为 inverseSurface，文字为 inverseOnSurface。操作为 inversePrimary 的文字按钮。显示在距屏幕底部 16dp 处，数秒后消失。",
     textField:
       "文本输入框：高 56dp。描边样式圆角 16dp、边框为 outline；填充样式背景为 surfaceContainerHighest 并带下划线。聚焦时标签上浮，边框变为 2dp 的 primary。辅助文本用 bodySmall 显示在下方。",
@@ -1475,6 +1510,7 @@ const STYLE_NOTES: Record<Lang, Partial<Record<Kind, string>>> = {
     card: "카드: 모서리 20dp. 이미지 영역은 각 카드의 설명에 따라 위쪽·앞쪽·뒤쪽·배경 전체 중 한 곳에 배치한다(배경일 때는 텍스트 쪽에서 스크림을 넣는다. 밝은 텍스트에는 검정, 어두운 텍스트에는 흰색 페이드). 이미지는 비율을 유지한 채 가운데를 기준으로 잘라 영역을 채운다. 채움은 surfaceContainerHighest, 돌출은 surfaceContainerLow와 Level 1 그림자, 윤곽선은 1dp outlineVariant 테두리를 사용한다. 제목 titleMedium, 본문 bodyMedium. 안쪽 여백 20dp, 제목과 본문 사이 4dp, 이미지와 텍스트 사이 12dp.",
     listItem: "목록 항목: 높이 72dp, 앞쪽 아이콘 24dp(별도 지정이 없으면 40dp primaryContainer 원 위), 주 텍스트 bodyLarge, 보조 텍스트 bodyMedium/onSurfaceVariant. 연결 목록은 간격 3dp, 바깥 모서리 28dp, 안쪽 모서리 8dp.",
     dialog: "대화상자: 너비 312dp, 모서리 28dp, 배경 surfaceContainerHigh. 제목 headlineSmall, 본문 bodyMedium, 텍스트 버튼은 아래쪽 오른쪽 정렬.",
+    confirmBox: "확인 상자: 너비 320dp, 모서리 28dp, 배경 surfaceContainerHigh. 제목 20dp 가운데 정렬, 본문 18dp 왼쪽 정렬(72dp 본문 띠 안에서 왼쪽 25·위 10), 그 아래 104×49 보통 버튼 2개(왼쪽 취소·오른쪽 확인, 좌우 여백 20dp·간격 72dp), 아래 여백 21dp — 총 높이 200dp, 제목이 없으면 166dp, 본문이 없으면 118dp.",
     snackbar: "스낵바: 높이 48dp, 모서리 8dp, inverseSurface 배경과 inverseOnSurface 텍스트. 동작은 inversePrimary 텍스트 버튼으로 하고 아래쪽에서 16dp 띄워 몇 초 뒤 닫는다.",
     textField: "텍스트 입력란: 높이 56dp. 윤곽선형은 모서리 16dp와 outline 테두리, 채움형은 surfaceContainerHighest 배경과 밑줄을 사용한다. 포커스 시 레이블을 올리고 테두리를 2dp primary로 바꾼다.",
     select: "드롭다운: 텍스트 입력란과 같은 외관(높이 56dp, 윤곽선 또는 채움)에 끝에 arrow_drop_down 아이콘. Exposed dropdown menu로 구현하고, 탭하면 아래에 메뉴(surfaceContainer, 모서리 4dp, 항목 높이 48dp)를 열어 고른 값을 입력란에 표시한다.",

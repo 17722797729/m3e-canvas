@@ -571,6 +571,16 @@ export const UI = {
     en: "A badge rides on the cell's corner, so neither the cell nor the part grows. Its colour is yours to pick.",
     zh: "角标叠在格子的角上，不会把格子或组件撑大。颜色可以自己选（品质绿、稀有紫都行）。",
   },
+  /* 确认框：标题、正文和两颗**一模一样**的普通按钮（确认 / 取消）都是这一个组件的属性，不是它的子
+     组件；两颗按钮各自配各自的去处，谁也不比谁特殊（见 KIND_SPEC.confirmBox / M3Node 的
+     ConfirmBoxContent / docs/reference-prototypes/confirm-box.md）。 */
+  confirmBoxHint: {
+    ja: "タイトル・本文・2つのボタンはこの1つの部品のプロパティです（子部品ではありません）。2つのボタンは同じ普通のボタンで、行き先はそれぞれ別に設定します（既定ではどちらもこのボックスを閉じます）。",
+    en: "The title, the body and the two buttons are properties of this one part — not child parts. The two buttons are the same ordinary button, each with a destination of its own (by default both put this box away).",
+    zh: "标题、正文和两颗按钮都是这一个组件的属性，不是它的子组件。两颗是一模一样的普通按钮，去处各自配各自的（默认两颗都把这一块收起来）。",
+  },
+  confirmButton: { ja: "確認ボタンの文字", en: "Confirm button text", zh: "确认按钮文字" },
+  cancelButton: { ja: "キャンセルボタンの文字", en: "Cancel button text", zh: "取消按钮文字" },
   fnBadgeText: { ja: "バッジの文字", en: "Badge text", zh: "徽标文字" },
   fnBadgeHint: {
     ja: "文字を空にすると、小さな点だけを描きます。",
@@ -1659,6 +1669,8 @@ docPresets: "프리셋", docStep: "간격", docGrid: "칸 격자", docGridHint: 
   barBadgeHint: "버튼 오른쪽 위에 겹치는 숫자나 글자 배지입니다. 글자를 비우면 배지가 통째로 사라집니다. 「배지 아이콘」에서 아이콘을 고르면 그쪽이 우선이고, 자물쇠 아이콘이면 버튼이 탭에 반응하지 않습니다.",
   markRight: "오른쪽 위 배지",
   taskMarkHint: "배지는 칸 모서리에 겹치므로 칸이나 부품이 커지지 않습니다. 색은 품질 색 등 원하는 대로 고를 수 있습니다.",
+  confirmBoxHint: "제목·본문·두 버튼은 이 한 부품의 속성입니다(자식 부품이 아닙니다). 두 버튼은 똑같은 보통 버튼이고, 갈 곳은 각각 따로 설정합니다(기본값으로는 둘 다 이 상자를 닫습니다).",
+  confirmButton: "확인 버튼 텍스트", cancelButton: "취소 버튼 텍스트",
 };
 
 export const t = (key: UIKey, lang: Lang = current): string => (lang === "ko" ? KO[key] : UI[key][lang]);
@@ -1684,7 +1696,7 @@ export const REWARD_TEXT: Record<Lang, string[]> = {
 
 export const KIND_TEXT: Record<
   Lang,
-  Record<string, { noun: string; label?: string; label2?: string; supporting?: string; badgeText?: string; badge2Text?: string; buttonBadgeText?: string }>
+  Record<string, { noun: string; label?: string; label2?: string; label3?: string; supporting?: string; badgeText?: string; badge2Text?: string; buttonBadgeText?: string }>
 > = {
   ja: {
     box: { noun: "ボックス" },
@@ -1703,6 +1715,9 @@ export const KIND_TEXT: Record<
     card: { noun: "カード", label: "カードの見出し", supporting: "補足テキストがここに入ります。" },
     listItem: { noun: "リスト項目", label: "リスト項目", supporting: "サブテキスト" },
     dialog: { noun: "ダイアログ", label: "確認", supporting: "この操作を実行しますか？" },
+    /* 確認框：タイトル・本文・2つの普通のボタン（確認 = label2、キャンセル = label3）—— すべてこの
+       1つの部品の属性です（見 docs/reference-prototypes/confirm-box.md） */
+    confirmBox: { noun: "確認ボックス", label: "お知らせ", supporting: "この操作を実行しますか？", label2: "確認", label3: "キャンセル" },
     snackbar: { noun: "スナックバー", label: "保存しました", supporting: "元に戻す" },
     textField: { noun: "テキスト入力", label: "ラベル" },
     select: { noun: "ドロップダウン", label: "ラベル" },
@@ -1752,6 +1767,7 @@ export const KIND_TEXT: Record<
     card: { noun: "card", label: "Card headline", supporting: "Supporting text goes here." },
     listItem: { noun: "list item", label: "List item", supporting: "Supporting text" },
     dialog: { noun: "dialog", label: "Confirm", supporting: "Do you want to continue?" },
+    confirmBox: { noun: "confirm box", label: "Notice", supporting: "Run this action?", label2: "Confirm", label3: "Cancel" },
     snackbar: { noun: "snackbar", label: "Saved", supporting: "Undo" },
     textField: { noun: "text field", label: "Label" },
     select: { noun: "dropdown", label: "Label" },
@@ -1801,6 +1817,8 @@ export const KIND_TEXT: Record<
     card: { noun: "卡片", label: "卡片标题", supporting: "这里是辅助说明文字。" },
     listItem: { noun: "列表项", label: "列表项", supporting: "辅助文本" },
     dialog: { noun: "对话框", label: "确认", supporting: "要执行此操作吗？" },
+    /* 确认框：标题、正文和两颗普通按钮（确认 = label2、取消 = label3）—— 全是这一个组件的属性 */
+    confirmBox: { noun: "确认框", label: "温馨提示", supporting: "确认当前操作？", label2: "确认", label3: "取消" },
     snackbar: { noun: "消息条", label: "已保存", supporting: "撤销" },
     textField: { noun: "文本输入框", label: "标签" },
     select: { noun: "下拉菜单", label: "标签" },
@@ -1850,6 +1868,7 @@ export const KIND_TEXT: Record<
     card: { noun: "카드", label: "카드 제목", supporting: "보조 텍스트가 여기에 표시됩니다." },
     listItem: { noun: "목록 항목", label: "목록 항목", supporting: "보조 텍스트" },
     dialog: { noun: "대화상자", label: "확인", supporting: "계속하시겠습니까?" },
+    confirmBox: { noun: "확인 상자", label: "알림", supporting: "이 작업을 실행할까요?", label2: "확인", label3: "취소" },
     snackbar: { noun: "스낵바", label: "저장됨", supporting: "실행 취소" },
     textField: { noun: "텍스트 입력란", label: "레이블" },
     select: { noun: "드롭다운", label: "레이블" },

@@ -23,6 +23,11 @@ import {
   itemCellBox,
   itemCellRadius,
   roundShapeRadius,
+  CONFIRM_BOX_BUTTONS,
+  CONFIRM_BOX_FILL,
+  CONFIRM_BOX_MAIN,
+  confirmBoxButtonWords,
+  confirmBoxMetrics,
   TASK_BAR_CELL_STROKE,
   TASK_BAR_CELL_STROKE_COLOR,
   TASK_BAR_FILL,
@@ -249,7 +254,7 @@ export function ButtonContent({ item, p }: { item: Item; p: Palette }) {
 function TaskBarContent({ item, p }: { item: Item; p: Palette }) {
   const w = useWeight();
   /* 条里那一枚领取按钮：由谁响应、画不画灰，见 PartPressContext —— 预览里只有它是活的 */
-  const { press, off } = useContext(PartPressContext);
+  const { press, off, preview } = useContext(PartPressContext);
   /** 这一下按在按钮上（按住时缩一点，和别处的按钮同一手感）；整条不再跟着缩 */
   const [held, setHeld] = useState(false);
   const m = taskBarMetrics(item);
@@ -410,10 +415,10 @@ function TaskBarContent({ item, p }: { item: Item; p: Palette }) {
                但**不能**写 disabled：禁用的表单控件在浏览器里连 pointerdown 都不派发，编辑器就没法
                从按钮上按下去拖动这一条了。 */
             onPointerDown={
-              press
+              swallowsInnerTap(preview, !!press)
                 ? (e) => {
                     e.stopPropagation();
-                    setHeld(true);
+                    if (!off) setHeld(true);
                   }
                 : undefined
             }
@@ -421,10 +426,10 @@ function TaskBarContent({ item, p }: { item: Item; p: Palette }) {
             onPointerCancel={() => setHeld(false)}
             onPointerLeave={() => setHeld(false)}
             onClick={
-              press
+              swallowsInnerTap(preview, !!press)
                 ? (e) => {
                     e.stopPropagation();
-                    press();
+                    press?.();
                   }
                 : undefined
             }
@@ -446,9 +451,10 @@ function TaskBarContent({ item, p }: { item: Item; p: Palette }) {
               font: "inherit",
               outline: "none",
               display: "block",
-              cursor: press ? "pointer" : "default",
+              /* 预览里这颗按钮就有按下的手感（哪怕它这一条还没配 action），和确认框那两颗同一条规矩 */
+              cursor: swallowsInnerTap(preview, !!press) && !off ? "pointer" : "default",
               /* 只有预览里才可能出现"按住"这一下；导出的图里不该带上与交互有关的东西 */
-              ...(press ? { transition: "transform 120ms cubic-bezier(0.2, 0, 0, 1)" } : undefined),
+              ...(swallowsInnerTap(preview, !!press) && !off ? { transition: "transform 120ms cubic-bezier(0.2, 0, 0, 1)" } : undefined),
               transform: held ? "scale(0.94)" : undefined,
               boxShadow: variantShadow("filled"),
               ...variantStyle("filled", p),
@@ -479,6 +485,184 @@ function TaskBarContent({ item, p }: { item: Item; p: Palette }) {
             </span>
           )}
         </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 确认框：标题、正文和两颗普通按钮，全都在一个部件里 —— 这一块不是"一个框加三个孩子"，它的每一块
+ * 都是一个属性（作者要求"融合成单组件"，见 docs/reference-prototypes/confirm-box.md）。
+ *
+ * 画的每一块都来自 confirmBoxMetrics —— 包围盒（sizeOf 的 confirmBox 一档）用的是同一个助手，所以
+ * "盒子大小"和"画出来的样子"不会各说各话：留白、标题那一行、正文带和底下那两颗按钮都是那几个数。
+ *
+ * 复用（不重画）：两颗按钮的内容交给按钮自己的内容渲染器 ButtonContent，底、圆角和影子取按钮种类
+ * 自己的那两样（variantStyle / variantShadow，和 boxStyle 的 button 一档同一套）—— 和任务信息条里
+ * 那颗领取按钮同一支笔。那条正文带和框**同色**（原稿就是这么画的），所以它在框上看不见，只是正文的
+ * 排版盒子（量折行用的，见 confirmBoxMetrics）。
+ *
+ * 点击：整块框不吃点击，**只有里面那两颗按钮吃**（作者报的「点击相当于是点击整个容器」就是这件事）。
+ * 它们各自那一下通过 PartPressContext 从 Preview 的 Tappable 递下来（见 PartPressContext 与
+ * swallowsInnerTap）：主按钮（确认）走 `press`，取消走 `pressSlot("cancel")`。编辑器画布、导出图和
+ * 市场缩略图里没有人提供它，两颗按钮因此是死的，但**不能**写 disabled —— 禁用的表单控件连 pointerdown
+ * 都不派发，编辑器就没法从按钮上按下拖动这一块了。
+ */
+function ConfirmBoxContent({ item, p }: { item: Item; p: Palette }) {
+  const w = useWeight();
+  const { press, pressSlot, off, preview } = useContext(PartPressContext);
+  /** 哪一颗正被按住（按住时缩一点，和别处的按钮同一手感）；框不跟着缩 */
+  const [held, setHeld] = useState<string | null>(null);
+  const m = confirmBoxMetrics(item);
+  const title = item.label.trim();
+  const body = (item.supporting ?? "").trim();
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: "100%",
+        height: "100%",
+        boxSizing: "border-box",
+        /* 上留白 + 标题 + 缝 + 正文带 + 缝 + 按钮那一行 + 下留白 = confirmBoxMetrics 那个高（见那里） */
+        padding: `${m.padTop}px ${m.padX}px ${m.padBottom}px`,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      {!!title && (
+        <div
+          style={{
+            height: m.titleLine,
+            flex: "0 0 auto",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            /* 标题**居中**：原稿那句「温馨提示」就摆在框的正中 */
+            textAlign: "center",
+            fontSize: m.titleFont,
+            lineHeight: 1,
+            fontWeight: w(400, 600),
+            color: p.onSurface,
+            /* 一行：标题再长也把它省略掉，不把框撑高（所以盒子和画法永远说得上话） */
+            ...ellipsis,
+          }}
+        >
+          {title}
+        </div>
+      )}
+      {!!m.band.h && (
+        <div
+          data-confirm-band=""
+          style={{
+            /* 标题和带之间那道缝：标题空着时那一行和缝一起不占（见 confirmBoxMetrics 的那道式子） */
+            marginTop: title ? m.gap : 0,
+            width: m.band.w,
+            height: m.band.h,
+            flex: "0 0 auto",
+            boxSizing: "border-box",
+            paddingTop: m.bodyPadTop,
+            paddingLeft: m.bodyPadLeft,
+            /* 带和框同色：原稿就是这么画的，所以它在框上看不见 —— 它只是正文的排版盒子 */
+            background: "transparent",
+          }}
+        >
+          <div
+            style={{
+              fontSize: m.bodyFont,
+              lineHeight: `${m.bodyLine}px`,
+              color: p.onSurface,
+              /* 正文左对齐（带内左 25、上 10，见 CONFIRM_BOX_BODY_PAD_LEFT） */
+              textAlign: "left",
+              /* 作者自己的换行留着；长单词（西文）折行而不是溢出 —— 框的高度是同一个函数量出来的 */
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
+            }}
+          >
+            {body}
+          </div>
+        </div>
+      )}
+      <div
+        style={{
+          /* 正文带和按钮之间那道缝：带空着时它和缝一起不占（见 confirmBoxMetrics） */
+          marginTop: m.band.h ? m.gap : 0,
+          height: m.button.h,
+          flex: "0 0 auto",
+          display: "flex",
+          alignItems: "center",
+          /* 左「取消」右「确认」：两颗各占一头，中间那道缝就是框宽减去两边留白和两个按钮 */
+          justifyContent: "space-between",
+        }}
+      >
+        {CONFIRM_BOX_BUTTONS.map((b) => {
+          const words = confirmBoxButtonWords(item, b.slot);
+          /* 这一颗自己的那一下：主按钮（确认）就是这一部件自己的（`flow` / `action`），取消走它那个槽
+             （见 tokens 的 CONFIRM_BOX_MAIN / CONFIRM_BOX_CANCEL_SLOT 与 Preview 的 pickSlot） */
+          const tap = b.slot === CONFIRM_BOX_MAIN ? press : pressSlot?.(b.slot);
+          /* 两颗**一模一样**：同样的吞、同样的手感、同样的画法，只有各自的词和各自的去处不同
+             （作者：「取消和确认是完全一样的普通按钮，跟名称没有关系」） */
+          const swallow = swallowsInnerTap(preview, !!tap);
+          return (
+            <button
+              key={b.field}
+              type="button"
+              data-confirm-button={b.slot || "main"}
+              data-confirm-button-off={off ? "" : undefined}
+              /* 关掉的时候把"这是个能点的东西"也说清楚：屏幕阅读器听到的是一颗不可用的按钮 */
+              aria-disabled={off || undefined}
+              /* 只有有人接的时候才吞这一下：编辑器画布里按住按钮是"从按钮上拖走这一块"的手势，
+                 吞掉的话就拖不动了（见 swallowsInnerTap）。预览里一律吞。 */
+              onPointerDown={
+                swallow
+                  ? (e) => {
+                      e.stopPropagation();
+                      if (!off) setHeld(b.field);
+                    }
+                  : undefined
+              }
+              onPointerUp={() => setHeld(null)}
+              onPointerCancel={() => setHeld(null)}
+              onPointerLeave={() => setHeld(null)}
+              onClick={
+                swallow
+                  ? (e) => {
+                      e.stopPropagation();
+                      tap?.();
+                    }
+                  : undefined
+              }
+              style={{
+                /* 按钮是那颗胶囊：104×49、半高的圆角；自己的 overflow: hidden 只管自己这一格的底和内容 */
+                width: m.button.w,
+                height: m.button.h,
+                borderRadius: m.button.h / 2,
+                boxSizing: "border-box",
+                overflow: "hidden",
+                /* 真按钮要自己清掉浏览器给的那几样（和任务信息条那颗按钮同一个理由：内边距、边框、
+                   字体、焦点框）。也**不能**写 disabled，理由见上面那段 */
+                padding: 0,
+                border: "none",
+                font: "inherit",
+                outline: "none",
+                display: "block",
+                /* 预览里这两颗按钮就有按下的手感（哪怕还没配去处） */
+                cursor: swallow && !off ? "pointer" : "default",
+                /* 只有预览里才可能出现"按住"这一下；导出的图里不该带上与交互有关的东西 */
+                ...(swallow && !off ? { transition: "transform 120ms cubic-bezier(0.2, 0, 0, 1)" } : undefined),
+                transform: held === b.field ? "scale(0.94)" : undefined,
+                /* 「置灰并停止响应」灰的是**这两颗按钮**，不是整块框（见 disablesWholePart） */
+                ...(off ? { filter: "grayscale(1)", opacity: 0.55 } : undefined),
+                boxShadow: variantShadow("filled"),
+                ...variantStyle("filled", p),
+              }}
+            >
+              <ButtonContent
+                item={{ ...item, kind: "button", label: words, icon: null, variant: "filled", size: m.button.w, size2: m.button.h }}
+                p={p}
+              />
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -1230,11 +1414,30 @@ const useClaims = () => {
  * 画在编辑器画布上、导出成图、放进市场缩略图时没有人提供它，按钮因此是死的 —— 和从前一样。
  */
 export const PartPressContext = createContext<{
-  /** 这一部件自己的那一下（状态机 + action），交给里面那颗**主**按钮（任务信息条的领取按钮） */
+  /** 这一部件自己的那一下（状态机 + action），交给里面那颗**主**按钮（任务信息条的领取按钮、
+   *  确认框的「确认」） */
   press?: () => void;
+  /** 融合部件里**不是主按钮**的那几颗：一颗按钮一个槽，取到的是那颗按钮自己的那一下（它自己的状态机
+   *  + 它自己的 action），取不到就是这一颗还没配去处。确认框的「取消」走的正是它（见 tokens 的
+   *  CONFIRM_BOX_CANCEL_SLOT 与 Preview 的 pickSlot / onSlot）。 */
+  pressSlot?: (slot: string) => (() => void) | undefined;
   /** 「置灰并停止响应」关掉了里面的按钮：画灰、不响应（见 disablesWholePart） */
   off?: boolean;
+  /** 这一部件画在**预览**的 Tappable 里（编辑器画布、导出图、市场缩略图里没有这一层）。
+   *  融合部件里那几颗按钮据此决定要不要吞掉这一下，见 swallowsInnerTap。 */
+  preview?: boolean;
 }>({});
+
+/**
+ * 融合部件里那颗按钮要不要吞掉这一下
+ *
+ * 预览里**一律吞**：这一下是那颗按钮的，不能冒到外面去 —— 一个融合部件如果放在自己的面板（或任何可点
+ * 的容器）里，点它里面那颗按钮绝不该让那层面板/那个容器响应（作者：「取消按钮就是个普通按钮就行」，
+ * 那是确认框那一次的原话，规矩对每个融合部件都一样）。
+ * 编辑器画布里只在**有人给它处理器**时才吞：那里没有 PartPressContext，按钮上按住是"从按钮上拖走
+ * 这一块"的手势，吞掉的话就拖不动了（见 TaskBarContent / ConfirmBoxContent 上那两处注释）。
+ */
+export const swallowsInnerTap = (preview: boolean | undefined, hasHandler: boolean) => !!preview || hasHandler;
 
 /** The value a slider, a slider field or a stepper stands at: what the author set, 0 when unset —
  *  clamped to the part's own range, so a slider that runs to ten thousand is read on its own scale. */
@@ -1525,6 +1728,9 @@ function Body({
 
     case "taskBar":
       return <TaskBarContent item={item} p={p} />;
+
+    case "confirmBox":
+      return <ConfirmBoxContent item={item} p={p} />;
 
 
     case "topAppBar":
@@ -2985,6 +3191,12 @@ function boxStyle(item: Item, p: Palette): React.CSSProperties {
          作者改成别的角色或者自己的颜色就按作者的（见 fillColor）。里面那两个格子各画各的底。 */
       const t = item.fill ?? TASK_BAR_FILL;
       return { background: fillColor(t, p, TASK_BAR_FILL), border: "none", color: fillInk(t, p, TASK_BAR_FILL) };
+    }
+    case "confirmBox": {
+      /* 确认框自己的底：一个刚放下的写的是 CONFIRM_BOX_FILL（作者原稿那个框的那一层），作者改成
+         别的角色或者自己的颜色就按作者的（见 fillColor）。那颗正文带和它同色，画上去看不见。 */
+      const t = item.fill ?? CONFIRM_BOX_FILL;
+      return { background: fillColor(t, p, CONFIRM_BOX_FILL), border: "none", color: fillInk(t, p, CONFIRM_BOX_FILL) };
     }
     default:
       return { background: p.surfaceContainerHigh, border: "none", color: p.onSurface };

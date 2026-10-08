@@ -313,7 +313,7 @@ const put = (into: Record<string, unknown>, key: string, value: unknown) => {
 };
 
 /** The words a part says. */
-const ITEM_TEXT = ["name", "label2", "supporting", "note", "cellText", "src", "badgeText", "badge2Text", "buttonBadgeText"] as const;
+const ITEM_TEXT = ["name", "label2", "label3", "supporting", "note", "cellText", "src", "badgeText", "badge2Text", "buttonBadgeText"] as const;
 /** The numbers it lays itself out with, each inside what its own field allows. */
 const ITEM_NUM: [string, number, number][] = [
   ["size", 1, Infinity],
@@ -379,13 +379,35 @@ const readFlow = (v: unknown): PartFlow | undefined =>
     ? ({ looks: v.looks.filter(validLook), steps: v.steps.filter(validStep) } as PartFlow)
     : undefined;
 const readStates = (v: unknown): ItemState[] | undefined => (Array.isArray(v) ? v.filter(validState) : undefined);
-/** one machine per destination of a bar, keyed the way `slotStates` is */
+/** 一台机器一张表，键就是 `slotFlows` 那些（栏的每一格、融合部件里的一颗按钮） */
 const readSlotMap = <T,>(v: unknown, read: (x: unknown) => T[] | undefined): Record<string, T[]> | undefined => {
   if (!isRecord(v)) return undefined;
   const out: Record<string, T[]> = {};
   for (const [key, list] of Object.entries(v)) {
     const read_ = read(list);
     if (read_ && read_.length) out[key] = read_;
+  }
+  return Object.keys(out).length ? out : undefined;
+};
+
+/**
+ * `slotFlows` 那张表：每一个键底下就是**一台机器**（一个 flow 对象），不是一串
+ *
+ * 它和 `slotStates` 不是同一种形状：`slotStates` 是"每个键一张表"（见 readSlotMap），而 `slotFlows`
+ * 是"每个键一台机器"。以前这里拿 readSlotMap 套上一个 `[flow]` 的映射来读，于是存下来的
+ * `{"cancel": {…}}` 读回来成了 `{"cancel": [{…}]}`：`firstTapStep` 读不到 `.steps`，那一格配的
+ * 「点击后变化」在预览里整个失效 —— 作者报的「取消」配了隐藏却不生效就是这一件事；`hasTimedSteps`
+ * 还会在那上面直接抛（读到这种文档预览就挂）。所以这里专门给它一支笔。
+ *
+ * 数组那一份照样认（取头一台）：被上面那个写法读过的文档，再存回去时写的正是这个形状，不该因为我们
+ * 自己的旧毛病就把作者配好的机器丢掉。
+ */
+const readSlotFlows = (v: unknown): Record<string, PartFlow> | undefined => {
+  if (!isRecord(v)) return undefined;
+  const out: Record<string, PartFlow> = {};
+  for (const [key, machine] of Object.entries(v)) {
+    const flow = readFlow(Array.isArray(machine) ? machine[0] : machine);
+    if (flow) out[key] = flow;
   }
   return Object.keys(out).length ? out : undefined;
 };
@@ -444,7 +466,7 @@ export function readItem(value: unknown): Item | null {
   put(it, "states", readStates(value.states));
   put(it, "flow", readFlow(value.flow));
   put(it, "slotStates", readSlotMap(value.slotStates, readStates));
-  put(it, "slotFlows", readSlotMap(value.slotFlows, (x) => (readFlow(x) ? [readFlow(x)!] : undefined)));
+  put(it, "slotFlows", readSlotFlows(value.slotFlows));
   /* what it holds: each child read the same way, so one bad part does not take its siblings with it */
   if (Array.isArray(value.children)) {
     /* a container the author emptied keeps its empty list, and a child nothing can draw is left out

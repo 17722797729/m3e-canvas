@@ -152,6 +152,9 @@ import {
   itemCellBox,
   itemCellRadius,
   taskBarMetrics,
+  confirmBoxMetrics,
+  CONFIRM_BOX_FILL,
+  tapLivesInside,
   hasStateRow,
   hasTimer,
   hidesAutoClose,
@@ -1089,6 +1092,13 @@ export function Inspector({
     return s && editOn && s.key === "icon" ? { ...s, value: shown.icon } : s;
   })();
   const actionSlots = actionSlotsOf(item);
+  /* 融合部件（任务信息条、确认框）里画在自己里面的那颗**主按钮**也是一个「目标按钮」：它那一下就是
+     这一部件自己的（`flow` / `action`），所以空键那一条摆在槽位前面 —— 面板里于是能选「领取」、
+     「确认」还是「取消」（见 docs/reference-prototypes/confirm-box.md，以及 StateRules 里
+     `target === ""` 那一处：它落回 item.flow / item.action，不进 slotFlows[""]）。 */
+  const actionTargets = tapLivesInside(item.kind)
+    ? [{ key: "", label: wordsOf(item).trim() || t("barButton", lang), value: null }, ...actionSlots]
+    : actionSlots;
   const slotBtn = (key: string, label: string | undefined, icon: string | null, on: boolean, onClick: () => void, dim?: boolean) => (
     <button
       key={key}
@@ -1163,6 +1173,8 @@ export function Inspector({
     item.kind === "itemCell" ||
     /* 任务信息条的圆角同理（不设就是 kind 自己的 16，见 baseRadii） */
     item.kind === "taskBar" ||
+    /* 确认框也是（不设就是 kind 自己的 28） */
+    item.kind === "confirmBox" ||
     item.kind === "box";
 
   return (
@@ -1267,7 +1279,7 @@ export function Inspector({
       )}
 
       {(spec.hasLabel || spec.hasSupporting) && (
-        <Section id="text" icon="title" title={t(item.kind === "taskBar" ? "barTitle" : "text", lang)} p={p}>
+        <Section id="text" icon="title" title={t(item.kind === "taskBar" || item.kind === "confirmBox" ? "barTitle" : "text", lang)} p={p}>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {spec.hasLabel && (
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -1275,9 +1287,9 @@ export function Inspector({
                   value={shown.label}
                   onChange={(label) => change({ label })}
                   /* an amount on a capsule is a count, not a name: the same word the item cell's
-                     quantity uses, so the author reads what the field is for. 任务信息条上这个字段
-                     是那条任务的标题，所以名和占位都按它来 */
-                  placeholder={item.kind === "assetPill" ? t("quantity", lang) : item.kind === "taskBar" ? t("barTitle", lang) : t("label", lang)}
+                     quantity uses, so the author reads what the field is for. 任务信息条与确认框上这个
+                     字段是那一条任务 / 那个框的标题，所以名和占位都按它来 */
+                  placeholder={item.kind === "assetPill" ? t("quantity", lang) : item.kind === "taskBar" || item.kind === "confirmBox" ? t("barTitle", lang) : t("label", lang)}
                   p={p}
                   icon="short_text"
                 />
@@ -1308,16 +1320,18 @@ export function Inspector({
               </>
             )}
             {spec.hasSupporting && !editOn && (
-              /* a card's body is a paragraph: the field wraps and grows with it, and the canvas wraps the text itself */
+              /* a card's body is a paragraph, and so is a confirm box's: the field wraps and grows with it,
+                 and the canvas wraps the text itself (the box and its band grow with the wrapped lines —
+                 see confirmBoxMetrics) */
               <Field
                 value={item.supporting ?? ""}
                 onChange={(supporting) => onChange({ supporting })}
                 placeholder={item.kind === "snackbar" ? t("action", lang) : item.kind === "itemCell" ? t("quantity", lang) : t("supporting", lang)}
                 p={p}
                 icon="notes"
-                multiline={item.kind === "card"}
+                multiline={item.kind === "card" || item.kind === "confirmBox"}
                 rows={1}
-                grow={item.kind === "card"}
+                grow={item.kind === "card" || item.kind === "confirmBox"}
               />
             )}
             {item.kind === "card" && !editOn && (
@@ -1347,6 +1361,20 @@ export function Inspector({
                 />
               </>
             )}
+          </div>
+        </Section>
+      )}
+
+      {/* 确认框那两颗按钮的文字：它们是两颗**一模一样**的普通按钮，各自配各自的字、各自配各自的去处
+          （作者：「取消和确认是完全一样的普通按钮，跟名称没有关系」），所以这里就是两行并排、没有主次
+          之分 —— 左边那颗是取消（label3）、右边那颗是确认（label2，也是这一部件自己的那颗「主按钮」，
+          见 tokens 的 CONFIRM_BOX_BUTTONS）。去哪儿的配置在下面的「点击后变化 → 目标按钮」里。 */}
+      {item.kind === "confirmBox" && !editOn && (
+        <Section id="confirmButtons" icon="smart_button" title={t("barButton", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("confirmBoxHint", lang)}</div>
+            <Field value={item.label2 ?? ""} onChange={(label2) => onChange({ label2 })} placeholder={t("confirmButton", lang)} p={p} icon="check" />
+            <Field value={item.label3 ?? ""} onChange={(label3) => onChange({ label3 })} placeholder={t("cancelButton", lang)} p={p} icon="close" />
           </div>
         </Section>
       )}
@@ -2185,7 +2213,7 @@ export function Inspector({
       {spec.hasFill && item.kind !== "box" && !editOn && (
         <Section id="fill" icon="format_color_fill" title={t("background", lang)} p={p}>
           <TokenChips
-            value={item.kind === "card" ? cardFillOf(item) : (item.fill ?? "surfaceContainerLow")}
+            value={item.kind === "card" ? cardFillOf(item) : (item.fill ?? (item.kind === "confirmBox" ? CONFIRM_BOX_FILL : "surfaceContainerLow"))}
             onChange={(fill) => onChange({ fill })}
             p={p}
             /* a card's fallback is its own tonal colour; a progress bar's track is simply not there */
@@ -2601,7 +2629,9 @@ export function Inspector({
                         ? fnButtonHeight(item.size ?? spec.defSize ?? spec.w, fnButtonLines(item))
                         : item.kind === "taskBar"
                           ? taskBarMetrics(item).h
-                          : spec.h)
+                          : item.kind === "confirmBox"
+                            ? confirmBoxMetrics(item).h
+                            : spec.h)
                   }
                   min={spec.size2.min}
                   max={heightMax(spec.size2.max)}
@@ -2705,6 +2735,20 @@ export function Inspector({
               />
             )}
 
+            {hasRadius && item.kind === "confirmBox" && (
+              /* 确认框的圆角：一个数管四条边（一个确认框是一个圆角矩形），控件还是图片/资产框那个
+                 「圆角」。不设画的就是 kind 自己的 28（作者原稿那个框就是 28）。 */
+              <Slider
+                icon="rounded_corner"
+                title={t("cornerRadius", lang)}
+                value={item.radiusTop ?? spec.radius}
+                min={0}
+                max={48}
+                step={1}
+                onChange={(radiusTop) => onChange({ radiusTop })}
+                p={p}
+              />
+            )}
             {hasRadius && (item.kind === "card" || item.kind === "box" || item.kind === "invGrid") && (() => {
               /* One radius for every corner until the author asks for each. The seeds match what the
                * canvas draws: a box's unset side is 0, a card's and a slot grid's unset radius is the
@@ -2833,7 +2877,7 @@ export function Inspector({
             onChange={onChange}
             frames={frames}
             dialog={dialog}
-            slots={actionSlots}
+            slots={actionTargets}
             lookTargets={lookTargets}
             slot={actionSlot}
             onSlot={setActionSlot}
@@ -3281,7 +3325,7 @@ const LOOK_FIELDS: { key: "label" | "icon" | "color" | "variant" | "disabled" | 
 /** 「改变文字」这一类在这一部件上的名字：任务信息条的文字在按钮上，所以在那儿它念作「按钮文字」
  *  （和文字那一节按种类改名同一个规矩，见上面 id="text" 那一节）。 */
 export const lookFieldTitle = (key: (typeof LOOK_FIELDS)[number]["key"], title: UIKey, item: Pick<Item, "kind">): UIKey =>
-  key === "label" && item.kind === "taskBar" ? "barButton" : title;
+  key === "label" && item.kind === "taskBar" ? "barButton" : key === "label" && item.kind === "confirmBox" ? "confirmButton" : title;
 
 /** The value a field starts with when an author turns it on: the part's own, so switching a field on
  *  never changes what the node looks like until the author edits it.
@@ -3554,7 +3598,7 @@ function FlowEditor({
                     );
                   })}
                 </div>
-                {node.look.label !== undefined && <Field value={node.look.label} onChange={(label) => patchLook(node.id, { label })} p={p} placeholder={t(item.kind === "taskBar" ? "barButton" : "lookText", lang)} icon="edit" height={36} />}
+                {node.look.label !== undefined && <Field value={node.look.label} onChange={(label) => patchLook(node.id, { label })} p={p} placeholder={t(item.kind === "taskBar" ? "barButton" : item.kind === "confirmBox" ? "confirmButton" : "lookText", lang)} icon="edit" height={36} />}
                 {node.look.icon !== undefined && <IconPicker value={node.look.icon} onChange={(icon) => patchLook(node.id, { icon })} onClose={() => {}} palette={p} />}
                 {node.look.color !== undefined && <ItemColorChips value={node.look.color} onChange={(color) => patchLook(node.id, { color })} p={p} />}
                 {node.look.variant !== undefined && (
@@ -3636,9 +3680,12 @@ function StateRules({
   /** the other parts on the page, for a look that changes one of them */
   lookTargets?: { id: string; name: string; path?: string; kind: Kind; icon?: string; item?: Item; where?: string }[];
 }) {
-  /* a bar's rules belong to one destination; a plain part keeps them on itself */
+  /* a bar's rules belong to one destination; a plain part keeps them on itself.
+     空键那一条说的是**这一部件自己**（融合部件里画在自己里面的主按钮）—— 所以它落在
+     `item.flow` / `item.action` 上，和"整块部件自己的那一下"是同一处，预览里也是同一处
+     （见 InspectorPanel 的 actionTargets 与 Preview 的 fireTap）。 */
   const target = slots.length > 0 ? slot || slots[0].key : "";
-  const perSlot = slots.length > 0;
+  const perSlot = slots.length > 0 && target !== "";
   /* the machine this part — or this destination of a bar — runs */
   const flow = perSlot ? item.slotFlows?.[target] : item.flow;
   const writeFlow = (next: PartFlow | undefined) => {
@@ -3736,7 +3783,10 @@ function StateRules({
         </div>
       )}
 
-      {(flow?.looks.length ?? 0) === 0 && <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant }}>{t("transitionsHint", lang)}</div>}
+      {/* 一句"给这个部件加一条点击后变化"的提示 —— 只在**什么都没配**的时候才有话说：一份机器可以只有
+          步骤、没有自己的状态（"留在原地，只做动作"，见 FlowEditor 的 link），那时候提示是多余的
+          （确认框刚落下就带着「点一下 → 隐藏这一块」这样一步）。 */}
+      {(flow?.looks.length ?? 0) === 0 && (flow?.steps.length ?? 0) === 0 && <div style={{ fontSize: 12, lineHeight: 1.5, color: p.onSurfaceVariant }}>{t("transitionsHint", lang)}</div>}
       {/* the state machine itself: the looks the part can be in, and what moves it between them */}
       <div style={card}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

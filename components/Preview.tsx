@@ -50,7 +50,10 @@ import {
   groupsInFrame,
   isPhoneFrame,
   normalizeTheme,
+  mergeSlotStates,
+  resolveSlotStates,
   resolveStates,
+  slotLookOwner,
   firstTapStep,
   firstDueStep,
   hasTimedSteps,
@@ -413,7 +416,12 @@ function Tappable({
   const asked = pin ? withLook(item, pin) : item;
   /* the machine's own look sits on top: the part as drawn, then whatever a step latched onto it,
      then the look its own flow has moved it to */
-  const own = states ? resolveStates(asked, states.at, states.now) : null;
+  /* 融合部件里那几颗按钮各自的状态机也落在这一块上：它们的机位是 `<id>:<槽位>`，而它们不是画布上独立
+     的部件 —— 不并进来就是"机器跑了但屏幕上什么都没变"（确认框那一次作者报的就是这件事：「取消」配了
+     隐藏面板却不生效；见 docs/reference-prototypes/confirm-box.md）。今天没有融合部件带槽位，所以这一句
+     是空转；留着是因为它是这条规矩唯一的实现处。栏的每一格不并（它的 hidden/disabled 说的是那一格）。 */
+  const own0 = states ? resolveStates(asked, states.at, states.now) : null;
+  const own = own0 && states && tapLivesInside(item.kind) ? mergeSlotStates(own0, resolveSlotStates(asked, states.at, states.now)) : own0;
   const view0 = own ? own.item : asked;
   const current = !!states && states.activeId === item.id && SHAPED.includes(item.kind) && !own?.disabled && !own?.hidden;
   const view = current && !view0.color ? { ...view0, color: "primaryContainer" } : view0;
@@ -829,7 +837,15 @@ function Tappable({
         value={{
           /* 主按钮：这一部件自己的那一下（状态机 + action） */
           press: innerTap && live ? fireTap : undefined,
+          /* 融合部件里**不是主按钮**的那几颗：一颗按钮一个槽，每一颗都走它自己那台机器、它自己那个
+             动作 —— 和栏上每一格同一份 `pickSlot`（见那里）。确认框的「取消」就是走这条路的
+             （`slotFlows.cancel` / `actions.cancel`，见 tokens 的 CONFIRM_BOX_CANCEL_SLOT）。
+             `onSlot` 在槽位那一路已经有人给了（见 Screen 里的 slotTaps），这里只是把它转成"取某一颗
+             按钮的那一下"。 */
+          pressSlot: innerTap && live && onSlot ? (slot: string) => () => onSlot(slot) : undefined,
           off: innerTap && frozen,
+          /* 这一层只有预览有：融合部件里那几颗按钮据此决定要不要吞掉自己那一下（见 swallowsInnerTap） */
+          preview: true,
         }}
       >
       <M3Node
@@ -1141,9 +1157,11 @@ function Screen({
       onValue(`fold:${it.id}`, folded ? 0 : 1);
       return;
     }
-    /* a destination's own machine: the tab that changes what it says when tapped */
+    /* 一个落点自己的机器：这一格点下去变什么。步骤里那份"改变属性"落在谁头上由 slotLookOwner 定 ——
+       栏／标签页的每一格没有归属（不盖到整条栏上），融合部件里画在自己里面的按钮则落在这一块自己身上
+       （作者给确认框的「取消」配「隐藏」，说的就是把这一块收起来）。 */
     const flow = it.slotFlows?.[slot];
-    if (flow && runtime.onStep(`${it.id}:${slot}`, flow, null) !== "none") return;
+    if (flow && runtime.onStep(`${it.id}:${slot}`, flow, slotLookOwner(it)) !== "none") return;
     if (isNavKind(it) && slot.startsWith("tab:")) {
       const key = navKeyOf(it);
       onValue(key, a ? -1 : Number(slot.slice(4)));
@@ -1172,7 +1190,7 @@ function Screen({
   useEffect(() => {
     for (const it of itemsOf(shownGroups)) {
       const machines: { key: string; owner: string | null; flow: PartFlow | undefined }[] = [{ key: it.id, owner: it.id, flow: it.flow }];
-      for (const [slot, flow] of Object.entries(it.slotFlows ?? {})) machines.push({ key: `${it.id}:${slot}`, owner: null, flow });
+      for (const [slot, flow] of Object.entries(it.slotFlows ?? {})) machines.push({ key: `${it.id}:${slot}`, owner: slotLookOwner(it), flow });
       for (const { key, owner, flow } of machines) {
         const entry = runtime.at[key];
         const elapsed = Math.max(0, (runtime.now - (entry?.since ?? shownAt.current)) / 1000);
@@ -1468,7 +1486,11 @@ function Screen({
                     if (act) runAction(act);
                   }
                 : undefined;
-            const slotActions = it.actions;
+            /* 槽位那几颗按钮各自那一下由谁接：作者配了**动作**（actions）或配了**状态机**
+               （slotFlows，面板里的「点击后变化」）、或者这是个融合部件（它的按钮画在自己里面，总得有人
+               接）—— 三者有一就算。少看一样就会出现"配了却不生效"（确认框那一次：只给「取消」配了
+               `slotFlows.cancel` = 隐藏这一块，而这里以前只看 `actions`，那颗按钮根本没人接）。 */
+            const slotTaps = it.actions || it.slotFlows || tapLivesInside(it.kind);
             const node = (
               <Tappable
                 key={it.id}
@@ -1485,7 +1507,7 @@ function Screen({
                 states={runtime}
                 scrollRt={scrollRt}
                 looks={runtime.pinned}
-                onSlot={slotActions || navKind ? (slot, animate) => pickSlot(it, slot, animate) : undefined}
+                onSlot={slotTaps || navKind ? (slot, animate) => pickSlot(it, slot, animate) : undefined}
                 /* a container hands these to its own children, so a bar, a row of tabs or a
                    dropdown inside a dialog panel answers exactly as one on the screen does */
                 childView={sample}

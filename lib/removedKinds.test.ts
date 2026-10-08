@@ -25,6 +25,21 @@ describe("a kind this build dropped", () => {
     for (const { key } of LANGS) expect(Object.keys(KIND_TEXT[key]), key).not.toContain("fabMenu");
   });
 
+  it("no longer names the confirm box, which is a kind of its own again", () => {
+    /* 上一版做到一半的 confirmBox 曾被列在这里（作者画布上那一枚会在读入时被丢掉）；重做之后它是
+       组件面板里正常的一员，所以这个名字必须从这张表里拿掉 —— 留在表里的话，新画的确认框会被读成
+       "这个构建画不出来的部件"，整块连同里面的东西一起消失。 */
+    expect(REMOVED_KINDS).not.toContain("confirmBox");
+    expect(isRemovedKind({ kind: "confirmBox" })).toBe(false);
+    expect(KIND_ORDER).toContain("confirmBox" as never);
+    expect(Object.keys(KIND_SPEC)).toContain("confirmBox");
+    for (const { key } of LANGS) expect(Object.keys(KIND_TEXT[key]), key).toContain("confirmBox");
+    /* 一份只画着确认框的文档读得回来，部件一个不少 */
+    const it = { ...makeItem("confirmBox"), id: "cb", label: "温馨提示", label2: "确认", label3: "取消" } as Item;
+    expect(isPlacedItem(it)).toBe(true);
+    expect(readDoc(stored([it]))!.groups[0].items.map((x) => x.kind)).toEqual(["confirmBox"]);
+  });
+
   it("does not make the document invalid, and its part is left out", () => {
     const doc: unknown = stored([menu(), box()]);
     expect(isProject(doc)).toBe(true);

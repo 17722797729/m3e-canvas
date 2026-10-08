@@ -155,12 +155,13 @@ export function MobileInspector({
       </div>
 
       {(spec.hasLabel || spec.hasSupporting) && (
-        /* 任务信息条上这个字段是那条任务的标题，所以名和占位都按它来（和桌面检查器同一句话） */
-        <Row icon="title" label={t(item.kind === "taskBar" ? "barTitle" : "text", lang)} p={p}>
+        /* 任务信息条与确认框上这个字段是那一条任务 / 那个框的标题，所以名和占位都按它来（和桌面检查器
+           同一句话） */
+        <Row icon="title" label={t(item.kind === "taskBar" || item.kind === "confirmBox" ? "barTitle" : "text", lang)} p={p}>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {spec.hasLabel && (
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <Field value={item.label} onChange={(label) => onChange({ label })} placeholder={item.kind === "assetPill" ? t("quantity", lang) : item.kind === "taskBar" ? t("barTitle", lang) : t("label", lang)} p={p} icon="short_text" height={48} />
+                <Field value={item.label} onChange={(label) => onChange({ label })} placeholder={item.kind === "assetPill" ? t("quantity", lang) : item.kind === "taskBar" || item.kind === "confirmBox" ? t("barTitle", lang) : t("label", lang)} p={p} icon="short_text" height={48} />
                 {item.kind === "text" && (
                   <IconBtn icon="format_bold" p={p} size={48} on={!!item.bold} onClick={() => onChange({ bold: !item.bold })} title={t("bold", lang)} />
                 )}
@@ -373,6 +374,19 @@ export function MobileInspector({
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("taskBarHint", lang)}</div>
             <Field value={item.label2 ?? ""} onChange={(label2) => onChange({ label2 })} placeholder={t("barButton", lang)} p={p} icon="smart_button" height={48} />
+          </div>
+        </Row>
+      )}
+
+      {/* 确认框：标题、正文和两颗按钮都是这一个部件的属性（和桌面检查器同样那一节，手机面板只是把它
+          镜像成一行一行）。两颗是**一模一样**的普通按钮，只是文字不同，各自配各自的去处 —— 所以这里
+          就是两行并排，没有主次之分（见 KIND_SPEC.confirmBox / M3Node 的 ConfirmBoxContent）。 */}
+      {item.kind === "confirmBox" && (
+        <Row icon="smart_button" label={t("barButton", lang)} p={p}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 11, lineHeight: 1.5, color: p.outline }}>{t("confirmBoxHint", lang)}</div>
+            <Field value={item.label2 ?? ""} onChange={(label2) => onChange({ label2 })} placeholder={t("confirmButton", lang)} p={p} icon="check" height={48} />
+            <Field value={item.label3 ?? ""} onChange={(label3) => onChange({ label3 })} placeholder={t("cancelButton", lang)} p={p} icon="close" height={48} />
           </div>
         </Row>
       )}
