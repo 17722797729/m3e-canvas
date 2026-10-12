@@ -3404,6 +3404,10 @@ export function actionSlotsOf(it: Item): IconSlot[] {
      一下就是这一部件自己的（`flow` / `action`），面板把空键那一条摆在槽位前面，于是「目标按钮」里两颗
      都能选（见 Inspector 的 StateRules 与 docs/reference-prototypes/confirm-box.md）。 */
   if (it.kind === "confirmBox") return [{ key: CONFIRM_BOX_CANCEL_SLOT, label: confirmBoxButtonWords(it, CONFIRM_BOX_CANCEL_SLOT) || t("cancel"), value: null }];
+  /* 列表行（好友列表那种）两头各有一颗图标：**每颗都是一处独立的落点**，各有各的去处、各有各的机器
+     （`actions.icon` / `slotFlows.icon`）。整行自己也还是一处（点开详情），所以「目标按钮」里空键照旧
+     排在前面 —— 见 slotsBesideSelf。没配东西的那一颗不是按钮：预览不给它铺热区（见 listSlotKeys）。 */
+  if (it.kind === "listItem") return iconSlotsOf(it).filter((s) => !!s.value);
   if (isTabRow(it)) return (it.tabs ?? []).map((t, i) => ({ key: `tab:${i}`, label: t.label || `${i + 1}`, value: null }));
   return [];
 }
@@ -3912,8 +3916,44 @@ export function resolveStates(it: Item, at: MachineAt, now: number): PartState {
  * 就是这一块 —— 作者给「取消」配「隐藏」时，说的是把这一块收起来（作者：「取消按钮就是个普通按钮就
  * 行」，见 docs/reference-prototypes/confirm-box.md）。所以归属是这一部件自己，和主按钮那一下同一处
  * （Preview 的 fireTap 传的也是它自己）。
+ *
+ * 列表行（好友列表那种）同理：两头那两颗图标不是画布上独立的部件，"自己"就是这一行 —— 给右边那颗删除
+ * 图标配「隐藏」，说的是把这一行收起来。
  */
-export const slotLookOwner = (it: Pick<Item, "id" | "kind">): string | null => (tapLivesInside(it.kind) ? it.id : null);
+export const slotLookOwner = (it: Pick<Item, "id" | "kind">): string | null => (slotsBesideSelf(it) ? it.id : null);
+
+/**
+ * 这一部件的「槽位」和「它自己」是不是**并存**的两处落点
+ *
+ * 融合部件（任务信息条、确认框）里那几颗按钮画在部件自己身上，而这一块自己那一下也是活的；
+ * 列表行（好友列表那种）也一样：整行是一颗按钮（点开详情），两头那两颗图标各自还可以是按钮。
+ * 这两种部件的「目标按钮」里因此要把"它自己"（空键）摆在槽位前面（见 Inspector 的 actionTargets
+ * 与 lib/tokens 的 slotLookOwner）。
+ *
+ * 导航栏、标签行不一样：那一条自己没有点击（点的是上面那几格），所以空键不出现。
+ */
+export const slotsBesideSelf = (it: Pick<Item, "kind">): boolean => tapLivesInside(it.kind) || it.kind === "listItem";
+
+/**
+ * 这一处落点（某一格、某一颗图标）**配了自己的活儿**没有
+ *
+ * 栏上每一格天生就是按钮；列表行两头的图标不是 —— 没配之前它们画的还是装饰，点上去该是整行那一下。
+ * 预览据此决定要不要给那一颗图标铺热区（见 Preview 的 slots）：只有真配了去处或步骤的才算按钮。
+ */
+export const slotHasJob = (it: Item, slot: string): boolean =>
+  !!it.actions?.[slot]?.to || (it.slotFlows?.[slot]?.steps ?? []).some((st) => (st.do ?? []).length > 0);
+
+/**
+ * 列表行上**算得上按钮**的那几颗图标（预览给它们铺热区，一颗一片）
+ *
+ * 只有左（`icon`）、右（`icon2`）两颗：右边那颗在有开关（`switch`）时画的是开关而不是图标，所以不算。
+ */
+export function listSlotKeys(it: Item): string[] {
+  const keys: string[] = [];
+  if (it.icon && slotHasJob(it, "icon")) keys.push("icon");
+  if (it.icon2 && !it.switch && slotHasJob(it, "icon2")) keys.push("icon2");
+  return keys;
+}
 
 /**
  * 融合部件里那几颗按钮各自的状态机解出来的状态
@@ -4571,8 +4611,15 @@ export const foldsToPill = (it: Item) => (it.kind === "bottomNav" && !!it.barFol
  * grab (a child that fills its container cannot be moved inside it) and stops it behaving like the
  * part it is.
  */
-export function compositeInstance(part: CustomPart, id: () => string = uid): Item {
-  const copied = part.items.map((it) => copySubtree(it, id, new Map()) as PlacedItem);
+/**
+ * 一份组合组件落到画布上的那一个部件
+ *
+ * `ids` 是可选的收件箱：这份组件里**旧部件 id → 新部件 id** 会写进去。跨屏组件落地时要用它把
+ * 组件内部的引用（画在同一屏上的浮层、"改别的部件"、`shows`）重指到复制出来的新 id 上
+ * （见 lib/screens.ts 的 remapRefs）。
+ */
+export function compositeInstance(part: CustomPart, id: () => string = uid, ids: Map<string, string> = new Map()): Item {
+  const copied = part.items.map((it) => copySubtree(it, id, ids) as PlacedItem);
   const only = copied[0];
   if (copied.length === 1 && only) {
     /* a part that folds to a pill keeps the width and height it will want when it opens again */

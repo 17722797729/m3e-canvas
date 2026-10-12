@@ -13,10 +13,17 @@ import {
   GAP,
   Group,
   Item,
+  PHONE_H,
+  PHONE_W,
   PlacedItem,
   foldPlace,
+  frameOfGroup,
+  isOverlayLevel,
   layoutOf,
   sizeOf,
+  type Frame,
+  type FrameRole,
+  type OverlayLevel,
 } from "./tokens";
 import { readItem } from "./project";
 import type { ComponentTypeCode, MarketComponent, MyComponent } from "./syai";
@@ -73,6 +80,14 @@ export interface SerializedGroup {
 
 /** 上传时一起存下来的「原屏幕」：详情里照着它复现上传前的那一屏 */
 export interface ScreenData {
+  /**
+   * 上传前它在作者文档里的 frame id
+   *
+   * 落地那一步靠它认引用：数据里那些引用（`action.to`、`goto.to`、`look.target`、`shows`）写的正是
+   * 这些 id，重建出来的屏与新部件要按它一一对上（见 lib/screens.ts 的 placeScreens / remapRefs）。
+   * 对读的人没有别的意义，所以是可选的：没有它的屏照样画得出来，只是带不动跨屏引用。
+   */
+  id?: string;
   /** 屏幕名称 */
   name: string;
   /** 屏幕尺寸 */
@@ -80,6 +95,14 @@ export interface ScreenData {
   h: number;
   /** 屏幕底色 */
   bg?: string;
+  /** 这一屏是给访客看的页，还是弹在别的屏上的一层（见 Frame.role）。不写就是页。 */
+  role?: FrameRole;
+  /** 浮层的层级（浮层才有，见 Frame.level） */
+  level?: OverlayLevel;
+  /** 浮层自己收起来的秒数（见 Frame.autoClose） */
+  autoClose?: number;
+  /** 这一屏是干什么的（见 Frame.note） */
+  note?: string;
   /** 屏幕里的组，坐标已经相对屏幕左上角 */
   groups: SerializedGroup[];
 }
@@ -91,9 +114,17 @@ export interface MarketPart {
   h: number;
   /**
    * 上传前的那一屏（连同里面的组件）：详情页照着它画，所以预览里看到的就是上传前看到的。
-   * 旧数据没有这一项，详情就只能画组件自己。
+   * 旧数据没有这一项，详情就只能画组件自己。**它就是 `screens[0]`**（保留这个字段是为了老读者）。
    */
   screen?: ScreenData;
+  /**
+   * 这份组件一起带上来的**那一组屏**（起屏在第一个，其余是它引用到的）：跨屏联动靠它——
+   * 引用是按 id 写的，换一份文档就不成立，所以引用到的屏必须一起打包，落地时再重指
+   * （见 lib/screens.ts 与 docs/multi-screen-component.md）。
+   *
+   * 旧组件只有 `screen` 一屏；这里因此**总是**至少放进那一屏（没有屏幕时是空数组）。
+   */
+  screens: ScreenData[];
   /** 紧凑包围盒里的这些组，按画布上的同一套几何画出来 */
   groups: Group[];
   /** 旧的扁平形态：逐个组件按绝对位置摆（没有组结构可依时用它） */
@@ -183,6 +214,82 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
 /**
+ * 一屏要打包时的样子：这一屏**自己的组**（坐标相对屏幕左上角）+ 它的身份
+ *
+ * 上传一个屏幕时用它把起屏存下来；跨屏组件则每一屏用它一遍（屏的那一组来自 lib/screens.ts 的闭包）。
+ *
+ * 身份（`role` / `level` / `autoClose` / `note`）必须一起存：落地时照着它把这一屏重建出来 —— 尤其是
+ * `role: "overlay"`，不写它就变成一页普通屏幕，弹框就不再弹了。
+ *
+ * 折叠过的导航部件在画布上被挪过一次（`foldPlace`）：把那份位移写进坐标里，别处再画出来时就不会又挪
+ * 一次 —— 和 `tightenGroups` 同一个规矩。
+ */
+export function screenDataOf(frame: Frame, groups: Group[], frames: Frame[], widths: Record<string, number>): ScreenData {
+  return {
+    id: frame.id,
+    name: frame.name,
+    w: Math.max(1, Math.round(frame.w ?? PHONE_W)),
+    h: Math.max(1, Math.round(frame.h ?? PHONE_H)),
+    ...(frame.bg ? { bg: frame.bg } : undefined),
+    ...(frame.role ? { role: frame.role } : undefined),
+    ...(frame.level ? { level: frame.level } : undefined),
+    ...(frame.autoClose !== undefined ? { autoClose: frame.autoClose } : undefined),
+    ...(frame.note ? { note: frame.note } : undefined),
+    groups: groups
+      .filter((g) => frameOfGroup(g, frames, widths)?.id === frame.id)
+      .map((g) => ({
+        x: g.x - frame.x,
+        y: g.y - frame.y,
+        axis: g.axis,
+        ...(g.free ? { free: true as const } : undefined),
+        ...(g.pos ? { pos: g.pos } : undefined),
+        items: (g.items as PlacedItem[]).map((it) => {
+          const place = foldPlace(it, widths);
+          return { ...it, x: it.x + place.dx, y: it.y + place.dy };
+        }),
+      })),
+  };
+}
+
+/**
+ * 一屏存下来的样子 —— 组件自己带着的那几屏都走这里
+ *
+ * 读不出来就整屏丢掉（`undefined`）：尺寸站不住、或者一组组都没有的屏，画不出也没法落地。
+ * `role` / `level` / `autoClose` / `note` 都是一屏自己的身份，落地时要照着它把这一屏重建出来
+ * （尤其是 `role: "overlay"`：不写它就变成一页普通屏幕，弹框就不再弹了）。
+ */
+function readScreen(value: unknown): ScreenData | undefined {
+  if (!isRecord(value)) return undefined;
+  const w = Number(value.w);
+  const h = Number(value.h);
+  const groups = readGroups(value.groups);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0 || groups.length === 0) return undefined;
+  const role = value.role === "overlay" || value.role === "screen" ? value.role : undefined;
+  const level = isOverlayLevel(value.level) ? value.level : undefined;
+  const autoClose = typeof value.autoClose === "number" && Number.isFinite(value.autoClose) && value.autoClose >= 0 ? value.autoClose : undefined;
+  const note = typeof value.note === "string" ? value.note : undefined;
+  return {
+    ...(typeof value.id === "string" && value.id ? { id: value.id } : undefined),
+    name: typeof value.name === "string" ? value.name : "",
+    w: Math.round(w),
+    h: Math.round(h),
+    ...(typeof value.bg === "string" ? { bg: value.bg } : undefined),
+    ...(role ? { role } : undefined),
+    ...(level ? { level } : undefined),
+    ...(autoClose !== undefined ? { autoClose } : undefined),
+    ...(note ? { note } : undefined),
+    groups: groups.map((g) => ({
+      x: g.x,
+      y: g.y,
+      axis: g.axis,
+      ...(g.free ? { free: true as const } : undefined),
+      ...(g.pos ? { pos: g.pos } : undefined),
+      items: g.items as PlacedItem[],
+    })),
+  };
+}
+
+/**
  * 解析组件数据。市场里的组件可能是别的版本的编辑器上传的，
  * 这里只认自己画得出来的部分：结构不对就整体拒掉，免得一块坏数据把画布拖垮。
  */
@@ -200,29 +307,12 @@ export function parseMarketData(data: string | undefined | null): MarketPart | n
   const h = Number(raw.h);
   if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
 
-  /* 原屏幕是可选的：有它才画得出「上传前那一屏」 */
-  let screen: ScreenData | undefined;
-  if (isRecord(raw.screen)) {
-    const sw = Number(raw.screen.w);
-    const sh = Number(raw.screen.h);
-    const screenGroups = readGroups(raw.screen.groups);
-    if (Number.isFinite(sw) && Number.isFinite(sh) && sw > 0 && sh > 0 && screenGroups.length > 0) {
-      screen = {
-        name: typeof raw.screen.name === "string" ? raw.screen.name : "",
-        w: Math.round(sw),
-        h: Math.round(sh),
-        ...(typeof raw.screen.bg === "string" ? { bg: raw.screen.bg } : undefined),
-        groups: screenGroups.map((g) => ({
-          x: g.x,
-          y: g.y,
-          axis: g.axis,
-          ...(g.free ? { free: true as const } : undefined),
-          ...(g.pos ? { pos: g.pos } : undefined),
-          items: g.items as PlacedItem[],
-        })),
-      };
-    }
-  }
+  /* 原屏幕是可选的：有它才画得出「上传前那一屏」。新版把它读成"那一组屏"，旧版只有第一屏。 */
+  const bundled = Array.isArray(raw.screens)
+    ? raw.screens.map(readScreen).filter((s): s is ScreenData => !!s)
+    : [];
+  const first = bundled[0] ?? readScreen(raw.screen);
+  const screens: ScreenData[] = bundled.length > 0 ? bundled : first ? [first] : [];
 
   /* 新形态是一组组存的（连排组因此还在）；老形态只有一个扁平的 items */
   const groups = readGroups(raw.groups);
@@ -243,7 +333,8 @@ export function parseMarketData(data: string | undefined | null): MarketPart | n
     h: round(h),
     groups,
     items,
-    ...(screen ? { screen } : undefined),
+    screens,
+    ...(first ? { screen: first } : undefined),
     ...(Object.keys(widths).length ? { widths } : undefined),
     part: {
       id: "",
@@ -284,22 +375,32 @@ export const isJoinedPart = (part: CustomPart): boolean =>
  *
  * `groups` 保留组的结构，连排的按钮/列表项在市场里仍然是连排的（圆角与间距不走样）；
  * `items` 仍然写一份扁平的，好让读旧格式的版本也能画出东西。
+ *
+ * `screen` / `screens` 是**组件一起带上来的那几屏**（起屏在前）：`screens` 里是闭包（引用到的屏也在
+ * 里面，见 lib/screens.ts），`screen` 只是它的第一屏 —— 老读者认那一项，详情页的现有预览也用它。
  */
 export const packData = (
   groups: SerializedGroup[],
   size: { w: number; h: number },
   widths?: Record<string, number>,
   screen?: ScreenData,
-): string =>
-  JSON.stringify({
+  /** 一起打包的这一组屏（起屏在前）。不给就照旧只写 `screen`：只上传一屏、以及老路径。 */
+  screens?: ScreenData[],
+): string => {
+  const bundled = screens && screens.length > 0 ? screens : screen ? [screen] : [];
+  const first = bundled[0];
+  return JSON.stringify({
     w: size.w,
     h: size.h,
     groups,
     items: groups.flatMap((g) => g.items),
-    /* 原屏幕：详情页用它复现「上传前的那一屏」 */
-    ...(screen && screen.groups.length ? { screen } : undefined),
+    /* 第一屏：详情页用它复现「上传前的那一屏」，老版本的读者也只认它 */
+    ...(first && first.groups.length ? { screen: first } : undefined),
+    /* 整组屏：只有真的不止一屏时才写 —— 只上传一屏的老路径，载荷里因此一个字都不多 */
+    ...(bundled.length > 1 ? { screens: bundled } : undefined),
     ...(widths && Object.keys(widths).length ? { widths } : undefined),
   });
+};
 
 /** 组件在列表里的一行小字：作者名 */
 export const authorOf = (component: MarketComponent | MyComponent): string => {

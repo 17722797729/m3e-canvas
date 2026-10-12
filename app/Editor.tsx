@@ -50,7 +50,9 @@ import { UploadMarketDialog } from "@/components/UploadMarketDialog";
 import { AvatarMenu } from "@/components/AvatarMenu";
 import { bootSession, useSession } from "@/lib/session";
 import { MarketComponent, MyComponent, deleteMyComponent, myComponentList } from "@/lib/syai";
-import { categoryOf, isJoinedPart, partOf } from "@/lib/market";
+import { categoryOf, isJoinedPart, parseMarketData, partOf, type ScreenData } from "@/lib/market";
+/* 跨屏组件落地：把带过来的屏建成真屏，再把引用重指过去（见 docs/multi-screen-component.md） */
+import { placeScreens, remapRefs, remapTree } from "@/lib/screens";
 import { markFromEditor } from "@/lib/appPath";
 import { BUILTIN_CANVAS_DOC, BUILTIN_CANVAS_ID, BUILTIN_CANVAS_NAME } from "@/lib/builtinCanvas";
 import {
@@ -133,6 +135,14 @@ type DragState = {
   /** the container under the pointer: dropping there makes the part its child */
   over?: string | null;
   settling: boolean;
+  /**
+   * 跨屏组件一起带上来的那几屏（起屏在前），以及这一份实例的**旧部件 id → 新部件 id**
+   *
+   * 引用是按 id 写的，落地时要等"落在哪一页"定下来才认得出该重指到哪儿（起屏指向那一页），
+   * 所以屏与映射跟着这一次拖动走到放手那一刻（见 lib/screens.ts 的 placeScreens / remapRefs）。
+   */
+  screens?: ScreenData[];
+  ids?: Map<string, string>;
 };
 
 type Gesture =
@@ -1330,7 +1340,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
   };
 
   /** starts carrying a fresh part from the palette (a kind, or a whole composite) */
-  const startPartDrag = (e: React.PointerEvent, item: Item) => {
+  const startPartDrag = (e: React.PointerEvent, item: Item, carry?: { screens: ScreenData[]; ids: Map<string, string> }) => {
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
@@ -1357,6 +1367,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       snap: null,
       settling: false,
       guide: null,
+      ...(carry ? { screens: carry.screens, ids: carry.ids } : undefined),
     };
     dragRef.current = d;
     setDrag({ ...d });
@@ -1579,6 +1590,17 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
               : fitBar(frameSizeOf(targetFrame).w, frameSizeOf(targetFrame).h)
             : fitHeight(landing, frameSizeOf(targetFrame).h)
           : landing;
+      /* 跨屏组件：一起带上来的那几屏建成真屏，并把引用重指过去。起屏**不建** —— 它的内容就是这一个
+         实例、落在这一页上，所以"回到起屏"的引用指向这一页（组件在哪儿，那一屏就在哪儿）。
+         屏与屏往右让开，和"新建屏幕"落在最右边同一个规矩。见 lib/screens.ts 与
+         docs/multi-screen-component.md。 */
+      const placed = d.screens && d.screens.length > 1 && targetFrame
+        ? placeScreens(d.screens, { frameId: targetFrame.id, x: nextFrameX(), y: targetFrame.y }, uid)
+        : null;
+      const frameMap = placed?.frameMap;
+      const itemMap = placed ? new Map<string, string>([...(d.ids ?? []), ...placed.itemMap]) : null;
+      const carried = placed && frameMap && itemMap ? placed.groups.map((g) => ({ ...g, items: remapTree(g.items, frameMap, itemMap) })) : [];
+      const landedItem = frameMap && itemMap ? (remapRefs(placedItem, frameMap, itemMap) as Item) : placedItem;
       /* off any guide, the part settles on the 4dp grid of the screen it lands on */
       const origin = targetFrame ?? { x: 0, y: 0 };
       /* Ctrl keeps the pixel the cursor chose; a guide holds its whole-pixel
@@ -1597,7 +1619,7 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
         x: spans ? Math.round(slot.x) : settle(onGuide(d.guide, "x"), rawX, origin.x),
         y: settle(onGuide(d.guide, "y"), rawY, origin.y),
         axis: connectSpecOf(item)?.axis ?? "x",
-        items: [placedItem],
+        items: [landedItem],
       };
       /* a part that grew to the screen's width is kept inside it, then settles back on the grid */
       const pulled = targetFrame ? pullInto(dropped, targetFrame, widthsRef.current) : dropped;
@@ -1610,8 +1632,18 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
       setGroups((prev) =>
         prev.some((g) => g.items.some((it) => it.id === item.id))
           ? prev
-          : [...prev, ng],
+          : [...prev, ng, ...carried],
       );
+      if (placed && placed.frames.length > 0) {
+        setFrames((fs) => [...fs, ...placed.frames]);
+        showToast(
+          t("screensArrived", lang)
+            .replace("{n}", String(placed.frames.length))
+            .replace("{list}", placed.frames.map((f) => f.name).join(lang === "en" ? ", " : "、")),
+          2800,
+          "layers",
+        );
+      }
       setDrag(null);
     };
 
@@ -3493,7 +3525,14 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
 
   /** 从市场面板里把一个组件拖到画布上 */
   const onMyPartPointerDown = useCallback(
-    (e: React.PointerEvent, part: CustomPart) => startPartDrag(e, compositeInstance(part, uid)),
+    (e: React.PointerEvent, part: CustomPart, component: MyComponent) => {
+      /* 跨屏组件：一起带上来的那几屏（起屏在前），以及这份实例的旧部件 id → 新部件 id。
+         引用要等落地那一刻才知道该指哪儿（起屏指向组件所落的那一页），所以跟着拖动走。 */
+      const ids = new Map<string, string>();
+      const instance = compositeInstance(part, uid, ids);
+      const screens = parseMarketData(component.data)?.screens ?? [];
+      startPartDrag(e, instance, screens.length > 1 ? { screens, ids } : undefined);
+    },
     [startPartDrag],
   );
 
@@ -5851,6 +5890,12 @@ export default function Editor({ initialLang, onReady }: { initialLang: Lang; on
           theme={shownTheme}
           /* 上传的是面板正在处理的那一屏，没有选中就退回第一屏 */
           frame={screenInPlay ?? frames[0] ?? null}
+          /* 上传清单里的「查看」：把那一屏滚到眼前并选中它 */
+          onReveal={(frameId) => {
+            setSelectedIds([]);
+            setSelectedFrameId(frameId);
+            revealFrame(frameId);
+          }}
           onToast={showToast}
         />
       </div>

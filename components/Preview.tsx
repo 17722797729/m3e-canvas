@@ -53,6 +53,7 @@ import {
   mergeSlotStates,
   resolveSlotStates,
   resolveStates,
+  listSlotKeys,
   slotLookOwner,
   firstTapStep,
   firstDueStep,
@@ -614,6 +615,18 @@ function Tappable({
     const inset = sizeOf(item, {}).h - 64;
     if (item.icon) slots.push({ key: "icon", style: { left: 4, top: inset + 8, width: 48, height: 48, borderRadius: 24 } });
     if (item.icon2) slots.push({ key: "icon2", style: { right: 4, top: inset + 8, width: 48, height: 48, borderRadius: 24 } });
+  }
+  if (onSlot && item.kind === "listItem") {
+    /* 列表行两头那两颗图标：**只有作者真给它配了活儿的那一颗**才吃自己那一下（见 listSlotKeys）——
+       没配的还归整行。左边那颗画在 40×40 的圆里（左内边距 16），右边那颗是一枚 22dp 的图标（右内边距
+       16），热区按 48dp 的触摸目标给，各自居中。 */
+    const top = Math.round(sizeOf(item, widths).h / 2) - 24;
+    for (const key of listSlotKeys(item)) {
+      slots.push({
+        key,
+        style: key === "icon" ? { left: 12, top, width: 48, height: 48, borderRadius: 24 } : { right: 4, top, width: 48, height: 48, borderRadius: 24 },
+      });
+    }
   }
   if (onSlot && scrollTabs) {
     /* hit areas sit inside the scrolling layer, one per tab, so they move with the row */

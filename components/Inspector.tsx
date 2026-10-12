@@ -154,6 +154,7 @@ import {
   taskBarMetrics,
   confirmBoxMetrics,
   CONFIRM_BOX_FILL,
+  slotsBesideSelf,
   tapLivesInside,
   hasStateRow,
   hasTimer,
@@ -1096,7 +1097,7 @@ export function Inspector({
      这一部件自己的（`flow` / `action`），所以空键那一条摆在槽位前面 —— 面板里于是能选「领取」、
      「确认」还是「取消」（见 docs/reference-prototypes/confirm-box.md，以及 StateRules 里
      `target === ""` 那一处：它落回 item.flow / item.action，不进 slotFlows[""]）。 */
-  const actionTargets = tapLivesInside(item.kind)
+  const actionTargets = slotsBesideSelf(item)
     ? [{ key: "", label: wordsOf(item).trim() || t("barButton", lang), value: null }, ...actionSlots]
     : actionSlots;
   const slotBtn = (key: string, label: string | undefined, icon: string | null, on: boolean, onClick: () => void, dim?: boolean) => (

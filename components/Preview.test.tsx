@@ -183,7 +183,7 @@ describe("preview screen modal lifecycle", () => {
  * 都没有 —— 「当出现这个锁的图标时，该按钮点击时，禁止响应」就是这一条。判定本身在 lib/tokens 的
  * taskBarButtonLocked，普通部件照旧整块都是点击目标。 */
 describe("a task bar's tap belongs to its button", () => {
-  const partDoc = (kind: "taskBar" | "confirmBox" | "bottomNav" | "button", patch: Record<string, unknown>) =>
+  const partDoc = (kind: "taskBar" | "confirmBox" | "bottomNav" | "listItem" | "button", patch: Record<string, unknown>) =>
     ({
       ...doc,
       groups: [{ id: "g", x: 0, y: 0, axis: "y", items: [{ ...makeItem(kind), id: "tb", ...patch }] }],
@@ -210,7 +210,7 @@ describe("a task bar's tap belongs to its button", () => {
   };
   /** 这一下点击**归属**给谁：把这个部件的 Tappable 画出来，同时记下它那个 runtime —— 调用里面的按钮
    *  或槽位就落在同一个 runtime 上，于是能读到 `onStep(key, flow, owner)` 收到的那三个参数。 */
-  const tapOwnerOf = (kind: "confirmBox" | "bottomNav" | "taskBar" | "button", id: string, patch: Record<string, unknown> = {}) => {
+  const tapOwnerOf = (kind: "confirmBox" | "bottomNav" | "taskBar" | "listItem" | "button", id: string, patch: Record<string, unknown> = {}) => {
     hooks.refs = [];
     hooks.cursor = 0;
     hooks.effects = [];
@@ -369,5 +369,61 @@ describe("a task bar's tap belongs to its button", () => {
       vi.unstubAllGlobals();
     }
     expect(taken.mock.calls.some(([key, owner]) => key === "tb:cancel" && owner === "tb")).toBe(true);
+  });
+});
+
+/* 列表行（好友列表那种）两头的图标：作者给哪一颗配了活儿，哪一颗才吃自己那一下 —— 预览在那一颗上
+ * 铺一片 48dp 的热区（左边那颗落在左侧图标的圆上，右边那颗贴着右内边距），点上去走的是它自己的槽位
+ * （`id:icon2`：它自己的机器、它自己的动作，变化的落点归这一行，见 slotLookOwner）；没配的那一颗还是
+ * 装饰，点上去仍旧是整行那一下。 */
+describe("a list row's icons are each their own button", () => {
+  const rowDoc = (patch: Record<string, unknown>) =>
+    ({
+      ...doc,
+      groups: [{ id: "g", x: 0, y: 0, axis: "y", items: [{ ...makeItem("listItem"), id: "row", label: "好友", icon: "person", icon2: "delete", ...patch }] }],
+    }) as unknown as Doc;
+  const rowFound = (patch: Record<string, unknown>) => {
+    hooks.refs = [];
+    hooks.cursor = 0;
+    hooks.effects = [];
+    const tree = renderScreen(screenElement(false, rowDoc(patch)));
+    const found = elements(tree).find((element) => typeof element.type === "function" && (element.props.item as { id?: string } | undefined)?.id === "row");
+    if (!found) throw new Error("no tappable for the row");
+    const runtime = found.props.states as { onStep: (key: string, flow: unknown, owner: string | null) => string };
+    const spy = vi.spyOn(runtime, "onStep");
+    hooks.refs = [];
+    hooks.cursor = 0;
+    hooks.effects = [];
+    return { drawn: (found.type as (props: Record<string, unknown>) => Element)(found.props), props: found.props, calls: () => spy.mock.calls as unknown as [string, unknown, string | null][] };
+  };
+  const hitOf = (drawn: Element, key: string) => elements(drawn).find((element) => element.key === key);
+
+  it("lays a hit area on the icon the author configured — and it swallows its own tap", () => {
+    const found = rowFound({ action: { to: "B", transition: "none" }, actions: { icon2: { to: "C", transition: "none" } } });
+    const hit = hitOf(found.drawn, "icon2");
+    expect(hit).toBeTruthy();
+    /* 左边那颗没配，不铺热区 */
+    expect(hitOf(found.drawn, "icon")).toBeUndefined();
+    /* 这一下不会冒到整行去：它走的是这颗图标自己的那一下 */
+    const stop = vi.fn();
+    (hit!.props.onClick as (e: { stopPropagation: () => void; detail: number }) => void)({ stopPropagation: stop, detail: 1 });
+    expect(stop).toHaveBeenCalled();
+  });
+
+  it("runs the icon's own machine, with what it changes landing on the row", () => {
+    const flow = { looks: [], steps: [{ id: "st", from: ":start", to: ":start", trigger: { kind: "tap" }, do: [{ kind: "look", hidden: true }] }] };
+    const found = rowFound({ action: { to: "B", transition: "none" }, slotFlows: { icon2: flow } });
+    const hit = hitOf(found.drawn, "icon2");
+    expect(hit).toBeTruthy();
+    (hit!.props.onClick as (e: { stopPropagation: () => void; detail: number }) => void)({ stopPropagation: () => {}, detail: 1 });
+    /* 键是这一颗图标自己的，落点归这一行（给删除图标配「隐藏」= 把这一行收起来） */
+    expect(found.calls()).toEqual([["row:icon2", expect.anything(), "row"]]);
+  });
+
+  it("leaves a fresh row's icons as decoration — the row is still the button", () => {
+    const bare = rowFound({ action: { to: "B", transition: "none" } });
+    expect(hitOf(bare.drawn, "icon")).toBeUndefined();
+    expect(hitOf(bare.drawn, "icon2")).toBeUndefined();
+    expect(typeof bare.props.onTap).toBe("function");
   });
 });

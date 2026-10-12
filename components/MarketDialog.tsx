@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { CustomPart, DEFAULT_PALETTE_KEY, Doc, Frame, Palette, Theme } from "@/lib/tokens";
+import { CustomPart, DEFAULT_PALETTE_KEY, Doc, Palette, Theme } from "@/lib/tokens";
 import { t, useLang } from "@/lib/i18n";
 import {
   ComponentTypeCode,
@@ -11,15 +11,14 @@ import {
   marketComponentDetail,
 } from "@/lib/syai";
 import { CODE_OF_CATEGORY, CATEGORY_NAMES, categoryIcon, categoryOf, downloadText, parseMarketData, partOf } from "@/lib/market";
+/* 一组屏铺成一份文档：预览里跨屏的按钮才点得动（见 lib/screens.ts 的 screensAsDoc） */
+import { screensAsDoc } from "@/lib/screens";
 import { useSession } from "@/lib/session";
 import { Icon } from "./M3Node";
 import { MarketPreview } from "./MarketPreview";
 import { UserAvatar } from "./UserAvatar";
 import { LoginDialog } from "./LoginDialog";
 import { Preview } from "./Preview";
-
-/** 详情里那一屏的 id：Preview 从它开始 */
-const SCREEN_ID = "market-screen";
 
 /** 组件「屏幕」里画布的高度：预览按 1:1 画，装不下就整体缩放，不裁组件 */
 const STAGE_H = 460;
@@ -59,6 +58,8 @@ export function MarketDialog({
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [picking, setPicking] = useState(false);
+  /** 预览的是这一组屏里的第几屏（0 = 起屏，也就是一直以来的那一屏） */
+  const [shown, setShown] = useState(0);
   const [busy, setBusy] = useState(false);
   const [login, setLogin] = useState(false);
 
@@ -99,6 +100,10 @@ export function MarketDialog({
   }, [component, picking, onClose]);
 
   const parsed = useMemo(() => parseMarketData(detail?.data), [detail?.data]);
+  /** 组件一起带过来的那几屏（起屏在前）。旧组件只有一屏，这里就一个。 */
+  const screens = parsed?.screens ?? [];
+  /* 换一个组件就看回第一屏 */
+  useEffect(() => setShown(0), [component?.id]);
   /* 退回静态图时才需要缩放：有原屏幕的时候交给 Preview 自己适配 */
   const scale = parsed ? Math.min(1, STAGE_W / Math.max(1, parsed.w), STAGE_H / Math.max(1, parsed.h)) : 1;
 
@@ -134,13 +139,16 @@ export function MarketDialog({
     </div>
   );
 
-  /* 上传前那一屏：详情里照着它画，并且是可点、可滑的预览 */
+  /* 上传前的那**一组**屏：整组铺成一份文档，预览里的按钮点下去真的会弹出它引用的那一屏 —— 引用按 id
+     认路，换一份文档就必须重指（和落地同一条规矩，见 lib/screens.ts 的 screensAsDoc）。屏与屏在文档里
+     往右排开，所以滑屏、跳屏、弹框在预览里都到得了。默认从第一屏开始（观感和从前一样）。 */
   const screenDoc: Doc | null = useMemo(() => {
-    const screen = parsed?.screen;
-    if (!screen || screen.groups.length === 0) return null;
+    if (!parsed || parsed.screens.length === 0) return null;
+    const { frames, groups } = screensAsDoc(parsed.screens);
+    if (frames.length === 0) return null;
     return {
-      frames: [{ id: SCREEN_ID, name: screen.name || (detail?.name ?? ""), x: 0, y: 0, w: screen.w, h: screen.h, ...(screen.bg ? { bg: screen.bg as Frame["bg"] } : undefined) }],
-      groups: screen.groups.map((g, i) => ({ id: `market-screen-${i}`, x: g.x, y: g.y, axis: g.axis, ...(g.free ? { free: true as const } : undefined), ...(g.pos ? { pos: g.pos } : undefined), items: g.items })),
+      frames,
+      groups,
       /* 预览只读 frames / groups / theme / 配色，其余字段给上默认值就是一份合法文档 */
       frame: "phone",
       paletteKey: DEFAULT_PALETTE_KEY,
@@ -148,7 +156,9 @@ export function MarketDialog({
       brief: "",
       ...(theme ? { theme } : undefined),
     } as Doc;
-  }, [parsed?.screen, detail?.name, theme]);
+  }, [parsed, detail?.name, theme]);
+  /** 预览从哪一屏开始：「这一组屏」里点了哪一屏就是哪一屏（默认第一屏） */
+  const startFrameId = screenDoc?.frames[Math.min(shown, screenDoc.frames.length - 1)]?.id ?? null;
 
   return (
     <AnimatePresence>
@@ -170,9 +180,11 @@ export function MarketDialog({
             padding: 24,
           }}
         >
-          {/* 有原屏幕就整屏预览（和编辑器里的预览一样能点），没有才退回照片式的静态图 */}
-          {screenDoc && (
-            <Preview doc={screenDoc} widths={parsed?.widths ?? {}} palette={p} startId={SCREEN_ID} onClose={onClose} />
+          {/* 有原屏幕就整屏预览（和编辑器里的预览一样能点、能跳、能弹），没有才退回照片式的静态图。
+              `key` 跟着起点那一屏走：换了起点就重开一次预览（`Preview` 的内部进度是从起点起的，
+              这是它公开的那一个入口）。 */}
+          {screenDoc && startFrameId && (
+            <Preview key={startFrameId} doc={screenDoc} widths={parsed?.widths ?? {}} palette={p} startId={startFrameId} onClose={onClose} />
           )}
 
           <motion.div
@@ -318,6 +330,46 @@ export function MarketDialog({
                     <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: p.onSurface }}>{detail.description}</p>
                   </div>
                 ) : null}
+
+                {/* 这一组屏：组件一起带过来的那些（起屏 + 它引用到的）。点一屏，上面的预览就切过去；
+                    预览本身和从前一样，只是换了那一屏的数据（见 docs/multi-screen-component.md）。 */}
+                {screens.length > 1 && (
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <span style={{ fontSize: 11, color: p.onSurfaceVariant }}>
+                      {t("screensBundled", lang)} · {screens.length}
+                    </span>
+                    {screens.map((s, i) => (
+                      <button
+                        key={`${s.name}-${i}`}
+                        onClick={() => setShown(i)}
+                        aria-pressed={shown === i}
+                        className="m3-press"
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          height: 36,
+                          padding: "0 10px",
+                          borderRadius: 12,
+                          border: "none",
+                          background: shown === i ? p.secondaryContainer : p.surfaceContainerHighest,
+                          color: shown === i ? p.onSecondaryContainer : p.onSurface,
+                          fontSize: 13,
+                          cursor: "pointer",
+                          textAlign: "left",
+                        }}
+                      >
+                        <Icon name={s.role === "overlay" ? "picture_in_picture_alt" : "web_asset"} size={16} />
+                        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {s.name || t("screen", lang)}
+                        </span>
+                        <span style={{ flex: "0 0 auto", fontSize: 11, color: p.onSurfaceVariant }}>
+                          {s.role === "overlay" ? t("screenIsOverlay", lang) : t("screenIsPage", lang)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div style={{ display: "grid", gap: 8 }}>

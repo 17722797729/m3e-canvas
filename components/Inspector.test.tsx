@@ -196,6 +196,25 @@ describe("the tap targets a fused part offers", () => {
     const out = inspector({ ...makeItem("taskBar"), id: "tb", label: "每日登录游戏 (1/1)", label2: "领取" } as Item, "zh");
     expect(out).not.toContain(t("tapTarget", "zh"));
   });
+
+  it("offers a list row itself and each of its two icons", () => {
+    /* 好友列表那种行：整行是一颗按钮（点开详情），两头的图标各自还可以是按钮 —— 三个目标并列，
+       整行（空键）在前，然后是左侧图标、右侧图标（见 lib/listIconSlots.test.ts）。图标那两条上的槽位
+       名字跟着面板的语言走，所以这里认那两颗图标本身画的字（`person` / `delete`）。 */
+    const row = { ...makeItem("listItem"), id: "row", label: "好友·角色名(128级)", icon: "person", icon2: "delete" } as Item;
+    const out = inspector(row, "zh");
+    const at = out.indexOf(t("tapTarget", "zh"));
+    expect(at).toBeGreaterThan(-1);
+    const seg = out.slice(at);
+    const own = seg.indexOf('title="好友·角色名(128级)"');
+    const leading = seg.indexOf(">person<");
+    const trailing = seg.indexOf(">delete<");
+    expect(own).toBeGreaterThan(-1);
+    expect(leading).toBeGreaterThan(own);
+    expect(trailing).toBeGreaterThan(leading);
+    /* 打开时选中的是整行自己（它那一条画成主色）—— 规则照旧落在 item.flow / item.action 上 */
+    expect(seg.slice(own, leading)).toContain(`background:${PALETTES[0].primary}`);
+  });
 });
 
 /* 「点击后变化」那一句话只在**什么都没配**的时候才说：一份机器可以只有步骤、没有自己的状态

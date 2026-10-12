@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { KIND_SPEC, makeItem, type Group, type Kind, type PlacedItem } from "./tokens";
+import { KIND_SPEC, makeItem, type Frame, type Group, type Kind, type PlacedItem } from "./tokens";
 import {
   CATEGORY_BY_CODE,
   CODE_OF_CATEGORY,
@@ -12,7 +12,9 @@ import {
   packData,
   parseMarketData,
   partOf,
+  screenDataOf,
   tightenGroups,
+  type ScreenData,
 } from "./market";
 
 const placed = (kind: Kind, x: number, y: number) => ({ ...makeItem(kind), x, y }) as PlacedItem;
@@ -275,5 +277,88 @@ describe("the parts inside a component", () => {
     const read = parseMarketData(packData(tight.groups, { w: tight.w, h: tight.h }));
     expect(read).not.toBeNull();
     expect(read!.groups[0].items).toHaveLength(items.length);
+  });
+});
+
+/* 组件一起带上来的那几屏：`screens` 是**闭包**（起屏在前，引用到的屏也在里面，见 lib/screens.ts），
+   `screen` 只是它的第一屏 —— 老读者只认那一项，详情页现有的预览也用它。一屏的身份（`role` / `level` /
+   `autoClose` / `note`）跟着一起走：落地时要照着它把这一屏重建出来，尤其是 `role: "overlay"`——
+   不写它就变成一页普通屏幕，弹框就不再弹了。 */
+describe("the screens a component carries", () => {
+  const parts = () => oneGroup({ x: 0, y: 0 }, [placed("button", 0, 0)]).groups;
+  const screenOf = (name: string, patch: Partial<ScreenData> = {}): ScreenData => ({
+    name,
+    w: 412,
+    h: 892,
+    groups: parts(),
+    ...patch,
+  });
+  const pack = (screens: ScreenData[]) => packData(parts(), { w: 100, h: 40 }, undefined, screens[0], screens);
+
+  it("keeps the old single-screen payload exactly as it was", () => {
+    const json = JSON.parse(pack([screenOf("A")]));
+    expect(json.screen.name).toBe("A");
+    /* 只上传一屏时载荷里一个字都不多：没有 screens 这一项 */
+    expect(json.screens).toBeUndefined();
+    const read = parseMarketData(JSON.stringify(json))!;
+    expect(read.screen?.name).toBe("A");
+    /* 读出来总是"一组屏"，只有一屏时就是这一屏 */
+    expect(read.screens.map((s) => s.name)).toEqual(["A"]);
+  });
+
+  it("writes the whole group when there is more than one, start screen first", () => {
+    const read = parseMarketData(
+      pack([
+        screenOf("A"),
+        screenOf("B", { role: "overlay", level: "modal", autoClose: 4, note: "问一句" }),
+        screenOf("C"),
+      ]),
+    )!;
+    expect(read.screens.map((s) => s.name)).toEqual(["A", "B", "C"]);
+    /* 第一屏依旧是老字段：详情页的现有预览走它 */
+    expect(read.screen?.name).toBe("A");
+    expect(read.screens[1]).toMatchObject({ name: "B", role: "overlay", level: "modal", autoClose: 4, note: "问一句" });
+    expect([read.screens[1].w, read.screens[1].h]).toEqual([412, 892]);
+    /* 每一屏都带着自己的组，落地时直接就能还原 */
+    expect(read.screens[1].groups).toHaveLength(1);
+  });
+
+  it("keeps an explicit 页 role, and drops what it cannot draw", () => {
+    const read = parseMarketData(
+      pack([
+        screenOf("A", { role: "screen" }),
+        { ...screenOf("zero"), w: 0 },
+        { ...screenOf("empty"), groups: [] },
+        "nonsense" as unknown as ScreenData,
+      ]),
+    )!;
+    expect(read.screens.map((s) => s.name)).toEqual(["A"]);
+    expect(read.screens[0].role).toBe("screen");
+  });
+
+  it("says so plainly when a component carries no screen at all", () => {
+    const read = parseMarketData(packData(parts(), { w: 100, h: 40 }))!;
+    expect(read.screen).toBeUndefined();
+    expect(read.screens).toEqual([]);
+  });
+
+  it("packs one screen the way a page will be rebuilt from it", () => {
+    /* 只收这一屏自己的组，坐标相对**屏幕左上角**；身份（role/level/autoClose/note）一起走 */
+    const mine = { ...makeItem("button"), x: 10, y: 20 } as PlacedItem;
+    const theirs = { ...makeItem("button"), x: 0, y: 0 } as PlacedItem;
+    const frame = { id: "A", name: "甲", x: 40, y: 60, w: 412, h: 892, role: "overlay", level: "modal", autoClose: 3, note: "问一句" } as Frame;
+    const other = { id: "B", name: "乙", x: 900, y: 0, w: 412, h: 892 } as Frame;
+    const groups: Group[] = [
+      { id: "gA", x: 100, y: 200, axis: "x", frameId: "A", items: [mine] },
+      { id: "gB", x: 900, y: 0, axis: "x", frameId: "B", items: [theirs] },
+    ];
+    const packed = screenDataOf(frame, groups, [frame, other], {});
+    expect(packed).toMatchObject({ name: "甲", w: 412, h: 892, role: "overlay", level: "modal", autoClose: 3, note: "问一句" });
+    expect(packed.groups).toHaveLength(1);
+    expect([packed.groups[0].x, packed.groups[0].y]).toEqual([60, 140]);
+    expect(packed.groups[0].items[0]).toMatchObject({ id: mine.id, x: 10, y: 20 });
+    /* 存下来再读回去，还是这一屏 */
+    const read = parseMarketData(packData(parts(), { w: 100, h: 40 }, undefined, packed))!;
+    expect(read.screen).toMatchObject({ name: "甲", role: "overlay", level: "modal", autoClose: 3 });
   });
 });

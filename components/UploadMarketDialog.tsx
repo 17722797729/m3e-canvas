@@ -3,10 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { toPng } from "html-to-image";
-import { Frame, Group, PlacedItem, Theme, Palette, foldPlace, frameOfGroup } from "@/lib/tokens";
+import { Frame, Group, Theme, Palette, frameOfGroup } from "@/lib/tokens";
 import { Lang, t, useLang } from "@/lib/i18n";
 import { ComponentTypeCode, uploadMarketComponent } from "@/lib/syai";
-import { CATEGORY_NAMES, CODE_OF_CATEGORY, categoryIcon, packData, tightenGroups } from "@/lib/market";
+import { CATEGORY_NAMES, CODE_OF_CATEGORY, categoryIcon, packData, screenDataOf, tightenGroups } from "@/lib/market";
+/* 引用是按 id 写的，所以引用到的屏要一起打包带过去（见 docs/multi-screen-component.md） */
+import { MAX_UPLOAD_SCREENS, refCountsOf, screenClosure } from "@/lib/screens";
 import { captureBox, captureOptions, iconFontEmbedCss, iconFontReady, squareThumbnail, thumbScale, warmIconFont, type SquaredStill } from "@/lib/marketThumbnail";
 import { dataUrlBlob, uploadThumbnailToOss } from "@/lib/ossUpload";
 import { useSession } from "@/lib/session";
@@ -112,6 +114,7 @@ export function UploadMarketDialog({
   doc,
   frame,
   theme,
+  onReveal,
   onToast,
 }: {
   p: Palette;
@@ -123,6 +126,8 @@ export function UploadMarketDialog({
   doc: { groups: Group[]; frames: Frame[]; widths: Record<string, number> };
   /** 要上传的屏幕；没有就是还没选中屏幕 */
   frame: Frame | null;
+  /** 去看某一屏（上传清单里那个「查看」）：编辑器把它滚到眼前并选中 */
+  onReveal?: (frameId: string) => void;
   /** 与编辑器自己的 showToast 同形：提示、时长、图标 */
   onToast?: (text: string, ms?: number, icon?: string) => void;
 }) {
@@ -136,10 +141,8 @@ export function UploadMarketDialog({
   const [msg, setMsg] = useState("");
   const shotRef = useRef<HTMLDivElement>(null);
 
-  const w = Math.max(1, Math.round(frame?.w ?? 412));
-  const h = Math.max(1, Math.round(frame?.h ?? 892));
-
-  /* 这一屏上的组，偏移归一化到屏幕左上角：组件自己的坐标系就是这个 */
+  /* 这一屏上的组（`tightenGroups` 只看相对位置，所以归不归一化到屏幕左上角都一样：
+     打包成 ScreenData 时要的是这个坐标系，见 lib/market.ts 的 screenDataOf） */
   const groups = useMemo(() => {
     if (!frame) return [];
     return doc.groups
@@ -151,6 +154,27 @@ export function UploadMarketDialog({
   /* 上传的是组件自己的紧凑包围盒（屏幕上的一小块，不是整块屏幕）：
      预览、缩略图、数据三处都按它来 */
   const tight = useMemo(() => tightenGroups(groups, doc.widths), [groups, doc.widths]);
+
+  /**
+   * 这一屏连同它**引用到**的屏（闭包）：A→B→C 时 C 也在里面，A↔B 只有两份（见 lib/screens.ts）
+   *
+   * 引用是按 id 写的，换一份文档就不成立 —— 所以引用的屏必须一起打包，落地时再重指。上限 3 屏（含起屏
+   * 自己）：超了就不让上传，闭包照样算完整，提示里才说得清多出来的是谁。
+   */
+  const closure = useMemo(
+    () => (frame ? screenClosure(frame, doc.groups, doc.frames, doc.widths) : null),
+    [frame, doc.groups, doc.frames, doc.widths],
+  );
+  /** 要一起带走的那几屏，按闭包顺序（起屏在第一个） */
+  const screens = useMemo(
+    () => (closure ? closure.screens.map((f) => screenDataOf(f, doc.groups, doc.frames, doc.widths)) : []),
+    [closure, doc.groups, doc.frames, doc.widths],
+  );
+  const over = !!closure?.over;
+  const refCounts = useMemo(() => refCountsOf(closure?.refs ?? []), [closure]);
+  const refCountOf = (index: number) => (closure ? (refCounts.get(closure.screens[index].id) ?? 0) : 0);
+  /** 清单里每一行对应的那一屏（「查看」要按 frame id 跳过去） */
+  const screenFrames = closure?.screens ?? [];
   /** 卡片里那一份的缩放（只是看看） */
   const previewScale = Math.min(1, 132 / Math.max(1, tight.w, tight.h));
   /** 缩略图那一份的缩放：直接按最终尺寸画，少一次重采样 */
@@ -182,6 +206,11 @@ export function UploadMarketDialog({
 
   const submit = async () => {
     if (!frame || empty) return;
+    /* 超过上限就不让上传（作者定的：最多 3 屏，含起屏自己）—— 清单里已经说清了多出来的是谁 */
+    if (over) {
+      setMsg(t("screensTooMany", lang).replace("{n}", String(screens.length)).replace("{max}", String(MAX_UPLOAD_SCREENS)));
+      return;
+    }
     if (!name.trim()) {
       setMsg(t("uploadNeedName", lang));
       return;
@@ -215,24 +244,10 @@ export function UploadMarketDialog({
         name: name.trim(),
         type,
         /* 实测宽度一起上传：市场里再画出来时，按钮这类部件才是原来的宽度。
-           screen 是「上传前的那一屏」：详情页照着它画，看到的就是自己交出去的样子。 */
-        data: packData(tight.groups, { w: tight.w, h: tight.h }, doc.widths, {
-          name: frame.name,
-          w,
-          h,
-          bg: frame.bg,
-          groups: groups.map((g) => ({
-            x: g.x,
-            y: g.y,
-            axis: g.axis,
-            ...(g.free ? { free: true as const } : undefined),
-            ...(g.pos ? { pos: g.pos } : undefined),
-            items: (g.items as PlacedItem[]).map((it) => {
-              const place = foldPlace(it, doc.widths);
-              return { ...it, x: it.x + place.dx, y: it.y + place.dy };
-            }),
-          })),
-        }),
+           screens 是**这一组屏**（起屏在前，引用到的屏也在里面）：详情页照着第一屏画，跨屏引用落地时
+           也靠它把屏重建出来再重指（见 docs/multi-screen-component.md）。只上传一屏时 packData 只写
+           那一项 `screen`，载荷一个字都不多。 */
+        data: packData(tight.groups, { w: tight.w, h: tight.h }, doc.widths, screens[0], screens),
         thumbnail: hostedThumbnail,
         description: description.trim() || undefined,
         screenName: frame.name,
@@ -444,6 +459,62 @@ export function UploadMarketDialog({
               </div>
             </div>
 
+            {/* 这一组屏：引用是按 id 写的，换一份文档就不成立 —— 所以引用到的屏要一起带走（见
+                docs/multi-screen-component.md）。最多 3 屏（含起屏自己），超了按钮直接禁用。 */}
+            {frame && screens.length > 1 && (
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: over ? p.error : p.onSurfaceVariant }}>{t("screensBundled", lang)}</span>
+                  <span style={{ fontSize: 11, color: p.onSurfaceVariant }}>
+                    {screens.length} / {MAX_UPLOAD_SCREENS}
+                  </span>
+                </div>
+                {over && (
+                  <p role="alert" style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: p.error }}>
+                    {t("screensTooMany", lang).replace("{n}", String(screens.length)).replace("{max}", String(MAX_UPLOAD_SCREENS))}
+                  </p>
+                )}
+                <div style={{ display: "grid", gap: 6 }}>
+                  {screens.map((s, i) => (
+                    <div
+                      key={`${s.name}-${i}`}
+                      style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 12, background: p.surfaceContainerHighest }}
+                    >
+                      <Icon name={s.role === "overlay" ? "picture_in_picture_alt" : "web_asset"} size={16} />
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {s.name || t("screen", lang)}
+                      </span>
+                      <span style={{ flex: "0 0 auto", fontSize: 11, color: p.onSurfaceVariant }}>
+                        {s.role === "overlay" ? t("screenIsOverlay", lang) : t("screenIsPage", lang)}
+                      </span>
+                      <span style={{ flex: "0 0 auto", fontSize: 11, color: p.onSurfaceVariant }}>
+                        {i === 0 ? t("screenIsStart", lang) : t("screenRefCount", lang).replace("{n}", String(refCountOf(i)))}
+                      </span>
+                      {onReveal && screenFrames[i] && (
+                        <button
+                          onClick={() => {
+                            onReveal(screenFrames[i].id);
+                            onClose();
+                          }}
+                          className="m3-press"
+                          style={{ flex: "0 0 auto", height: 26, padding: "0 10px", borderRadius: 13, border: "none", background: "transparent", color: p.primary, fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+                        >
+                          {t("viewScreen", lang)}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 指不到任何东西的引用：它们本来就没有去处，带上也变不好 —— 和"带上几屏"无关，什么时候都说 */}
+            {frame && !!closure?.dead.length && (
+              <p style={{ margin: 0, fontSize: 11, lineHeight: 1.5, color: p.onSurfaceVariant }}>
+                {t("uploadDeadRefs", lang).replace("{n}", String(closure.dead.length))}
+              </p>
+            )}
+
             <label style={{ display: "grid", gap: 6 }}>
               <span style={{ fontSize: 12, fontWeight: 500, color: p.onSurfaceVariant }}>{t("uploadDesc", lang)}</span>
               <textarea
@@ -482,25 +553,29 @@ export function UploadMarketDialog({
               </button>
               <button
                 onClick={() => void submit()}
-                disabled={busy || empty || !frame}
+                disabled={busy || empty || !frame || over}
                 className="m3-press"
                 style={{
                   height: 44,
                   padding: "0 22px",
                   borderRadius: 22,
                   border: "none",
-                  background: busy || empty || !frame ? p.surfaceContainerHighest : p.primary,
-                  color: busy || empty || !frame ? p.onSurfaceVariant : p.onPrimary,
+                  background: busy || empty || !frame || over ? p.surfaceContainerHighest : p.primary,
+                  color: busy || empty || !frame || over ? p.onSurfaceVariant : p.onPrimary,
                   fontSize: 14,
                   fontWeight: 600,
-                  cursor: busy || empty || !frame ? "default" : "pointer",
+                  cursor: busy || empty || !frame || over ? "default" : "pointer",
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 8,
                 }}
               >
                 {busy && <Icon name="hourglass_top" size={18} />}
-                {busy ? t("uploadBusy", lang) : t("uploadSubmit", lang)}
+                {busy
+                  ? t("uploadBusy", lang)
+                  : screens.length > 1
+                    ? t("uploadSubmitWithScreens", lang).replace("{n}", String(screens.length))
+                    : t("uploadSubmit", lang)}
               </button>
             </div>
           </motion.div>
